@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Bun
+bun.lock
+
+# Build output
+dist/
+
+# Logs
+proxy/proxy.log
+
+# Environment (contains local paths/ports)
+proxy/.env.proxy
+proxy/.env.claude

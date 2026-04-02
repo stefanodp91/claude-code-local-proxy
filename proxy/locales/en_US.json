@@ -1,0 +1,43 @@
+{
+  "server.listening": "Anthropic→OpenAI proxy listening on http://127.0.0.1:{{port}}",
+  "server.target": "Target: {{url}}",
+  "server.debug": "Debug: {{status}}",
+  "server.unknownEndpoint": "Unknown endpoint: {{method}} {{path}}",
+
+  "model.loaded": "Loaded model: {{id}} ({{arch}}, {{quantization}})",
+  "model.context": "Context: {{loaded}} tokens (max {{max}})",
+  "model.capabilities": "Capabilities: {{list}}",
+  "model.maxTokensCap": "max_tokens cap: {{cap}}",
+  "model.fetchFailed": "Could not fetch model info — using default max_tokens cap ({{fallback}})",
+
+  "probe.start": "Probing tool limit...",
+  "probe.noSupport": "Model does not support tool calling",
+  "probe.result.ok": "  {{n}} tools → ✅",
+  "probe.result.fail": "  {{n}} tools → ❌",
+  "probe.detected": "Max tools detected: {{max}}",
+  "probe.override": "Max tools: {{max}} (from MAX_TOOLS env)",
+
+  "tools.filtered": "Tools: {{from}}→{{to}} (core: {{coreList}} + UseTool)",
+  "tools.noFiltering": "Tools: {{count}} (no filtering needed)",
+
+  "request.incoming": "→ {{model}} | {{msgs}} msgs | {{tools}} tools | stream={{stream}} | thinking={{thinking}} | max_tokens={{from}}→{{to}}",
+  "request.invalidJson": "Invalid JSON in request body",
+
+  "response.stopReason": "← stop_reason={{reason}}",
+  "response.streamStarted": "← streaming started",
+  "response.noChoices": "No choices in OpenAI response",
+  "response.noBody": "No response body from LLM",
+
+  "target.connectFailed": "Cannot connect to LLM at {{url}}: {{error}}",
+  "target.errorReturned": "LLM returned error: {{error}}",
+
+  "stream.clientDisconnected": "Client disconnected, stopping stream",
+  "stream.processingError": "Proxy stream error: {{error}}",
+  "stream.parseError": "Failed to parse SSE data",
+
+  "useTool.description": "Invoke a tool not in your current set. Available:\n{{listing}}\n\nSpecify tool_name and its parameters.",
+  "useTool.toolNameDesc": "Exact name of the tool to invoke",
+  "useTool.parametersDesc": "Parameters to pass to the tool (check tool description for expected fields)",
+
+  "health.ok": "ok"
+}
