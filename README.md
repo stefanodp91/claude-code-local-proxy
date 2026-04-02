@@ -292,6 +292,7 @@ sh start_claude_code.sh        # Terminal 2: launch Claude Code
 
 Full proxy documentation in [`docs/`](docs/):
 
+- [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
 - [Architecture](docs/proxy-architecture.md) — hexagonal structure, request flow, SSE state machine, translation tables
 - [Configuration](docs/proxy-configuration.md) — complete reference for all environment variables
 - [Tool Management](docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe
