@@ -4,6 +4,7 @@
 
 ---
 
+
 ## How It Leaked
 
 [Chaofan Shou (@Fried_rice)](https://x.com/Fried_rice) discovered the leak and posted it publicly:
@@ -27,6 +28,54 @@ This repository contains the leaked `src/` directory.
 - **Runtime**: Bun
 - **Terminal UI**: React + [Ink](https://github.com/vadimdemedes/ink) (React for CLI)
 - **Scale**: ~1,900 files, 512,000+ lines of code
+
+---
+
+## Anthropic-to-OpenAI Proxy (v1.0.0)
+
+This repository includes a **Bun-based translation proxy** (`proxy/`) that lets Claude Code work with any local LLM through an OpenAI-compatible API. The proxy sits between Claude Code and the LLM backend, translating Anthropic Messages API requests into OpenAI Chat Completions format and back.
+
+### Quick Start
+
+```bash
+# Full stack: proxy + Claude Code
+sh start.sh
+
+# Or step by step:
+cd proxy && bun start          # Terminal 1: start proxy
+sh start_claude_code.sh        # Terminal 2: launch Claude Code
+```
+
+### Supported Backends
+
+| Backend | Default URL |
+|---|---|
+| LM Studio | `http://127.0.0.1:1234/v1/chat/completions` |
+| ollama | `http://127.0.0.1:11434/v1/chat/completions` |
+| vLLM | `http://127.0.0.1:8000/v1/chat/completions` |
+| text-generation-webui | `http://127.0.0.1:5000/v1/chat/completions` |
+
+### Key Features
+
+- **Full SSE streaming** — Anthropic SSE events translated from OpenAI SSE chunks in real-time
+- **Dynamic tool selection** — Additive scoring algorithm selects the optimal tool subset for models with limited tool support
+- **UseTool meta-tool** — Overflow tools remain accessible via an auto-generated meta-tool, with transparent rewriting
+- **Auto-promotion** — Tools used via UseTool are promoted into the active set for future requests
+- **Tool limit auto-detection** — Binary search probe determines the model's max tool count at startup
+- **Model info** — Fetches architecture, context window, and capabilities from LM Studio's internal API
+- **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
+- **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
+- **i18n** — Externalized log/error messages with `{{param}}` interpolation
+
+### Documentation
+
+Full proxy documentation in [`docs/`](docs/):
+
+- [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
+- [Architecture](docs/proxy-architecture.md) — hexagonal structure, request flow, SSE state machine, translation tables
+- [Configuration](docs/proxy-configuration.md) — complete reference for all environment variables
+- [Tool Management](docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe
+- [Startup Scripts](docs/startup-scripts.md) — start.sh and start_claude_code.sh internals
 
 ---
 
@@ -249,54 +298,6 @@ Reusable workflows defined in `skills/` and executed through `SkillTool`. Users 
 ### Plugin Architecture
 
 Built-in and third-party plugins are loaded through the `plugins/` subsystem.
-
----
-
-## Anthropic-to-OpenAI Proxy (v1.0.0)
-
-This repository includes a **Bun-based translation proxy** (`proxy/`) that lets Claude Code work with any local LLM through an OpenAI-compatible API. The proxy sits between Claude Code and the LLM backend, translating Anthropic Messages API requests into OpenAI Chat Completions format and back.
-
-### Quick Start
-
-```bash
-# Full stack: proxy + Claude Code
-sh start.sh
-
-# Or step by step:
-cd proxy && bun start          # Terminal 1: start proxy
-sh start_claude_code.sh        # Terminal 2: launch Claude Code
-```
-
-### Supported Backends
-
-| Backend | Default URL |
-|---|---|
-| LM Studio | `http://127.0.0.1:1234/v1/chat/completions` |
-| ollama | `http://127.0.0.1:11434/v1/chat/completions` |
-| vLLM | `http://127.0.0.1:8000/v1/chat/completions` |
-| text-generation-webui | `http://127.0.0.1:5000/v1/chat/completions` |
-
-### Key Features
-
-- **Full SSE streaming** — Anthropic SSE events translated from OpenAI SSE chunks in real-time
-- **Dynamic tool selection** — Additive scoring algorithm selects the optimal tool subset for models with limited tool support
-- **UseTool meta-tool** — Overflow tools remain accessible via an auto-generated meta-tool, with transparent rewriting
-- **Auto-promotion** — Tools used via UseTool are promoted into the active set for future requests
-- **Tool limit auto-detection** — Binary search probe determines the model's max tool count at startup
-- **Model info** — Fetches architecture, context window, and capabilities from LM Studio's internal API
-- **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
-- **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
-- **i18n** — Externalized log/error messages with `{{param}}` interpolation
-
-### Documentation
-
-Full proxy documentation in [`docs/`](docs/):
-
-- [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
-- [Architecture](docs/proxy-architecture.md) — hexagonal structure, request flow, SSE state machine, translation tables
-- [Configuration](docs/proxy-configuration.md) — complete reference for all environment variables
-- [Tool Management](docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe
-- [Startup Scripts](docs/startup-scripts.md) — start.sh and start_claude_code.sh internals
 
 ---
 
