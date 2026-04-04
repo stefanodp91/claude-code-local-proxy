@@ -28,6 +28,9 @@ export interface ToolProbeConfig {
 
   /** max_tokens for each probe request (keep low for speed). */
   probeMaxTokens: number;
+
+  /** Timeout in milliseconds for each probe fetch request. */
+  probeTimeout: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,6 +136,7 @@ export class ToolProbe {
       const res = await fetch(this.targetUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(this.cfg.probeTimeout),
         body: JSON.stringify({
           model: modelId,
           messages: [{ role: "user", content: PROBE_USER_MESSAGE }],

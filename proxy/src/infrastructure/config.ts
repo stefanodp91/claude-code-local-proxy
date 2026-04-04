@@ -70,6 +70,9 @@ export interface ProxyConfig {
   /** max_tokens used in each probe request (keep low for speed). */
   probeMaxTokens: number;
 
+  /** Timeout in milliseconds for each probe fetch request. */
+  probeTimeout: number;
+
   // ── Tool Promotion ──
 
   /** Number of requests without use before a promoted tool decays. */
@@ -124,6 +127,9 @@ const DEFAULT_PROBE_UPPER_BOUND = 32;
 
 /** Default max_tokens for probe requests (minimal to keep probes fast). */
 const DEFAULT_PROBE_MAX_TOKENS = 100;
+
+/** Default timeout for each probe fetch request (30 seconds). */
+const DEFAULT_PROBE_TIMEOUT = 30_000;
 
 /** Default number of requests before a promoted tool decays. */
 const DEFAULT_PROMOTION_MAX_AGE = 10;
@@ -199,6 +205,7 @@ export function loadConfig(): ProxyConfig {
     // Tool probe
     probeUpperBound:         envInt("PROBE_UPPER_BOUND", DEFAULT_PROBE_UPPER_BOUND),
     probeMaxTokens:          envInt("PROBE_MAX_TOKENS", DEFAULT_PROBE_MAX_TOKENS),
+    probeTimeout:            envInt("PROBE_TIMEOUT", DEFAULT_PROBE_TIMEOUT),
 
     // Tool promotion
     promotionMaxAge:         envInt("PROMOTION_MAX_AGE", DEFAULT_PROMOTION_MAX_AGE),

@@ -97,8 +97,8 @@ PROXY_PID=$!
 # ── Wait for health check ────────────────────────────────────────────────
 
 HEALTH_URL="http://127.0.0.1:${PROXY_PORT}/health"
-MAX_RETRIES=10
-RETRY_DELAY=0.5
+MAX_RETRIES=30
+RETRY_DELAY=1
 
 for i in $(seq 1 $MAX_RETRIES); do
   if curl -sf "$HEALTH_URL" &>/dev/null; then

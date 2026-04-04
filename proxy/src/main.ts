@@ -19,5 +19,6 @@ import { ProxyServer } from "./infrastructure/server";
 
 const config = loadConfig();
 const proxy = new ProxyServer(config);
-await proxy.initialize();
-proxy.start();
+await proxy.initialize();   // locale + model info (fast)
+proxy.start();               // HTTP server + /health available immediately
+await proxy.initializeTools(); // tool probe + wire translators (may be slow)

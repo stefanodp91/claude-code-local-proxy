@@ -52,10 +52,10 @@ export class ProxyServer {
   }
 
   /**
-   * Async initialization: load locale, fetch model info, detect tool limit,
-   * and wire up all translator dependencies.
+   * Async initialization: load locale and fetch model info.
    *
-   * Must be called before start().
+   * Must be called before start(). Does NOT run the tool probe,
+   * so the HTTP server can start listening quickly.
    */
   async initialize(): Promise<void> {
     // Step 0: Load i18n locale
@@ -65,7 +65,15 @@ export class ProxyServer {
     const modelService = new ModelInfoService(this.config, this.logger);
     this.modelInfo = await modelService.fetch();
     this.logModelInfo();
+  }
 
+  /**
+   * Async tool initialization: detect tool limit and wire up translators.
+   *
+   * Must be called after start() so the health endpoint is already available
+   * while the (potentially slow) tool probe runs.
+   */
+  async initializeTools(): Promise<void> {
     // Step 2: Detect tool calling limit (probe or override)
     const maxTools = await this.detectToolLimit();
 
@@ -255,6 +263,7 @@ export class ProxyServer {
       {
         probeUpperBound: this.config.probeUpperBound,
         probeMaxTokens: this.config.probeMaxTokens,
+        probeTimeout: this.config.probeTimeout,
       },
       this.logger,
     );
