@@ -9,6 +9,9 @@
  * @module infrastructure/persistentCache
  */
 
+import { readFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PersistentCache
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,7 +42,7 @@ export class PersistentCache<T extends object> {
    */
   get(key: string): T | null {
     try {
-      const data = JSON.parse(Bun.file(this.path).textSync()) as Record<string, T>;
+      const data = JSON.parse(readFileSync(this.path, "utf8")) as Record<string, T>;
       return data[key] ?? null;
     } catch {
       return null;
@@ -79,7 +82,7 @@ export class PersistentCache<T extends object> {
 
   private readAll(): Record<string, T> {
     try {
-      return JSON.parse(Bun.file(this.path).textSync()) as Record<string, T>;
+      return JSON.parse(readFileSync(this.path, "utf8")) as Record<string, T>;
     } catch {
       return {};
     }
@@ -87,7 +90,7 @@ export class PersistentCache<T extends object> {
 
   private async writeAll(data: Record<string, T>): Promise<void> {
     try {
-      await Bun.write(this.path, JSON.stringify(data, null, 2) + "\n");
+      await writeFile(this.path, JSON.stringify(data, null, 2) + "\n", "utf8");
     } catch {
       // Best-effort: silently ignore write failures
     }

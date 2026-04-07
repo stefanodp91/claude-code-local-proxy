@@ -1,12 +1,13 @@
 {
   "name": "anthropic-openai-proxy",
   "version": "1.0.0",
+  "type": "module",
   "scripts": {
-    "start": "bun run src/main.ts",
-    "dev": "bun run --watch src/main.ts"
+    "start": "node --experimental-transform-types src/main.ts",
+    "dev": "node --experimental-transform-types --watch src/main.ts"
   },
-  "dependencies": {},
   "devDependencies": {
-    "bun-types": "^1.3.11"
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.2"
   }
 }

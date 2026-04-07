@@ -63,11 +63,11 @@ echo ""
 bold "=== Anthropic-to-OpenAI Proxy ==="
 echo ""
 
-# Check bun
-if ! command -v bun &>/dev/null; then
-  die "'bun' not found. Install it: curl -fsSL https://bun.sh/install | bash"
+# Check node
+if ! command -v node &>/dev/null; then
+  die "'node' not found. Install it: https://nodejs.org"
 fi
-echo "  bun:        $(bun --version)"
+echo "  node:       $(node --version)"
 
 # Check LLM server
 TARGET_BASE="${TARGET_URL%/v1/chat/completions}"
@@ -91,7 +91,7 @@ fi
 
 PROXY_LOG="$SCRIPT_DIR/proxy/proxy.log"
 bold "Starting proxy... (log: $PROXY_LOG)"
-bun run "$SCRIPT_DIR/proxy/src/main.ts" > "$PROXY_LOG" 2>&1 &
+node --experimental-transform-types "$SCRIPT_DIR/proxy/src/main.ts" > "$PROXY_LOG" 2>&1 &
 PROXY_PID=$!
 
 # ── Wait for health check ────────────────────────────────────────────────

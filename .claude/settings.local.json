@@ -20,7 +20,11 @@
       "Bash(npm install:*)",
       "Bash(npm run:*)",
       "Bash(vsce package:*)",
-      "Bash(npx vsce:*)"
+      "Bash(npx vsce:*)",
+      "Bash(mkdir -p web-ui-implementation/gateway/src)",
+      "Bash(npm init:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx create-next-app@latest frontend --ts --tailwind --eslint --src-dir --app --import-alias \"@/*\" --use-npm)"
     ]
   }
 }

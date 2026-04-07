@@ -9,10 +9,10 @@
  * @module infrastructure/modelInfo
  */
 
-import type { LoadedModelInfo } from "../domain/types";
-import type { ProxyConfig } from "./config";
-import type { ILogger } from "../domain/ports";
-import { t } from "../domain/i18n";
+import type { LoadedModelInfo } from "../domain/types.ts";
+import type { ProxyConfig } from "./config.ts";
+import type { ILogger } from "../domain/ports.ts";
+import { t } from "../domain/i18n.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants

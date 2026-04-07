@@ -24,11 +24,11 @@ import {
   ContentBlockType,
   DeltaType,
   USE_TOOL_NAME,
-} from "../domain/types";
-import type { ToolManager } from "./toolManager";
-import type { ILogger } from "../domain/ports";
-import { msgId, sseEvent } from "../domain/utils";
-import { t } from "../domain/i18n";
+} from "../domain/types.ts";
+import type { ToolManager } from "./toolManager.ts";
+import type { ILogger } from "../domain/ports.ts";
+import { msgId, sseEvent } from "../domain/utils.ts";
+import { t } from "../domain/i18n.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Types
@@ -192,7 +192,11 @@ class StreamStateMachine {
           if (this.buffer.trim()) {
             aborted = this.processBufferLines(this.buffer, controller, encoder);
           }
-          if (!this.closed) {
+          if (!aborted && !this.closed) {
+            // Upstream closed without [DONE] — emit proper termination so
+            // Claude Code never receives a truncated stream
+            const finale = this.handleAbruptClose();
+            if (finale) this.safeEnqueue(controller, encoder, finale);
             try { controller.close(); } catch { /* already closed */ }
           }
           break;
@@ -281,6 +285,26 @@ class StreamStateMachine {
     } catch {
       this.logger.dbg(t("stream.parseError"));
       return "";
+    }
+
+    // Handle LM Studio / llama.cpp error objects (e.g. {"error": {"message": "Compute error."}})
+    if (parsed.error && !this.finalized) {
+      const msg = String(parsed.error.message ?? parsed.error);
+      this.logger.error(t("stream.upstreamError", { error: msg }));
+      this.finalized = true;
+      if (this.started) {
+        return this.closeThinkingBlock() + this.closeTextBlock() +
+          sseEvent(SseEventType.MessageDelta, {
+            type: SseEventType.MessageDelta,
+            delta: { stop_reason: StopReason.EndTurn },
+            usage: { output_tokens: 0 },
+          }) +
+          sseEvent(SseEventType.MessageStop, { type: SseEventType.MessageStop });
+      }
+      return sseEvent(SseEventType.Error, {
+        type: "error",
+        error: { type: "api_error", message: msg },
+      });
     }
 
     const choice = parsed.choices?.[0];
@@ -507,6 +531,29 @@ class StreamStateMachine {
 
     return out;
   }
+
+  /**
+   * Handle upstream connection closed without `[DONE]` sentinel.
+   *
+   * If `message_start` was already emitted, finalize the message cleanly so
+   * Claude Code receives a well-formed stream instead of crashing.
+   * If nothing was emitted yet, send an SSE error event.
+   */
+  private handleAbruptClose(): string {
+    if (this.finalized) return "";
+
+    if (!this.started) {
+      // Stream never started — emit SSE error for a clean rejection
+      return sseEvent(SseEventType.Error, {
+        type: "error",
+        error: { type: "api_error", message: t("stream.abruptClose") },
+      });
+    }
+
+    // message_start was emitted — finalize the same way [DONE] would
+    return this.handleDone();
+  }
+
 
   // ── Tool Call Finalization ──────────────────────────────────────────────
 

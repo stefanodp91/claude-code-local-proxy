@@ -11,7 +11,7 @@
  * @module domain/utils
  */
 
-import { SseEventType } from "./types";
+import { SseEventType } from "./types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ID Generation

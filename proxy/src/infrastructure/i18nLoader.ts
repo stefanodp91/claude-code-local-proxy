@@ -1,7 +1,7 @@
 /**
  * i18nLoader.ts — Locale file loader for the proxy i18n system.
  *
- * Reads locale JSON files from disk using Bun.file() and populates
+ * Reads locale JSON files from disk and populates
  * the domain i18n module's message map via setMessages().
  *
  * This is the infrastructure adapter for i18n — the only place
@@ -10,8 +10,9 @@
  * @module infrastructure/i18nLoader
  */
 
-import { Locale } from "../domain/types";
-import { setMessages } from "../domain/i18n";
+import { readFile } from "node:fs/promises";
+import { Locale } from "../domain/types.ts";
+import { setMessages } from "../domain/i18n.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -28,21 +29,20 @@ import { setMessages } from "../domain/i18n";
  * @param locale - A value from the Locale enum (e.g., Locale.EnUS).
  */
 export async function loadLocale(locale: Locale): Promise<void> {
-  // import.meta.dir resolves to this file's directory (src/infrastructure/)
+  // import.meta.dirname resolves to this file's directory (src/infrastructure/)
   // locales/ is at ../../locales/ relative to here
-  const localesDir = `${import.meta.dir}/../../locales`;
+  const localesDir = `${import.meta.dirname}/../../locales`;
   const path = `${localesDir}/${locale}.json`;
 
   try {
-    const file = Bun.file(path);
-    const msgs = await file.json();
+    const msgs = JSON.parse(await readFile(path, "utf8"));
     setMessages(msgs);
   } catch {
     // Fallback to default locale if the requested one is missing
     if (locale !== Locale.EnUS) {
       const fallbackPath = `${localesDir}/${Locale.EnUS}.json`;
       try {
-        const msgs = await Bun.file(fallbackPath).json();
+        const msgs = JSON.parse(await readFile(fallbackPath, "utf8"));
         setMessages(msgs);
       } catch {
         // No locale files available — t() will return raw keys

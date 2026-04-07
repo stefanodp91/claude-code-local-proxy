@@ -2,25 +2,31 @@
  * server.ts — HTTP server and request orchestrator for the proxy.
  *
  * The ProxyServer class wires up dependencies via constructor injection,
- * initializes async services at startup, and runs a Bun HTTP server
+ * initializes async services at startup, and runs a Node.js HTTP server
  * that translates Claude Code's Anthropic API requests to OpenAI format.
  *
  * @module infrastructure/server
  */
 
-import { loadConfig, type ProxyConfig } from "./config";
-import { Logger } from "./logger";
-import { loadLocale } from "./i18nLoader";
-import { t } from "../domain/i18n";
-import { ModelInfoService } from "./modelInfo";
-import { ToolProbe } from "./toolProbe";
-import { PersistentCache } from "./persistentCache";
-import { ToolManager } from "../application/toolManager";
-import { RequestTranslator } from "../application/requestTranslator";
-import { ResponseTranslator } from "../application/responseTranslator";
-import { StreamTranslator } from "../application/streamTranslator";
-import { anthropicError } from "./httpUtils";
-import type { LoadedModelInfo, AnthropicRequest, ModelCapabilities } from "../domain/types";
+import { createServer } from "node:http";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
+import type { ProxyConfig } from "./config.ts";
+import { Logger } from "./logger.ts";
+import { loadLocale } from "./i18nLoader.ts";
+import { t } from "../domain/i18n.ts";
+import { ModelInfoService } from "./modelInfo.ts";
+import { ToolProbe } from "./toolProbe.ts";
+import { PersistentCache } from "./persistentCache.ts";
+import { ToolManager } from "../application/toolManager.ts";
+import { RequestTranslator } from "../application/requestTranslator.ts";
+import { ResponseTranslator } from "../application/responseTranslator.ts";
+import { StreamTranslator } from "../application/streamTranslator.ts";
+import { anthropicError } from "./httpUtils.ts";
+import type { LoadedModelInfo, AnthropicRequest, ModelCapabilities } from "../domain/types.ts";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProxyServer
@@ -31,8 +37,9 @@ import type { LoadedModelInfo, AnthropicRequest, ModelCapabilities } from "../do
  *
  * Lifecycle:
  * 1. constructor() — create logger from config
- * 2. initialize() — async: load locale, fetch model info, probe tool limit, wire translators
- * 3. start() — launch Bun HTTP server
+ * 2. initialize() — async: load locale, fetch model info, load claude-local.md
+ * 3. initializeTools() — tool probe or cache hit, wire translators
+ * 4. start() — launch Node.js HTTP server
  *
  * All dependencies are created internally during initialize() and passed
  * to child components via constructor injection (DIP).
@@ -52,15 +59,12 @@ export class ProxyServer {
   constructor(private readonly config: ProxyConfig) {
     this.logger = new Logger(config.debug);
     this.modelCache = new PersistentCache<ModelCapabilities>(
-      `${import.meta.dir}/../../model-cache.json`,
+      `${__dirname}/../../model-cache.json`,
     );
   }
 
   /**
-   * Async initialization: load locale and fetch model info.
-   *
-   * Must be called before start(). Does NOT run the tool probe,
-   * so the HTTP server can start listening quickly.
+   * Async initialization: load locale, fetch model info, load claude-local.md.
    */
   async initialize(): Promise<void> {
     // Step 0: Load i18n locale
@@ -70,19 +74,50 @@ export class ProxyServer {
     const modelService = new ModelInfoService(this.config, this.logger);
     this.modelInfo = await modelService.fetch();
     this.logModelInfo();
+
+    // Step 2: Build system prompt — dynamic model preamble + claude-local.md rules
+    const claudeLocalPath = `${__dirname}/../../claude-local.md`;
+    const rules = await readFile(claudeLocalPath, "utf8").catch(() => "").then((s: string) => s.trim());
+    if (rules) {
+      this.logger.info(t("server.claudeLocalLoaded", { chars: rules.length }));
+    }
+    this.config.systemPromptAppend = this.buildSystemPromptAppend(rules);
+  }
+
+  /**
+   * Build the content injected into every request's system prompt.
+   *
+   * Prepends a dynamic block with live model facts (context, output cap, capabilities)
+   * so the model has self-awareness about its own constraints without any manual
+   * per-model configuration. Then appends the user-editable claude-local.md rules.
+   */
+  private buildSystemPromptAppend(rules: string): string {
+    const preamble = this.modelInfo ? this.buildModelPreamble(this.modelInfo) : "";
+    return [preamble, rules].filter(Boolean).join("\n\n");
+  }
+
+  /**
+   * Generate a dynamic system prompt block describing the current model's constraints.
+   * Uses only data already available in LoadedModelInfo — fully model-agnostic.
+   */
+  private buildModelPreamble(info: LoadedModelInfo): string {
+    const conversationBudget = info.loadedContextLength - info.maxTokensCap;
+    return [
+      "## Current Model",
+      `- **Model:** ${info.id} (${info.arch}, ${info.quantization})`,
+      `- **Context window:** ${info.loadedContextLength.toLocaleString()} tokens`,
+      `- **Max output:** ${info.maxTokensCap.toLocaleString()} tokens`,
+      `- **Available for conversation:** ~${conversationBudget.toLocaleString()} tokens`,
+      `- **Capabilities:** ${info.capabilities.join(", ") || "text generation only"}`,
+    ].join("\n");
   }
 
   /**
    * Async tool initialization: detect tool limit and wire up translators.
-   *
-   * Must be called after start() so the health endpoint is already available
-   * while the (potentially slow) tool probe runs.
    */
   async initializeTools(): Promise<void> {
-    // Step 2: Detect tool calling limit (probe or override)
     const maxTools = await this.detectToolLimit();
 
-    // Step 3: Wire up components with injected dependencies
     this.toolManager = new ToolManager(maxTools, {
       coreTools: this.config.coreTools,
       scoreCoreTools: this.config.scoreCoreTools,
@@ -99,21 +134,59 @@ export class ProxyServer {
   }
 
   /**
-   * Start the Bun HTTP server.
+   * Start the Node.js HTTP server.
    *
-   * idleTimeout is set to 0 (disabled) because local LLMs may spend
-   * 30+ seconds in the reasoning phase before emitting the first token.
+   * Uses the Web Fetch API (Request/Response) internally for handler logic,
+   * adapting to/from Node.js IncomingMessage/ServerResponse at the boundary.
+   * Socket timeout is disabled (0) because local LLMs may spend 30+ seconds
+   * in the reasoning phase before emitting the first token.
    */
   start(): void {
-    const server = Bun.serve({
-      port: this.config.proxyPort,
-      idleTimeout: 0,
-      fetch: (req) => this.route(req),
+    const server = createServer(async (nodeReq, nodeRes) => {
+      // Collect request body
+      const chunks: Buffer[] = [];
+      for await (const chunk of nodeReq) chunks.push(chunk as Buffer);
+      const bodyBuffer = chunks.length > 0 ? Buffer.concat(chunks) : null;
+
+      // Build Web API Request
+      const url = `http://127.0.0.1:${this.config.proxyPort}${nodeReq.url ?? "/"}`;
+      const webReq = new Request(url, {
+        method: nodeReq.method ?? "GET",
+        headers: nodeReq.headers as Record<string, string>,
+        body: bodyBuffer?.length ? bodyBuffer : null,
+      });
+
+      // Dispatch to route handler
+      const webRes = await this.route(webReq).catch(err => {
+        this.logger.error("Unhandled route error:", String(err));
+        return anthropicError(500, String(err));
+      });
+
+      // Write status + headers
+      const resHeaders: Record<string, string> = {};
+      webRes.headers.forEach((value, key) => { resHeaders[key] = value; });
+      nodeRes.writeHead(webRes.status, resHeaders);
+
+      // Stream body to client
+      if (webRes.body) {
+        const reader = webRes.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          nodeRes.write(value);
+        }
+      }
+      nodeRes.end();
     });
 
-    this.logger.info(t("server.listening", { port: server.port ?? 0 }));
-    this.logger.info(t("server.target", { url: this.config.targetUrl }));
-    this.logger.info(t("server.debug", { status: this.config.debug ? "ON" : "OFF" }));
+    // Disable socket idle timeout so long LLM responses don't get cut off
+    server.on("connection", (socket) => socket.setTimeout(0));
+
+    server.listen(this.config.proxyPort, () => {
+      this.logger.info(t("server.listening", { port: this.config.proxyPort }));
+      this.logger.info(t("server.target", { url: this.config.targetUrl }));
+      this.logger.info(t("server.debug", { status: this.config.debug ? "ON" : "OFF" }));
+    });
   }
 
   // ── Routing ─────────────────────────────────────────────────────────────
@@ -124,12 +197,10 @@ export class ProxyServer {
   private async route(req: Request): Promise<Response> {
     const { pathname } = new URL(req.url);
 
-    // Health check endpoint
     if (req.method === "GET" && pathname === "/health") {
       return this.handleHealth();
     }
 
-    // Main endpoint: POST /v1/messages (Anthropic Messages API)
     if (req.method === "POST" && pathname === "/v1/messages") {
       return this.handleMessages(req);
     }
@@ -139,9 +210,6 @@ export class ProxyServer {
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
-  /**
-   * Health check handler — returns a simple OK response.
-   */
   private handleHealth(): Response {
     return new Response(
       JSON.stringify({ status: t("health.ok"), target: this.config.targetUrl }),
@@ -149,23 +217,11 @@ export class ProxyServer {
     );
   }
 
-  /**
-   * Main handler: translate and forward Anthropic requests to the LLM backend.
-   *
-   * Flow:
-   * 1. Parse Anthropic request body
-   * 2. Log request metadata (model remap, tool count, max_tokens cap)
-   * 3. Translate to OpenAI format (includes dynamic tool selection)
-   * 4. Forward to the target LLM endpoint
-   * 5. Translate response back (streaming or non-streaming)
-   */
   private async handleMessages(req: Request): Promise<Response> {
-    // Guard: translators are wired in initializeTools() which runs after start()
     if (!this.requestTranslator) {
       return anthropicError(503, t("server.notReady"));
     }
 
-    // Parse request body
     let body: AnthropicRequest;
     try {
       body = await req.json();
@@ -176,18 +232,18 @@ export class ProxyServer {
     const thinkingEnabled =
       body.thinking?.type === "enabled" || body.thinking?.type === "adaptive";
 
-    // Log request metadata
     this.logRequest(body, thinkingEnabled);
 
-    // Translate request (Anthropic → OpenAI, with tool selection)
-    const { request: openaiReq, toolSelection } = this.requestTranslator.translate(body);
+    const { request: openaiReq, toolSelection, prunedMessages } = this.requestTranslator.translate(body);
+    if (prunedMessages > 0) {
+      this.logger.info(t("request.pruned", { count: prunedMessages, remaining: openaiReq.messages.length }));
+    }
     this.logger.dbg("OpenAI request:", JSON.stringify(openaiReq, null, 2));
 
-    // Log tool selection if filtering occurred
     if (toolSelection?.useToolDef) {
       const coreNames = toolSelection.tools
-        .filter(t => t.function.name !== "UseTool")
-        .map(t => t.function.name)
+        .filter((tool: { function: { name: string } }) => tool.function.name !== "UseTool")
+        .map((tool: { function: { name: string } }) => tool.function.name)
         .join(",");
       this.logger.info(t("tools.filtered", {
         from: (toolSelection.tools.length - 1) + toolSelection.overflow.length,
@@ -196,7 +252,6 @@ export class ProxyServer {
       }));
     }
 
-    // Forward to the LLM backend
     let targetResponse: Response;
     try {
       targetResponse = await fetch(this.config.targetUrl, {
@@ -215,9 +270,8 @@ export class ProxyServer {
       return anthropicError(targetResponse.status, t("target.errorReturned", { error: errText }));
     }
 
-    // Non-streaming response — use openaiReq.stream (requestTranslator defaults to true)
     if (!openaiReq.stream) {
-      let openaiJson: any;
+      let openaiJson: unknown;
       try {
         openaiJson = await targetResponse.json();
       } catch (err) {
@@ -234,7 +288,6 @@ export class ProxyServer {
       });
     }
 
-    // Streaming response
     if (!targetResponse.body) {
       return anthropicError(502, t("response.noBody"));
     }
@@ -258,13 +311,6 @@ export class ProxyServer {
 
   // ── Initialization Helpers ──────────────────────────────────────────────
 
-  /**
-   * Detect the model's tool calling limit.
-   *
-   * Uses MAX_TOOLS env override if set, otherwise runs a binary search probe.
-   *
-   * @returns Maximum number of tools the model supports (0 = no tool calling).
-   */
   private async detectToolLimit(): Promise<number> {
     if (this.config.maxToolsOverride !== null) {
       this.logger.info(t("probe.override", { max: this.config.maxToolsOverride }));
@@ -275,7 +321,6 @@ export class ProxyServer {
       return 0;
     }
 
-    // Check cache before running the (potentially slow) probe
     const cached = this.modelCache.get(this.modelInfo.id);
     if (cached?.maxTools !== undefined) {
       this.logger.info(t("probe.cached", { max: cached.maxTools }));
@@ -297,9 +342,6 @@ export class ProxyServer {
     return maxTools;
   }
 
-  /**
-   * Log loaded model information at startup.
-   */
   private logModelInfo(): void {
     if (this.modelInfo) {
       this.logger.info(t("model.loaded", {
@@ -320,9 +362,6 @@ export class ProxyServer {
     }
   }
 
-  /**
-   * Log incoming request metadata (model remap, message count, tool count, etc.).
-   */
   private logRequest(body: AnthropicRequest, thinkingEnabled: boolean): void {
     const effectiveModel = this.modelInfo?.id ?? body.model;
     const modelStr = body.model !== effectiveModel

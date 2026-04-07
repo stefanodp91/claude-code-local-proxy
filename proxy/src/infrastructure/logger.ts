@@ -8,8 +8,8 @@
  * @module infrastructure/logger
  */
 
-import { LogLevel } from "../domain/types";
-import type { ILogger } from "../domain/ports";
+import { LogLevel } from "../domain/types.ts";
+import type { ILogger } from "../domain/ports.ts";
 
 /**
  * Structured logger with debug gating.

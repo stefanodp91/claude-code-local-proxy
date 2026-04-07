@@ -10,8 +10,8 @@
  * @module main
  */
 
-import { loadConfig } from "./infrastructure/config";
-import { ProxyServer } from "./infrastructure/server";
+import { loadConfig } from "./infrastructure/config.ts";
+import { ProxyServer } from "./infrastructure/server.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bootstrap

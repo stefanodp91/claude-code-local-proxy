@@ -11,7 +11,7 @@
  * @module infrastructure/config
  */
 
-import { Locale } from "../domain/types";
+import { Locale } from "../domain/types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProxyConfig Interface
@@ -90,6 +90,15 @@ export interface ProxyConfig {
 
   /** maxTokensCap = loadedContextLength / this ratio. */
   contextToMaxTokensRatio: number;
+
+  // ── System Prompt ──
+
+  /**
+   * Content of proxy/claude-local.md, appended to the system prompt of every request.
+   * Loaded at startup by ProxyServer.initialize(). Empty string = disabled.
+   * Not settable via environment variable — edit claude-local.md directly.
+   */
+  systemPromptAppend: string;
 
   // ── i18n ──
 
@@ -216,6 +225,9 @@ export function loadConfig(): ProxyConfig {
     // Model limits
     maxTokensFallback:       envInt("MAX_TOKENS_FALLBACK", DEFAULT_MAX_TOKENS_FALLBACK),
     contextToMaxTokensRatio: envInt("CONTEXT_TO_MAX_TOKENS_RATIO", DEFAULT_CONTEXT_TO_MAX_TOKENS_RATIO),
+
+    // System prompt (populated at runtime by ProxyServer.initialize(), not from env)
+    systemPromptAppend:      "",
 
     // i18n
     locale:                  env("LOCALE", Locale.EnUS) as Locale,
