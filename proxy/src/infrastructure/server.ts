@@ -14,12 +14,13 @@ import { loadLocale } from "./i18nLoader";
 import { t } from "../domain/i18n";
 import { ModelInfoService } from "./modelInfo";
 import { ToolProbe } from "./toolProbe";
+import { PersistentCache } from "./persistentCache";
 import { ToolManager } from "../application/toolManager";
 import { RequestTranslator } from "../application/requestTranslator";
 import { ResponseTranslator } from "../application/responseTranslator";
 import { StreamTranslator } from "../application/streamTranslator";
 import { anthropicError } from "./httpUtils";
-import type { LoadedModelInfo, AnthropicRequest } from "../domain/types";
+import type { LoadedModelInfo, AnthropicRequest, ModelCapabilities } from "../domain/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProxyServer
@@ -38,6 +39,7 @@ import type { LoadedModelInfo, AnthropicRequest } from "../domain/types";
  */
 export class ProxyServer {
   private readonly logger: Logger;
+  private readonly modelCache: PersistentCache<ModelCapabilities>;
   private modelInfo: LoadedModelInfo | null = null;
   private toolManager!: ToolManager;
   private requestTranslator!: RequestTranslator;
@@ -49,6 +51,9 @@ export class ProxyServer {
    */
   constructor(private readonly config: ProxyConfig) {
     this.logger = new Logger(config.debug);
+    this.modelCache = new PersistentCache<ModelCapabilities>(
+      `${import.meta.dir}/../../model-cache.json`,
+    );
   }
 
   /**
@@ -155,6 +160,11 @@ export class ProxyServer {
    * 5. Translate response back (streaming or non-streaming)
    */
   private async handleMessages(req: Request): Promise<Response> {
+    // Guard: translators are wired in initializeTools() which runs after start()
+    if (!this.requestTranslator) {
+      return anthropicError(503, t("server.notReady"));
+    }
+
     // Parse request body
     let body: AnthropicRequest;
     try {
@@ -205,9 +215,16 @@ export class ProxyServer {
       return anthropicError(targetResponse.status, t("target.errorReturned", { error: errText }));
     }
 
-    // Non-streaming response
-    if (!body.stream) {
-      const openaiJson = await targetResponse.json();
+    // Non-streaming response — use openaiReq.stream (requestTranslator defaults to true)
+    if (!openaiReq.stream) {
+      let openaiJson: any;
+      try {
+        openaiJson = await targetResponse.json();
+      } catch (err) {
+        const raw = await targetResponse.text().catch(() => "");
+        this.logger.error(t("response.invalidJson", { error: String(err) }), raw.slice(0, 200));
+        return anthropicError(502, t("response.invalidJson", { error: String(err) }));
+      }
       this.logger.dbg("OpenAI response:", JSON.stringify(openaiJson, null, 2));
       const anthropicResp = this.responseTranslator.translate(openaiJson, body.model, thinkingEnabled);
       this.logger.info(t("response.stopReason", { reason: anthropicResp.stop_reason }));
@@ -258,6 +275,13 @@ export class ProxyServer {
       return 0;
     }
 
+    // Check cache before running the (potentially slow) probe
+    const cached = this.modelCache.get(this.modelInfo.id);
+    if (cached?.maxTools !== undefined) {
+      this.logger.info(t("probe.cached", { max: cached.maxTools }));
+      return cached.maxTools;
+    }
+
     const probe = new ToolProbe(
       this.config.targetUrl,
       {
@@ -268,7 +292,9 @@ export class ProxyServer {
       this.logger,
     );
 
-    return probe.detect(this.modelInfo.id);
+    const maxTools = await probe.detect(this.modelInfo.id);
+    await this.modelCache.merge(this.modelInfo.id, { maxTools });
+    return maxTools;
   }
 
   /**

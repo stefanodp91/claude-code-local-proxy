@@ -18,7 +18,9 @@
       "Bash(grep -rh \"export const.*TOOL_NAME\\\\|export const.*_NAME\" /Users/stefano/Workspace/claude-code/src/tools/*/constants.ts /Users/stefano/Workspace/claude-code/src/tools/*/toolName.ts)",
       "Bash(grep -rh \"export const.*TOOL_NAME\\\\|= '[^']*'\" /Users/stefano/Workspace/claude-code/src/tools/*/prompt.ts)",
       "Bash(npm install:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(vsce package:*)",
+      "Bash(npx vsce:*)"
     ]
   }
 }

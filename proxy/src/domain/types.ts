@@ -169,6 +169,25 @@ export interface OpenAITool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Interfaces — Cached Model Capabilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-model capabilities detected at runtime and persisted across restarts.
+ * Fields are optional — only those that have been probed are populated.
+ *
+ * Extend this interface to add new detectable characteristics.
+ * Existing cache entries will simply lack the new fields until re-probed.
+ */
+export interface ModelCapabilities {
+  /** Maximum number of tools the model accepts in a single request. */
+  maxTools?: number;
+
+  // Future fields, e.g.:
+  // supportsThinking?: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Interfaces — Tool Management
 // ─────────────────────────────────────────────────────────────────────────────
 

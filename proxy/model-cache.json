@@ -1,0 +1,5 @@
+{
+  "google/gemma-4-26b-a4b": {
+    "maxTools": 32
+  }
+}

@@ -16,6 +16,7 @@
   "probe.result.fail": "  {{n}} tools → ❌",
   "probe.detected": "Max tools detected: {{max}}",
   "probe.override": "Max tools: {{max}} (from MAX_TOOLS env)",
+  "probe.cached": "Max tools: {{max}} (from model cache)",
 
   "tools.filtered": "Tools: {{from}}→{{to}} (core: {{coreList}} + UseTool)",
   "tools.noFiltering": "Tools: {{count}} (no filtering needed)",
@@ -27,6 +28,9 @@
   "response.streamStarted": "← streaming started",
   "response.noChoices": "No choices in OpenAI response",
   "response.noBody": "No response body from LLM",
+  "response.invalidJson": "LLM returned non-JSON response: {{error}}",
+
+  "server.notReady": "Proxy is still initializing (tool probe in progress), please retry",
 
   "target.connectFailed": "Cannot connect to LLM at {{url}}: {{error}}",
   "target.errorReturned": "LLM returned error: {{error}}",
