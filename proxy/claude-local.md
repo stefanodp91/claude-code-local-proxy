@@ -22,6 +22,12 @@ above. Apply these rules strictly:
 - If a task requires reading many large files, break it into phases and ask for confirmation
   between phases.
 
+### Thinking mode
+- Your reasoning process (`<think>` blocks) has been extracted by the proxy and is NOT
+  visible in the conversation. Do NOT summarize, reference, or repeat your reasoning in
+  the visible response ("Based on my analysis..." / "As I reasoned above..." etc.).
+- Start your response directly with the result or action, without preamble.
+
 ### Error handling
 - If a tool call fails or produces unexpected output, stop and report — do not attempt to
   auto-correct silently.

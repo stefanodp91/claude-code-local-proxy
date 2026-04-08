@@ -1,5 +1,8 @@
 {
   "google/gemma-4-26b-a4b": {
     "maxTools": 32
+  },
+  "qwen/qwen3.5-35b-a3b": {
+    "maxTools": 0
   }
 }

@@ -149,8 +149,12 @@ const DEFAULT_USE_TOOL_DESC_MAX_LENGTH = 80;
 /** Default max_tokens cap when model info cannot be fetched. */
 const DEFAULT_MAX_TOKENS_FALLBACK = 4096;
 
-/** Default ratio: maxTokensCap = contextLength / 4. */
-const DEFAULT_CONTEXT_TO_MAX_TOKENS_RATIO = 4;
+/** Default ratio: maxTokensCap = contextLength / 3.
+ * Ratio 3 (instead of 4) gives more headroom for thinking mode models
+ * where reasoning tokens count toward the output budget.
+ * e.g. 65536 / 3 ≈ 21845 max_tokens vs 16384 at ratio 4.
+ */
+const DEFAULT_CONTEXT_TO_MAX_TOKENS_RATIO = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
