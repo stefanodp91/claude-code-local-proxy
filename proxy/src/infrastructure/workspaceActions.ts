@@ -32,7 +32,7 @@ import {
   statSync,
   mkdirSync,
 } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import { resolve, join, relative, dirname } from "node:path";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,6 +43,8 @@ const MAX_FILE_BYTES = 50_000;
 const MAX_GREP_LINES = 200;
 const MAX_GLOB_RESULTS = 500;
 const SHELL_TIMEOUT_MS = 15_000;
+const BASH_TIMEOUT_MS = 30_000;
+const MAX_BASH_OUTPUT = 8_000;
 
 // Directories that are never useful to search or list for an LLM agent.
 const PRUNE_DIRS = new Set([
@@ -103,13 +105,14 @@ export const WORKSPACE_TOOL_DEF = {
       "  glob   – find files matching a glob-style pattern",
       "  write  – create or overwrite a file  ⚠ requires user approval",
       "  edit   – replace exact text in a file ⚠ requires user approval",
+      "  bash   – run a shell command (30s timeout) ⚠ requires user approval",
     ].join("\n"),
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["list", "read", "grep", "glob", "write", "edit"],
+          enum: ["list", "read", "grep", "glob", "write", "edit", "bash"],
           description: "Action to perform.",
         },
         path: {
@@ -144,6 +147,13 @@ export const WORKSPACE_TOOL_DEF = {
         new_string: {
           type: "string",
           description: "For edit: the replacement string.",
+        },
+        cmd: {
+          type: "string",
+          description:
+            "For bash: the shell command to execute. " +
+            "Runs in the workspace root with a 30-second timeout. " +
+            "Prefer specific read-only commands (wc, head, git log) over open-ended ones.",
         },
       },
       required: ["action"],
@@ -200,9 +210,9 @@ export function executeAction(args: ActionArgs, workspaceCwd: string): string {
       case "edit":
         return actionEdit(args, workspaceCwd);
       case "bash":
-        return "Error: bash is a destructive action and has not been approved yet";
+        return actionBash(args, workspaceCwd);
       default:
-        return `Error: unknown action '${args.action}'. Valid actions: list, read, grep, glob`;
+        return `Error: unknown action '${args.action}'. Valid actions: list, read, grep, glob, write, edit, bash`;
     }
   } catch (err) {
     return `Error executing action '${args.action}': ${String(err)}`;
@@ -475,6 +485,62 @@ function actionEdit(args: ActionArgs, workspaceCwd: string): string {
   } catch (err) {
     return `Error writing '${args.path}': ${String(err)}`;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action: bash
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Execute a shell command in the workspace root and return its output.
+ *
+ * Security model: the approval gate (invoked by the caller before
+ * executeAction) is the authorization boundary.  Here we apply only
+ * resource limits: a 30-second timeout, combined stdout+stderr capped
+ * at MAX_BASH_OUTPUT, and cwd locked to workspaceCwd.
+ *
+ * Note: spawnSync blocks the Node.js event loop for the duration of the
+ * command.  This is acceptable for a local single-user proxy; long-running
+ * commands should be avoided or broken into shorter steps by the model.
+ */
+function actionBash(args: ActionArgs, workspaceCwd: string): string {
+  if (!args.cmd) return "Error: 'cmd' is required for action='bash'";
+
+  const result = spawnSync("bash", ["-c", args.cmd], {
+    cwd: workspaceCwd,
+    timeout: BASH_TIMEOUT_MS,
+    maxBuffer: 4 * 1024 * 1024,
+    encoding: "utf-8",
+  });
+
+  // Timeout or spawn error
+  if (result.error) {
+    const code = (result.error as NodeJS.ErrnoException).code;
+    if (code === "ETIMEDOUT") {
+      return `Error: command timed out after ${BASH_TIMEOUT_MS / 1000}s`;
+    }
+    return `Error: ${String(result.error)}`;
+  }
+
+  const stdout = (result.stdout ?? "").trimEnd();
+  const stderr = (result.stderr ?? "").trimEnd();
+
+  // Build combined output: stdout first, then stderr labelled separately.
+  let output = stdout;
+  if (stderr) {
+    output += (output ? "\n\n[stderr]\n" : "[stderr]\n") + stderr;
+  }
+  if (!output) {
+    output = result.status !== 0 ? `(no output, exit code ${result.status ?? "?"})` : "(no output)";
+  } else if (result.status !== 0 && result.status !== null) {
+    output += `\n\n[exit code: ${result.status}]`;
+  }
+
+  if (output.length > MAX_BASH_OUTPUT) {
+    output = output.slice(0, MAX_BASH_OUTPUT) + `\n\n[output truncated at ${MAX_BASH_OUTPUT} chars]`;
+  }
+
+  return output;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
