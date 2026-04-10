@@ -2,18 +2,19 @@ import { Component, Input, Output, EventEmitter, ElementRef, AfterViewInit, OnDe
 import { CommonModule } from "@angular/common";
 import { MarkdownPipe } from "../../../shared/pipes/markdown.pipe";
 import { ThinkingBlockComponent } from "../thinking-block/thinking-block.component";
+import { ToolUseBlockComponent } from "../tool-use-block/tool-use-block.component";
 import { MessageMetadataComponent } from "../message-metadata/message-metadata.component";
 import { CodeRegistryService } from "../../../shared/services/code-registry.service";
 import { MessageStoreService } from "../../../core/services/message-store.service";
 import { MessageRole } from "../../../core/enums/message-role.enum";
 import { ContentBlockType } from "../../../core/enums/content-block-type.enum";
 import type { ChatMessage } from "../../../core/models/chat-message.model";
-import type { TextBlock, ThinkingBlock, ImageBlock } from "../../../core/models/content-block.model";
+import type { TextBlock, ThinkingBlock, ImageBlock, ToolUseBlock } from "../../../core/models/content-block.model";
 
 @Component({
   selector: "app-message-bubble",
   standalone: true,
-  imports: [CommonModule, MarkdownPipe, ThinkingBlockComponent, MessageMetadataComponent],
+  imports: [CommonModule, MarkdownPipe, ThinkingBlockComponent, ToolUseBlockComponent, MessageMetadataComponent],
   template: `
     <div class="msg-row" [class.msg-row--user]="isUser">
       <div class="bubble" [class.bubble--user]="isUser" [class.bubble--assistant]="!isUser">
@@ -21,6 +22,8 @@ import type { TextBlock, ThinkingBlock, ImageBlock } from "../../../core/models/
           @for (block of message.contentBlocks; track $index) {
             @if (block.type === thinkingType) {
               <app-thinking-block [block]="asThinking(block)" />
+            } @else if (block.type === toolUseType) {
+              <app-tool-use-block [block]="asToolUse(block)" />
             } @else if (block.type === imageType) {
               <img
                 class="attachment-image"
@@ -358,6 +361,7 @@ export class MessageBubbleComponent implements AfterViewInit, OnDestroy {
   }
 
   readonly thinkingType = ContentBlockType.Thinking;
+  readonly toolUseType  = ContentBlockType.ToolUse;
   readonly imageType    = ContentBlockType.Image;
 
   lightboxSrc: string | null = null;
@@ -368,9 +372,10 @@ export class MessageBubbleComponent implements AfterViewInit, OnDestroy {
     return this.message.role === MessageRole.User;
   }
 
-  asThinking(block: any): ThinkingBlock { return block as ThinkingBlock; }
-  asText(block: any): TextBlock          { return block as TextBlock; }
-  asImage(block: any): ImageBlock        { return block as ImageBlock; }
+  asThinking(block: any): ThinkingBlock   { return block as ThinkingBlock; }
+  asToolUse(block: any): ToolUseBlock     { return block as ToolUseBlock; }
+  asText(block: any): TextBlock           { return block as TextBlock; }
+  asImage(block: any): ImageBlock         { return block as ImageBlock; }
 
   copyBubble(): void {
     const text = this.message.contentBlocks

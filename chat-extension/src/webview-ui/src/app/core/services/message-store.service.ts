@@ -4,7 +4,7 @@ import { MessageRole } from "../enums/message-role.enum";
 import { MessageStatus } from "../enums/message-status.enum";
 import { ContentBlockType } from "../enums/content-block-type.enum";
 import type { ChatMessage } from "../models/chat-message.model";
-import type { ContentBlock, TextBlock, ThinkingBlock, ImageBlock } from "../models/content-block.model";
+import type { ContentBlock, TextBlock, ThinkingBlock, ImageBlock, ToolUseBlock } from "../models/content-block.model";
 import type { TokenUsage } from "../models/token-usage.model";
 import type { Attachment } from "@shared/message-protocol";
 
@@ -95,6 +95,32 @@ export class MessageStoreService {
     });
   }
 
+  startToolUseBlock(messageId: string, id: string, toolName: string): void {
+    this.updateMessage(messageId, (msg) => {
+      const block: ToolUseBlock = {
+        type: ContentBlockType.ToolUse,
+        id,
+        toolName,
+        rawInput: "",
+        isComplete: false,
+      };
+      msg.contentBlocks = [...msg.contentBlocks, block];
+    });
+  }
+
+  appendToolUseInputDelta(messageId: string, partialJson: string): void {
+    this.updateMessage(messageId, (msg) => {
+      for (let i = msg.contentBlocks.length - 1; i >= 0; i--) {
+        const block = msg.contentBlocks[i];
+        if (block.type === ContentBlockType.ToolUse && !block.isComplete) {
+          const updated: ToolUseBlock = { ...block, rawInput: block.rawInput + partialJson };
+          msg.contentBlocks = [...msg.contentBlocks.slice(0, i), updated, ...msg.contentBlocks.slice(i + 1)];
+          break;
+        }
+      }
+    });
+  }
+
   startTextBlock(messageId: string): void {
     this.updateMessage(messageId, (msg) => {
       const block: TextBlock = {
@@ -135,6 +161,15 @@ export class MessageStoreService {
       const block = msg.contentBlocks[blockIndex];
       if (block?.type === ContentBlockType.Thinking) {
         const updated: ThinkingBlock = { ...block, isComplete: true, completedAt: Date.now() };
+        msg.contentBlocks = [
+          ...msg.contentBlocks.slice(0, blockIndex),
+          updated,
+          ...msg.contentBlocks.slice(blockIndex + 1),
+        ];
+      } else if (block?.type === ContentBlockType.ToolUse) {
+        let parsedInput: ToolUseBlock["parsedInput"];
+        try { parsedInput = JSON.parse(block.rawInput); } catch { /* leave undefined */ }
+        const updated: ToolUseBlock = { ...block, isComplete: true, parsedInput };
         msg.contentBlocks = [
           ...msg.contentBlocks.slice(0, blockIndex),
           updated,

@@ -20,4 +20,21 @@ export interface ImageBlock {
   name: string;
 }
 
-export type ContentBlock = TextBlock | ThinkingBlock | ImageBlock;
+export interface ToolUseBlock {
+  type: ContentBlockType.ToolUse;
+  id: string;
+  toolName: string;
+  /** Accumulated raw JSON string from input_json_delta events. */
+  rawInput: string;
+  /** Parsed once the block is complete (content_block_stop received). */
+  parsedInput?: {
+    action?: string;
+    path?: string;
+    pattern?: string;
+    include?: string;
+    [key: string]: string | undefined;
+  };
+  isComplete: boolean;
+}
+
+export type ContentBlock = TextBlock | ThinkingBlock | ImageBlock | ToolUseBlock;

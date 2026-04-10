@@ -13,6 +13,8 @@ const EVENT_MESSAGE_DELTA = "message_delta";
 const EVENT_MESSAGE_STOP = "message_stop";
 const DELTA_TEXT = "text_delta";
 const DELTA_THINKING = "thinking_delta";
+const DELTA_INPUT_JSON = "input_json_delta";
+const BLOCK_TOOL_USE = "tool_use";
 
 @Injectable({ providedIn: "root" })
 export class StreamingService implements OnDestroy {
@@ -82,6 +84,12 @@ export class StreamingService implements OnDestroy {
     const blockType = payload.content_block?.type;
     if (blockType === ContentBlockType.Thinking) {
       this.store.startThinkingBlock(this.currentMessageId);
+    } else if (blockType === BLOCK_TOOL_USE) {
+      this.store.startToolUseBlock(
+        this.currentMessageId,
+        payload.content_block?.id ?? "",
+        payload.content_block?.name ?? "workspace",
+      );
     } else {
       this.store.startTextBlock(this.currentMessageId);
     }
@@ -95,6 +103,8 @@ export class StreamingService implements OnDestroy {
       this.store.appendTextDelta(this.currentMessageId, payload.delta.text);
     } else if (deltaType === DELTA_THINKING && payload.delta?.thinking) {
       this.store.appendThinkingDelta(this.currentMessageId, payload.delta.thinking);
+    } else if (deltaType === DELTA_INPUT_JSON && payload.delta?.partial_json) {
+      this.store.appendToolUseInputDelta(this.currentMessageId, payload.delta.partial_json);
     }
   }
 
