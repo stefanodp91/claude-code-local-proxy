@@ -1,15 +1,61 @@
-# Dependencies
+# ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
 
-# Bun
+# ── Package managers ─────────────────────────────────────────────────────────
 bun.lock
+.npm/
+.yarn/
+.pnp.*
 
-# Build output
+# ── Build output ─────────────────────────────────────────────────────────────
 dist/
+build/
+out/
+*.tsbuildinfo
 
-# Logs
+# ── Angular ──────────────────────────────────────────────────────────────────
+.angular/
+
+# ── VS Code extension package ────────────────────────────────────────────────
+*.vsix
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 proxy/proxy.log
 
-# Environment (contains local paths/ports)
+# ── Environment (contains local paths/ports/secrets) ─────────────────────────
+.env
+.env.local
+.env.*.local
 proxy/.env.proxy
 proxy/.env.claude
+
+# ── Test coverage ────────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── Python (chat-extension code execution venv) ──────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ── OS junk ──────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+# ── Editor backups & swap files ──────────────────────────────────────────────
+*.swp
+*.swo
+*~
+.idea/
+*.sublime-workspace

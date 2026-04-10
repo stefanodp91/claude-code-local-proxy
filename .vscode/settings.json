@@ -1,0 +1,6 @@
+{
+  "claudio.proxyDir": "${workspaceFolder}/proxy",
+  "claudio.proxyHost": "http://127.0.0.1",
+  "claudio.proxyPort": 5678,
+  "claudio.autoStartProxy": true
+}

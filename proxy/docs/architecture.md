@@ -4,13 +4,13 @@
 
 ## Overview
 
-The proxy is a Bun HTTP server that sits between Claude Code and a local LLM backend (LM Studio, ollama, vLLM, etc.). It translates Anthropic Messages API requests into OpenAI Chat Completions format and translates responses back, including full SSE streaming support.
+The proxy is a Node.js HTTP server (run via `tsx`) that sits between Claude Code (or Claudio) and a local LLM backend (LM Studio, ollama, vLLM, etc.). It translates Anthropic Messages API requests into OpenAI Chat Completions format and translates responses back, including full SSE streaming support.
 
 ```
 +──────────────+          +─────────────────+          +──────────────+
 │              │  Anthropic│                 │  OpenAI  │              │
 │  Claude Code │─────────>│      Proxy      │─────────>│  Local LLM   │
-│   (client)   │  Messages│  (Bun server)   │  Chat    │  (LM Studio) │
+│   (client)   │  Messages│  (Node.js/tsx)  │  Chat    │  (LM Studio) │
 │              │<─────────│                 │<─────────│              │
 │              │  SSE/JSON │                 │  SSE/JSON│              │
 +──────────────+          +─────────────────+          +──────────────+
@@ -28,22 +28,25 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 +─────────────────────────────────────────────────────────────────────+
 │                        INFRASTRUCTURE                               │
 │                                                                     │
-│  main.ts         Bootstrap (composition root)                       │
-│  server.ts       HTTP server, routing, dependency wiring            │
-│  config.ts       Environment variable parsing → ProxyConfig         │
-│  logger.ts       Logger implements ILogger port                     │
-│  modelInfo.ts    LM Studio /api/v0/models fetcher                   │
-│  toolProbe.ts    Binary search tool limit detection                 │
-│  httpUtils.ts    HTTP Response factories                            │
-│  i18nLoader.ts   Bun.file() locale loader → calls setMessages()    │
+│  main.ts             Bootstrap (composition root)                   │
+│  server.ts           HTTP server, routing, agentic loop, wiring     │
+│  config.ts           Environment variable parsing → ProxyConfig     │
+│  logger.ts           Logger implements ILogger port                 │
+│  modelInfo.ts        LM Studio /api/v0/models fetcher               │
+│  toolProbe.ts        Binary search tool limit detection             │
+│  persistentCache.ts  JSON file-backed model capability cache        │
+│  httpUtils.ts        HTTP Response factories                        │
+│  i18nLoader.ts       Locale loader → calls setMessages()           │
 │                                                                     │
 │  +───────────────────────────────────────────────────────────────+  │
 │  │                       APPLICATION                             │  │
 │  │                                                               │  │
-│  │  requestTranslator.ts   Anthropic → OpenAI request mapping    │  │
-│  │  responseTranslator.ts  OpenAI → Anthropic non-streaming      │  │
-│  │  streamTranslator.ts    OpenAI SSE → Anthropic SSE streaming  │  │
-│  │  toolManager.ts         Scoring, selection, UseTool, promotion │  │
+│  │  requestTranslator.ts      Anthropic → OpenAI request         │  │
+│  │  responseTranslator.ts     OpenAI → Anthropic non-streaming   │  │
+│  │  streamTranslator.ts       OpenAI SSE → Anthropic SSE         │  │
+│  │  toolManager.ts            Scoring, selection, UseTool        │  │
+│  │  slashCommandInterceptor.ts  Registry + pre-LLM interception  │  │
+│  │  workspaceTool.ts          Workspace list/read + summary      │  │
 │  │                                                               │  │
 │  │  +─────────────────────────────────────────────────────────+  │  │
 │  │  │                      DOMAIN                             │  │  │
@@ -65,7 +68,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 
 | Layer | File | Description |
 |---|---|---|
-| **Entry** | `src/main.ts` | Composition root: loadConfig → ProxyServer → initialize → start |
+| **Entry** | `src/main.ts` | Composition root: loadConfig → ProxyServer → initialize → start → initializeTools |
 | **Domain** | `src/domain/types.ts` | All enums (LogLevel, StopReason, FinishReason, ContentBlockType, SseEventType, ToolChoiceType, DeltaType, MessageRole, OpenAIToolType, Locale) and interfaces (LoadedModelInfo, AnthropicRequest, OpenAIRequest, OpenAITool, ToolSelection) |
 | **Domain** | `src/domain/ports.ts` | `ILogger` interface — DIP contract for logging |
 | **Domain** | `src/domain/utils.ts` | `msgId()` — Anthropic-style ID generation; `sseEvent()` — SSE wire format |
@@ -74,14 +77,28 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Application** | `src/application/responseTranslator.ts` | OpenAI → Anthropic: non-streaming JSON response translation |
 | **Application** | `src/application/streamTranslator.ts` | OpenAI SSE → Anthropic SSE: state machine with UseTool deferred emission |
 | **Application** | `src/application/toolManager.ts` | Additive scoring, selection, UseTool meta-tool, promotion/decay |
-| **Infrastructure** | `src/infrastructure/server.ts` | ProxyServer class: routing, handler orchestration, dependency wiring |
+| **Application** | `src/application/slashCommandInterceptor.ts` | Slash command registry + interceptor (synthetic / enrich / passthrough) |
+| **Application** | `src/application/workspaceTool.ts` | Workspace list/read tool definition, path validation, static summary fallback |
+| **Infrastructure** | `src/infrastructure/server.ts` | ProxyServer class: routing, agentic loop, handler orchestration, dependency wiring |
 | **Infrastructure** | `src/infrastructure/config.ts` | `loadConfig()` → `ProxyConfig` from environment variables |
 | **Infrastructure** | `src/infrastructure/logger.ts` | `Logger` implements `ILogger`, stderr output with timestamps |
 | **Infrastructure** | `src/infrastructure/modelInfo.ts` | `ModelInfoService.fetch()` — queries LM Studio `/api/v0/models` |
 | **Infrastructure** | `src/infrastructure/toolProbe.ts` | `ToolProbe.detect()` — binary search for max tool count |
+| **Infrastructure** | `src/infrastructure/persistentCache.ts` | Generic JSON file-backed key-value cache (stores maxTools per model ID) |
 | **Infrastructure** | `src/infrastructure/httpUtils.ts` | `anthropicError()` — Anthropic-format error Response factory |
 | **Infrastructure** | `src/infrastructure/i18nLoader.ts` | `loadLocale()` — reads JSON from `locales/`, calls `setMessages()` |
 | **Assets** | `locales/en_US.json` | English locale — 30+ message keys with `{{param}}` placeholders |
+
+---
+
+## HTTP Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Health check: `{"status":"ok","target":"..."}`. Available immediately after `proxy.start()`. |
+| `GET` | `/config` | Runtime config: proxyPort, targetUrl, temperature, systemPrompt, enableThinking, locale, maxTokensFallback, model info. Used by Claudio to auto-configure. |
+| `GET` | `/commands` | Slash command registry (`SLASH_COMMAND_REGISTRY`). Used by Claudio for command autocomplete. |
+| `POST` | `/v1/messages` | Main translation endpoint. Returns `503` while `initializeTools()` is still running. |
 
 ---
 
@@ -92,33 +109,31 @@ main.ts
   │
   ├── loadConfig()                     Read all env vars → ProxyConfig
   │
-  ├── new ProxyServer(config)          Create Logger from config.debug
+  ├── new ProxyServer(config)          Create Logger + ModelCache (PersistentCache)
   │
-  ├── proxy.initialize()
-  │     │
+  ├── proxy.initialize()               FAST PATH (~100-300ms)
   │     ├── loadLocale(config.locale)  Read locales/en_US.json → setMessages()
-  │     │
-  │     ├── ModelInfoService.fetch()   GET /api/v0/models from LM Studio
-  │     │     │                        Extract: id, arch, quantization,
-  │     │     │                        loadedContextLength, capabilities
-  │     │     └── Derive maxTokensCap  loadedContextLength / ratio
-  │     │
-  │     ├── detectToolLimit()
-  │     │     ├── MAX_TOOLS set?  ──>  Use override value
-  │     │     └── MAX_TOOLS unset? ──> ToolProbe.detect()
-  │     │           └── Binary search  1..32 with dummy tool_calls
-  │     │
-  │     └── Wire dependencies
-  │           ├── new ToolManager(maxTools, scoringConfig)
-  │           ├── new RequestTranslator(modelInfo, toolManager, config)
-  │           ├── new ResponseTranslator(toolManager)
-  │           └── new StreamTranslator(toolManager, logger)
+  │     └── ModelInfoService.fetch()   GET /api/v0/models from LM Studio
+  │           └── Derive maxTokensCap  loadedContextLength / ratio
   │
-  └── proxy.start()
-        └── Bun.serve({ port, idleTimeout: 0, fetch: route })
-              │
-              └── idleTimeout: 0  (disabled — local LLMs may take 30+ seconds
-                                   in reasoning phase before first token)
+  ├── proxy.start()                    HTTP server now listening
+  │     └── GET /health returns 200    (health check passes HERE)
+  │
+  └── proxy.initializeTools()          BACKGROUND (~3-30s)
+        │
+        ├── detectToolLimit()
+        │     ├── MAX_TOOLS set?    ──> Use override value
+        │     ├── Cache hit?        ──> Use cached maxTools (skip probe)
+        │     └── Cache miss?       ──> ToolProbe.detect() binary search
+        │           └── Write result to model-cache.json
+        │
+        └── Wire dependencies
+              ├── new ToolManager(maxTools, scoringConfig)
+              ├── new RequestTranslator(modelInfo, toolManager, config)
+              ├── new ResponseTranslator(toolManager)
+              └── new StreamTranslator(toolManager, logger)
+
+              ↑ POST /v1/messages returns 503 until this completes
 ```
 
 ---
@@ -126,7 +141,7 @@ main.ts
 ## Request Flow
 
 ```
-Claude Code                     Proxy                          LM Studio
+Claude Code (or Claudio)          Proxy                          LM Studio
     │                             │                                │
     │  POST /v1/messages          │                                │
     │  {                          │                                │
@@ -135,48 +150,192 @@ Claude Code                     Proxy                          LM Studio
     │    max_tokens, stream,      │                                │
     │    thinking, system         │                                │
     │  }                          │                                │
+    │  X-Workspace-Root: /path    │                                │
     │ ───────────────────────────>│                                │
     │                             │                                │
-    │                      Parse JSON body                         │
+    │                   SlashCommandInterceptor.intercept()        │
+    │                      ├── synthetic? ──> SSE response, DONE  │
+    │                      ├── enrich?    ──> replace last message │
+    │                      └── passthrough ──> continue            │
     │                             │                                │
-    │                      RequestTranslator.translate()            │
-    │                        ├── System prompt → system message    │
-    │                        ├── Messages: role/content conversion │
-    │                        ├── Tools: input_schema → parameters  │
-    │                        ├── tool_choice mapping               │
-    │                        ├── max_tokens capping                │
-    │                        └── ToolManager.selectTools()         │
-    │                             │    Score + rank + split        │
-    │                             │    Top N-1 + UseTool           │
+    │                   Workspace context injection                │
+    │                   (if X-Workspace-Root header present)       │
     │                             │                                │
-    │                             │  POST /v1/chat/completions     │
-    │                             │  {                              │
-    │                             │    model (remapped),            │
-    │                             │    messages (OpenAI format),    │
-    │                             │    tools (filtered + UseTool),  │
-    │                             │    tool_choice, max_tokens,     │
-    │                             │    stream                       │
-    │                             │  }                              │
-    │                             │ ──────────────────────────────>│
+    │                   RequestTranslator.translate()              │
+    │                      ├── System prompt → system message      │
+    │                      ├── Messages: role/content conversion   │
+    │                      ├── Tools: input_schema → parameters    │
+    │                      ├── tool_choice mapping                 │
+    │                      ├── max_tokens capping                  │
+    │                      └── ToolManager.selectTools()           │
     │                             │                                │
-    │                             │            (LLM generates)     │
-    │                             │                                │
-    │                             │<──────────────────────────────│
-    │                             │  SSE stream or JSON response   │
-    │                             │                                │
-    │               stream=true?  │                                │
+    │               Has workspace + maxTools > 0?                  │
     │               ┌─────────────┤                                │
     │               │ YES         │ NO                             │
     │               │             │                                │
-    │        StreamTranslator  ResponseTranslator                  │
-    │        State machine     JSON → JSON                         │
-    │        OpenAI SSE →      + UseTool rewriting                 │
-    │        Anthropic SSE                                         │
-    │        + UseTool deferred                                    │
-    │               │             │                                │
+    │        AGENTIC LOOP     Normal path                          │
+    │        (non-streaming)  (streaming or JSON)                  │
+    │        up to 10 rounds       │                               │
+    │             │                │                               │
+    │        Each round:           │  POST /v1/chat/completions    │
+    │          POST (no stream)    │ ──────────────────────────>   │
+    │          Execute workspace   │                               │
+    │          tool calls          │<──────────────────────────    │
+    │          if text → break     │  SSE stream or JSON response  │
+    │             │                │                               │
+    │        Final text →     stream=true?                         │
+    │        stream as SSE    ├── YES: StreamTranslator            │
+    │               │         │        OpenAI SSE → Anthropic SSE  │
+    │               │         └── NO:  ResponseTranslator          │
+    │               │                  JSON → JSON                 │
     │<──────────────┘─────────────┘                                │
     │  Anthropic SSE/JSON response                                 │
 ```
+
+---
+
+## Slash Command Interception
+
+The `SlashCommandInterceptor` runs on every `POST /v1/messages` request, **before** the request is translated and forwarded to the LLM.
+
+### How It Works
+
+```
+Incoming request
+      │
+      ├── Last message is a user message starting with "/"?
+      │     NO  → passthrough (normal flow)
+      │     YES → extract command name
+      │
+      ├── In ANTHROPIC_BLOCKED_COMMANDS?
+      │     YES → synthetic: "not available with local LLM proxies"
+      │
+      ├── In PROXY_COMMANDS?
+      │     NO  → passthrough (forwarded to LLM as-is)
+      │     YES → execute handler:
+      │
+      ├── execute(command, workspaceCwd)
+      │     ├── /status   → synthetic: proxy version, port, Node.js version, cwd
+      │     ├── /version  → synthetic: package version
+      │     ├── /commit   → enrich: staged diff + recent log → LLM writes commit msg
+      │     ├── /diff     → enrich: git diff HEAD → LLM explains changes
+      │     ├── /review   → enrich: diff vs main/master → LLM reviews
+      │     ├── /compact  → enrich: "summarize our conversation"
+      │     ├── /brief    → enrich: "respond briefly from now on"
+      │     └── /plan     → enrich: "think step by step"
+```
+
+### Result Types
+
+| Type | LLM called? | Description |
+|---|---|---|
+| `synthetic` | No | The proxy sends a complete SSE response immediately. The LLM is never invoked. |
+| `enrich` | Yes | The proxy replaces the last user message with an enriched prompt (e.g. with a git diff), then forwards to the LLM normally. |
+| `passthrough` | Yes | Not a handled command. Request proceeds through the normal translation pipeline. |
+
+### Workspace CWD
+
+The `X-Workspace-Root` header sent by Claudio is passed to the interceptor as the `workspaceCwd` argument. Git commands (`/commit`, `/diff`, `/review`) run inside that directory. Falls back to `process.cwd()` when the header is absent.
+
+### Command Registry
+
+The full command registry is served via `GET /commands`. Clients (like Claudio) use this to populate slash command autocomplete. Client-handled commands (e.g. `/files`, `/copy`) appear in the registry but have `handler: "client"` — the proxy does not execute them.
+
+---
+
+## Workspace Tool and Agentic Loop
+
+> **Deep-dive docs**: [agent-loop.md](agent-loop.md) covers the loop iteration, known limitations, and the planned model-agnostic dual-path architecture. [system-prompt-injection.md](system-prompt-injection.md) covers what the loop sees in the system prompt before running. [permission-protocol.md](permission-protocol.md) covers the planned approval flow for destructive actions.
+
+When a client sends the `X-Workspace-Root` header, the proxy can give the LLM access to the workspace filesystem.
+
+### Workspace Tool Definition
+
+```typescript
+{
+  type: "function",
+  function: {
+    name: "workspace",
+    description: "Access files in the current workspace.",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "read"] },
+        path: { type: "string" }   // relative to workspace root
+      },
+      required: ["action", "path"]
+    }
+  }
+}
+```
+
+### Security
+
+`safeResolve(workspaceCwd, relativePath)` resolves the path and checks that it starts with the workspace root. Any attempt to read outside (e.g. `../../etc/passwd`) is rejected with an error.
+
+### Two Modes
+
+**Agentic Loop** (when `maxTools > 0`):
+
+```
+POST /v1/messages received (with X-Workspace-Root)
+  │
+  └── Round 1: POST /v1/chat/completions (non-streaming)
+        Only `workspace` tool available
+        │
+        ├── Model calls workspace(action="list", path=".")
+        │     → proxy executes: lists workspace root
+        │     → tool result injected as next user message
+        │
+        └── Round 2: POST /v1/chat/completions
+              │
+              ├── Model calls workspace(action="read", path="src/main.ts")
+              │     → proxy reads file (max 50KB)
+              │     → tool result injected
+              │
+              └── Round N (up to 10): model produces text response
+                    → exit loop
+                    → stream text response to client as Anthropic SSE
+```
+
+**Static Summary** (when `maxTools === 0`): the proxy injects a pre-built text block into the system prompt containing:
+- Top-level directory listing
+- `package.json` content (name, description, workspaces)
+- First 2000 characters of `README.md`
+
+---
+
+## Persistent Model Cache
+
+Tool limit detection via binary search probe can take 3–30 seconds. The persistent cache avoids this on every restart.
+
+```
+proxy/model-cache.json example:
+{
+  "qwen/qwen3.5-35b-a3b":             { "maxTools": 15 },
+  "nemotron-cascade-2-30b-a3b@6bit":  { "maxTools": 7  },
+  "llama-3.1-8b-instruct":            { "maxTools": 4  }
+}
+```
+
+**Cache lifecycle:**
+
+```
+Startup
+  │
+  ├── modelInfo.id available?
+  │     NO  → skip cache, run probe
+  │     YES → check model-cache.json
+  │
+  ├── Cache hit (modelId found)?
+  │     YES → use cached maxTools immediately  ← probe skipped
+  │     NO  → run ToolProbe.detect() binary search
+  │             write result: cache.set(modelId, { maxTools: N })
+  │
+  └── Wire translators with maxTools value
+```
+
+To force a re-detection: delete `proxy/model-cache.json` or remove the specific model entry.
 
 ---
 
@@ -314,12 +473,6 @@ domain/ports.ts                 infrastructure/logger.ts
 │    error()      │              │    error()           │
 │  }              │              │  }                   │
 +────────────────+              +──────────────────────+
-       ^                                  ^
-       │                                  │
-  Used by application:              Created by infrastructure:
-  streamTranslator.ts              server.ts constructor
-  toolProbe.ts
-  modelInfo.ts
 ```
 
 Similarly, i18n is split:
@@ -328,7 +481,7 @@ Similarly, i18n is split:
 domain/i18n.ts                  infrastructure/i18nLoader.ts
 +─────────────────+             +───────────────────────+
 │ setMessages()   │<────────────│ loadLocale()          │
-│ t(key, params)  │  populates  │   Bun.file() → JSON   │
+│ t(key, params)  │  populates  │   fs.readFile() → JSON│
 │                 │  via call   │   → setMessages(msgs)  │
 │ Pure lookup.    │             │                       │
 │ No I/O.         │             │ File I/O lives here.  │
@@ -339,6 +492,9 @@ domain/i18n.ts                  infrastructure/i18nLoader.ts
 
 ## Related Docs
 
-- [Configuration Reference](proxy-configuration.md) — all environment variables
-- [Tool Management](tool-management.md) — scoring, selection, UseTool, promotion
-- [Startup Scripts](startup-scripts.md) — start.sh and start_claude_code.sh
+- [Configuration Reference](configuration.md) — all environment variables
+- [Tool Management](tool-management.md) — scoring, selection, UseTool, promotion, persistent cache
+- [Agent Loop](agent-loop.md) — workspace exploration loop, limitations, and the planned dual-path architecture
+- [System Prompt Injection](system-prompt-injection.md) — what the proxy auto-injects into every workspace-aware request
+- [Permission Protocol](permission-protocol.md) — planned wire format for approving destructive actions
+- [Startup Scripts](startup-scripts.md) — start_agent_cli.sh internals

@@ -21,7 +21,7 @@ The source map file in the published npm package contained a reference to the fu
 
 Claude Code is Anthropic's official CLI tool that lets you interact with Claude directly from the terminal to perform software engineering tasks — editing files, running commands, searching codebases, managing git workflows, and more.
 
-This repository contains the leaked `src/` directory.
+This repository contains the leaked source code in `claude_code/src/`.
 
 - **Leaked on**: 2026-03-31
 - **Language**: TypeScript
@@ -31,29 +31,42 @@ This repository contains the leaked `src/` directory.
 
 ---
 
-## Anthropic-to-OpenAI Proxy (v1.0.0)
+## Anthropic-to-OpenAI Proxy (v1.1.0)
 
-This repository includes a **Bun-based translation proxy** (`proxy/`) that lets Claude Code work with any local LLM through an OpenAI-compatible API. The proxy sits between Claude Code and the LLM backend, translating Anthropic Messages API requests into OpenAI Chat Completions format and back.
+This repository includes a **Node.js translation proxy** (`proxy/`) that lets Claude Code work with any local LLM through an OpenAI-compatible API. The proxy sits between Claude Code and the LLM backend, translating Anthropic Messages API requests into OpenAI Chat Completions format and back.
 
 ### Quick Start
 
 ```bash
-# Full stack: proxy + Claude Code
-sh start.sh
+# One-time setup
+cd proxy && npm install && cd ..
+```
 
-# Or step by step:
-cd proxy && bun start          # Terminal 1: start proxy
-sh start_claude_code.sh        # Terminal 2: launch Claude Code
+#### Option A — Claudio (VS Code extension)
+
+Install the extension (`chat-extension/`) and open the repo in VS Code.
+The proxy starts automatically. The chat panel shows `● Connected` when ready.
+No separate terminal needed.
+
+#### Option B — Claude Code CLI
+
+```bash
+sh start_agent_cli.sh
+# Finds a free port, spawns the proxy, waits for health,
+# lets you pick a model interactively, then launches Claude Code.
+# Proxy is killed automatically when you exit.
 ```
 
 ### Supported Backends
 
-| Backend | Default URL |
-|---|---|
-| LM Studio | `http://127.0.0.1:1234/v1/chat/completions` |
-| ollama | `http://127.0.0.1:11434/v1/chat/completions` |
-| vLLM | `http://127.0.0.1:8000/v1/chat/completions` |
-| text-generation-webui | `http://127.0.0.1:5000/v1/chat/completions` |
+| Backend | Default URL | Model info | max_tokens auto-cap |
+|---|---|---|---|
+| LM Studio | `http://127.0.0.1:1234/v1/chat/completions` | ✅ full | ✅ automatic |
+| ollama | `http://127.0.0.1:11434/v1/chat/completions` | ❌ | ⚠️ uses `MAX_TOKENS_FALLBACK` |
+| vLLM | `http://127.0.0.1:8000/v1/chat/completions` | ❌ | ⚠️ uses `MAX_TOKENS_FALLBACK` |
+| text-generation-webui | `http://127.0.0.1:5000/v1/chat/completions` | ❌ | ⚠️ uses `MAX_TOKENS_FALLBACK` |
+
+> LM Studio exposes a proprietary `/api/v0/models` endpoint that the proxy uses to read context length, architecture, and capabilities. Other backends get full translation support but without automatic model metadata.
 
 ### Key Features
 
@@ -62,6 +75,10 @@ sh start_claude_code.sh        # Terminal 2: launch Claude Code
 - **UseTool meta-tool** — Overflow tools remain accessible via an auto-generated meta-tool, with transparent rewriting
 - **Auto-promotion** — Tools used via UseTool are promoted into the active set for future requests
 - **Tool limit auto-detection** — Binary search probe determines the model's max tool count at startup
+- **Persistent model cache** — `maxTools` per model stored in `proxy/model-cache.json`; probe is skipped on subsequent restarts with the same model
+- **Split initialization** — HTTP server responds immediately (health check passes); tool probe runs in the background
+- **Slash command interceptor** — `/commit`, `/diff`, `/review`, `/status`, `/version`, `/compact`, `/brief`, `/plan` are handled by the proxy before the LLM is called
+- **Workspace tool + agentic loop** — Models can explore the filesystem (list/read) via up to 10 agentic rounds to gather context before responding
 - **Model info** — Fetches architecture, context window, and capabilities from LM Studio's internal API
 - **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
 - **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
@@ -69,20 +86,88 @@ sh start_claude_code.sh        # Terminal 2: launch Claude Code
 
 ### Documentation
 
-Full proxy documentation in [`docs/`](docs/):
+Full proxy documentation in [`proxy/docs/`](proxy/docs/):
 
-- [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
-- [Architecture](docs/proxy-architecture.md) — hexagonal structure, request flow, SSE state machine, translation tables
-- [Configuration](docs/proxy-configuration.md) — complete reference for all environment variables
-- [Tool Management](docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe
-- [Startup Scripts](docs/startup-scripts.md) — start.sh and start_claude_code.sh internals
+- [Quick Setup](proxy/docs/quick-setup.md) — minimum configuration to get up and running (includes prerequisites)
+- [Architecture](proxy/docs/architecture.md) — hexagonal structure, request flow, SSE state machine, slash commands, workspace tool
+- [Configuration](proxy/docs/configuration.md) — complete reference for all environment variables
+- [Tool Management](proxy/docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe, persistent cache
+- [Startup Scripts](proxy/docs/startup-scripts.md) — start_agent_cli.sh internals
+- [Proxy Lifecycle](proxy/docs/lifecycle.md) — multi-instance architecture and port discovery
+
+---
+
+## Claudio — VS Code Chat Extension (v0.1.0)
+
+**Claudio** is a VS Code extension that provides a chat UI for interacting with the proxy directly from the editor — no terminal required.
+
+```
+┌──────────────────────────────────┐
+│  VS Code Activity Bar            │
+│  ┌──────────────────────────┐    │
+│  │ Claudio Sidebar          │    │
+│  │                          │    │
+│  │  ● Connected             │    │
+│  │                          │    │
+│  │  User: explain main.ts   │    │
+│  │                          │    │
+│  │  AI: main.ts is the...   │    │
+│  │  (streaming...)          │    │
+│  │                          │    │
+│  │  [Type a message...]  ▶  │    │
+│  └──────────────────────────┘    │
+└──────────────────────────────────┘
+```
+
+### Features
+
+- **Streaming chat** — real-time responses with Markdown and math formulas (KaTeX)
+- **Python code execution** — run code snippets in the chat with auto-managed venv
+- **File attachments** — attach text files and images to the conversation
+- **Slash commands** — `/files`, `/simplify`, `/copy`, `/branch`, `/commit-push-pr`, `/pr-comments`, `/clear`
+- **Health monitoring** — live connection indicator, automatic reconnection
+- **i18n** — English and Italian interface
+
+### Quick Install
+
+```bash
+cd chat-extension
+npm install
+cd src/webview-ui && npm install && cd ../..
+npm run build
+npm run package
+code --install-extension claudio-0.1.0.vsix
+```
+
+Reload VS Code → the Claudio icon appears in the Activity Bar.
+
+### Configuration
+
+In VS Code settings (Ctrl+, → search "Claudio"):
+
+```json
+{
+  "claudio.proxyHost": "http://127.0.0.1",
+  "claudio.proxyPort": 5678
+}
+```
+
+All other settings (temperature, system prompt, model info, locale) are read automatically from the proxy's `/config` endpoint.
+
+### Documentation
+
+- [Claudio README](chat-extension/README.md) — full standalone guide
+- [Quick Start](chat-extension/docs/quick-start.md) — beginner step-by-step guide
+- [Architecture](chat-extension/docs/architecture.md) — internal structure for contributors
+- [Slash Commands](chat-extension/docs/slash-commands.md) — complete command reference
+- [Troubleshooting](chat-extension/docs/troubleshooting.md) — problem resolution
 
 ---
 
 ## Directory Structure
 
 ```
-src/
+claude_code/src/
 ├── main.tsx                 # Entrypoint (Commander.js-based CLI parser)
 ├── commands.ts              # Command registry
 ├── tools.ts                 # Tool registry
@@ -127,7 +212,7 @@ src/
 
 ## Core Architecture
 
-### 1. Tool System (`src/tools/`)
+### 1. Tool System (`claude_code/src/tools/`)
 
 Every tool Claude Code can invoke is implemented as a self-contained module. Each tool defines its input schema, permission model, and execution logic.
 
@@ -157,7 +242,7 @@ Every tool Claude Code can invoke is implemented as a self-contained module. Eac
 | `SleepTool` | Proactive mode wait |
 | `SyntheticOutputTool` | Structured output generation |
 
-### 2. Command System (`src/commands/`)
+### 2. Command System (`claude_code/src/commands/`)
 
 User-facing slash commands invoked with `/` prefix.
 
@@ -184,7 +269,7 @@ User-facing slash commands invoked with `/` prefix.
 | `/desktop` | Desktop app handoff |
 | `/mobile` | Mobile app handoff |
 
-### 3. Service Layer (`src/services/`)
+### 3. Service Layer (`claude_code/src/services/`)
 
 | Service | Description |
 |---|---|
@@ -201,7 +286,7 @@ User-facing slash commands invoked with `/` prefix.
 | `tokenEstimation.ts` | Token count estimation |
 | `teamMemorySync/` | Team memory synchronization |
 
-### 4. Bridge System (`src/bridge/`)
+### 4. Bridge System (`claude_code/src/bridge/`)
 
 A bidirectional communication layer connecting IDE extensions (VS Code, JetBrains) with the Claude Code CLI.
 
@@ -212,7 +297,7 @@ A bidirectional communication layer connecting IDE extensions (VS Code, JetBrain
 - `jwtUtils.ts` — JWT-based authentication
 - `sessionRunner.ts` — Session execution management
 
-### 5. Permission System (`src/hooks/toolPermission/`)
+### 5. Permission System (`claude_code/src/hooks/toolPermission/`)
 
 Checks permissions on every tool invocation. Either prompts the user for approval/denial or automatically resolves based on the configured permission mode (`default`, `plan`, `bypassPermissions`, `auto`, etc.).
 
@@ -235,19 +320,19 @@ Notable flags: `PROACTIVE`, `KAIROS`, `BRIDGE_MODE`, `DAEMON`, `VOICE_MODE`, `AG
 
 ## Key Files in Detail
 
-### `QueryEngine.ts` (~46K lines)
+### `claude_code/src/QueryEngine.ts` (~46K lines)
 
 The core engine for LLM API calls. Handles streaming responses, tool-call loops, thinking mode, retry logic, and token counting.
 
-### `Tool.ts` (~29K lines)
+### `claude_code/src/Tool.ts` (~29K lines)
 
 Defines base types and interfaces for all tools — input schemas, permission models, and progress state types.
 
-### `commands.ts` (~25K lines)
+### `claude_code/src/commands.ts` (~25K lines)
 
 Manages registration and execution of all slash commands. Uses conditional imports to load different command sets per environment.
 
-### `main.tsx`
+### `claude_code/src/main.tsx`
 
 Commander.js-based CLI parser + React/Ink renderer initialization. At startup, parallelizes MDM settings, keychain prefetch, and GrowthBook initialization for faster boot.
 
