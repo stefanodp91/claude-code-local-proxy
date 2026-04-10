@@ -576,24 +576,24 @@ Or via `~/.claude/settings.json`:
 
 ### With local LLM (via Anthropic-to-OpenAI proxy)
 
-This repo includes a Bun proxy (`proxy/`) that translates the Anthropic Messages API to OpenAI Chat Completions, allowing Claude Code to work with any local LLM server (LM Studio, ollama, vLLM, etc.).
+This repo includes a Node.js proxy (`proxy/`) that translates the Anthropic Messages API to OpenAI Chat Completions, allowing Claude Code to work with any local LLM server (LM Studio, ollama, vLLM, etc.).
 
 **Quick start:**
 
 ```bash
 # 1. Configure proxy/.env.proxy (target URL, port) and proxy/.env.claude (model name)
 # 2. Launch everything:
-sh start.sh
+sh start_agent_cli.sh
 ```
 
 Or step by step:
 
 ```bash
 # Start the proxy standalone
-cd proxy && bun start
+cd proxy && npm start
 
 # In another terminal, launch Claude Code through the proxy
-sh start_claude_code.sh
+sh start_agent_cli.sh
 ```
 
 The proxy handles streaming (SSE), tool calling translation, dynamic tool selection (with scoring and auto-promotion), and auto-detection of the model's tool limit via binary search probe. See `proxy/` for full configuration options.
