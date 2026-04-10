@@ -14,10 +14,10 @@ import {
   StopReason,
   FinishReason,
   ContentBlockType,
-} from "../domain/types.ts";
-import type { ToolManager } from "./toolManager.ts";
-import { msgId } from "../domain/utils.ts";
-import { t } from "../domain/i18n.ts";
+} from "../domain/types";
+import type { ToolManager } from "./toolManager";
+import { msgId } from "../domain/utils";
+import { t } from "../domain/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ResponseTranslator

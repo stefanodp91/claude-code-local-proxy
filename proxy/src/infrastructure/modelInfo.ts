@@ -9,10 +9,10 @@
  * @module infrastructure/modelInfo
  */
 
-import type { LoadedModelInfo } from "../domain/types.ts";
-import type { ProxyConfig } from "./config.ts";
-import type { ILogger } from "../domain/ports.ts";
-import { t } from "../domain/i18n.ts";
+import type { LoadedModelInfo } from "../domain/types";
+import type { ProxyConfig } from "./config";
+import type { ILogger } from "../domain/ports";
+import { t } from "../domain/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -88,8 +88,11 @@ export class ModelInfoService {
 
       return {
         id: loaded.id,
+        type: loaded.type ?? "llm",
+        publisher: loaded.publisher ?? "unknown",
         arch: loaded.arch ?? "unknown",
         quantization: loaded.quantization ?? "unknown",
+        compatibilityType: loaded.compatibility_type ?? "unknown",
         loadedContextLength: ctxLen,
         maxContextLength: loaded.max_context_length ?? ctxLen,
         capabilities: loaded.capabilities ?? [],

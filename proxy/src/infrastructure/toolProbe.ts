@@ -11,8 +11,8 @@
  * @module infrastructure/toolProbe
  */
 
-import type { ILogger } from "../domain/ports.ts";
-import { t } from "../domain/i18n.ts";
+import type { ILogger } from "../domain/ports";
+import { t } from "../domain/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration Interface (DIP: depend on a narrow interface, not full config)

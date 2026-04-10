@@ -24,11 +24,11 @@ import {
   ContentBlockType,
   DeltaType,
   USE_TOOL_NAME,
-} from "../domain/types.ts";
-import type { ToolManager } from "./toolManager.ts";
-import type { ILogger } from "../domain/ports.ts";
-import { msgId, sseEvent } from "../domain/utils.ts";
-import { t } from "../domain/i18n.ts";
+} from "../domain/types";
+import type { ToolManager } from "./toolManager";
+import type { ILogger } from "../domain/ports";
+import { msgId, sseEvent } from "../domain/utils";
+import { t } from "../domain/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Types
@@ -131,9 +131,12 @@ class StreamStateMachine {
   private textBlockOpen = false;
   private toolCallsStarted = false;
   private readonly toolCalls = new Map<number, StreamToolCall>();
-  private finalized = false;
+  private finalized = false;       // blocks closed, stop_reason known
+  private finalEventsSent = false; // message_delta + message_stop emitted
   private closed = false;
   private buffer = "";
+  private pendingUsage: { completion_tokens?: number; prompt_tokens?: number } = {};
+  private pendingStopReason: StopReason | null = null;
 
   constructor(
     private readonly model: string,
@@ -192,11 +195,7 @@ class StreamStateMachine {
           if (this.buffer.trim()) {
             aborted = this.processBufferLines(this.buffer, controller, encoder);
           }
-          if (!aborted && !this.closed) {
-            // Upstream closed without [DONE] — emit proper termination so
-            // Claude Code never receives a truncated stream
-            const finale = this.handleAbruptClose();
-            if (finale) this.safeEnqueue(controller, encoder, finale);
+          if (!this.closed) {
             try { controller.close(); } catch { /* already closed */ }
           }
           break;
@@ -287,24 +286,9 @@ class StreamStateMachine {
       return "";
     }
 
-    // Handle LM Studio / llama.cpp error objects (e.g. {"error": {"message": "Compute error."}})
-    if (parsed.error && !this.finalized) {
-      const msg = String(parsed.error.message ?? parsed.error);
-      this.logger.error(t("stream.upstreamError", { error: msg }));
-      this.finalized = true;
-      if (this.started) {
-        return this.closeThinkingBlock() + this.closeTextBlock() +
-          sseEvent(SseEventType.MessageDelta, {
-            type: SseEventType.MessageDelta,
-            delta: { stop_reason: StopReason.EndTurn },
-            usage: { output_tokens: 0 },
-          }) +
-          sseEvent(SseEventType.MessageStop, { type: SseEventType.MessageStop });
-      }
-      return sseEvent(SseEventType.Error, {
-        type: "error",
-        error: { type: "api_error", message: msg },
-      });
+    // Capture usage from any chunk (LM Studio may send it in a choices-less chunk)
+    if (parsed.usage) {
+      this.pendingUsage = parsed.usage;
     }
 
     const choice = parsed.choices?.[0];
@@ -472,25 +456,31 @@ class StreamStateMachine {
   }
 
   /**
-   * Handle the [DONE] sentinel: finalize all open blocks.
+   * Handle the [DONE] sentinel: emit final message_delta + message_stop with
+   * accumulated usage. This always runs last, so usage from any prior chunk
+   * (including usage-only chunks) is available in pendingUsage.
    */
   private handleDone(): string {
-    if (this.finalized) return "";
-    this.finalized = true;
+    if (this.finalEventsSent) return "";
+    this.finalEventsSent = true;
 
     let out = "";
-    out += this.closeThinkingBlock();
-    out += this.closeTextBlock();
-    out += this.finalizeToolCalls();
 
-    // Determine stop reason
-    const hasToolCalls = this.toolCalls.size > 0;
+    // Close any open blocks not yet closed by handleFinishReason
+    if (!this.finalized) {
+      this.finalized = true;
+      out += this.closeThinkingBlock();
+      out += this.closeTextBlock();
+      out += this.finalizeToolCalls();
+    }
+
+    const stopReason =
+      this.pendingStopReason ?? (this.toolCalls.size > 0 ? StopReason.ToolUse : StopReason.EndTurn);
+
     out += sseEvent(SseEventType.MessageDelta, {
       type: SseEventType.MessageDelta,
-      delta: {
-        stop_reason: hasToolCalls ? StopReason.ToolUse : StopReason.EndTurn,
-      },
-      usage: { output_tokens: 0 },
+      delta: { stop_reason: stopReason },
+      usage: { output_tokens: this.pendingUsage.completion_tokens ?? 0 },
     });
     out += sseEvent(SseEventType.MessageStop, { type: SseEventType.MessageStop });
 
@@ -498,62 +488,33 @@ class StreamStateMachine {
   }
 
   /**
-   * Handle a finish_reason in the stream (last chunk before [DONE]).
+   * Handle a finish_reason chunk: close open blocks and record stop reason.
+   * Does NOT emit message_delta yet — deferred to handleDone() so that any
+   * usage-only chunk that arrives between finish_reason and [DONE] is captured.
    */
   private handleFinishReason(finishReason: string, parsed: any): string {
     this.finalized = true;
 
+    if (parsed.usage) this.pendingUsage = parsed.usage;
+
+    // Map finish reason
+    switch (finishReason) {
+      case FinishReason.ToolCalls:
+        this.pendingStopReason = StopReason.ToolUse;
+        break;
+      case FinishReason.Length:
+        this.pendingStopReason = StopReason.MaxTokens;
+        break;
+      default:
+        this.pendingStopReason = this.toolCalls.size > 0 ? StopReason.ToolUse : StopReason.EndTurn;
+    }
+
     let out = "";
     out += this.closeThinkingBlock();
     out += this.closeTextBlock();
     out += this.finalizeToolCalls();
-
-    // Map finish reason
-    let stopReason: StopReason;
-    switch (finishReason) {
-      case FinishReason.ToolCalls:
-        stopReason = StopReason.ToolUse;
-        break;
-      case FinishReason.Length:
-        stopReason = StopReason.MaxTokens;
-        break;
-      default:
-        stopReason = this.toolCalls.size > 0 ? StopReason.ToolUse : StopReason.EndTurn;
-    }
-
-    const usage = parsed.usage ?? {};
-    out += sseEvent(SseEventType.MessageDelta, {
-      type: SseEventType.MessageDelta,
-      delta: { stop_reason: stopReason },
-      usage: { output_tokens: usage.completion_tokens ?? 0 },
-    });
-    out += sseEvent(SseEventType.MessageStop, { type: SseEventType.MessageStop });
-
     return out;
   }
-
-  /**
-   * Handle upstream connection closed without `[DONE]` sentinel.
-   *
-   * If `message_start` was already emitted, finalize the message cleanly so
-   * Claude Code receives a well-formed stream instead of crashing.
-   * If nothing was emitted yet, send an SSE error event.
-   */
-  private handleAbruptClose(): string {
-    if (this.finalized) return "";
-
-    if (!this.started) {
-      // Stream never started — emit SSE error for a clean rejection
-      return sseEvent(SseEventType.Error, {
-        type: "error",
-        error: { type: "api_error", message: t("stream.abruptClose") },
-      });
-    }
-
-    // message_start was emitted — finalize the same way [DONE] would
-    return this.handleDone();
-  }
-
 
   // ── Tool Call Finalization ──────────────────────────────────────────────
 

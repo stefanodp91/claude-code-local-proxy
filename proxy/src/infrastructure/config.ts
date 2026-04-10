@@ -11,7 +11,7 @@
  * @module infrastructure/config
  */
 
-import { Locale } from "../domain/types.ts";
+import { Locale } from "../domain/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ProxyConfig Interface
@@ -91,19 +91,21 @@ export interface ProxyConfig {
   /** maxTokensCap = loadedContextLength / this ratio. */
   contextToMaxTokensRatio: number;
 
-  // ── System Prompt ──
-
-  /**
-   * Content of proxy/claude-local.md, appended to the system prompt of every request.
-   * Loaded at startup by ProxyServer.initialize(). Empty string = disabled.
-   * Not settable via environment variable — edit claude-local.md directly.
-   */
-  systemPromptAppend: string;
-
   // ── i18n ──
 
   /** Locale for log messages and error strings. */
   locale: Locale;
+
+  // ── Chat defaults (exposed via GET /config to chat clients) ──
+
+  /** Default temperature for chat requests. */
+  temperature: number;
+
+  /** Optional system prompt prepended to every conversation. */
+  systemPrompt: string;
+
+  /** When true, send thinking:{type:"enabled"} to the model. */
+  enableThinking: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,12 +151,17 @@ const DEFAULT_USE_TOOL_DESC_MAX_LENGTH = 80;
 /** Default max_tokens cap when model info cannot be fetched. */
 const DEFAULT_MAX_TOKENS_FALLBACK = 4096;
 
-/** Default ratio: maxTokensCap = contextLength / 3.
- * Ratio 3 (instead of 4) gives more headroom for thinking mode models
- * where reasoning tokens count toward the output budget.
- * e.g. 65536 / 3 ≈ 21845 max_tokens vs 16384 at ratio 4.
- */
-const DEFAULT_CONTEXT_TO_MAX_TOKENS_RATIO = 3;
+/** Default ratio: maxTokensCap = contextLength / 4. */
+const DEFAULT_CONTEXT_TO_MAX_TOKENS_RATIO = 4;
+
+/** Default temperature for chat requests. */
+const DEFAULT_TEMPERATURE = 0.7;
+
+/** Default system prompt (empty). */
+const DEFAULT_SYSTEM_PROMPT = "";
+
+/** Default: send thinking:{type:"enabled"} when the model supports it. */
+const DEFAULT_ENABLE_THINKING = true;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -179,6 +186,19 @@ function envInt(key: string, fallback: number): number {
   if (raw === undefined) return fallback;
   const parsed = parseInt(raw, 10);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function envFloat(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (raw === undefined) return fallback;
+  const parsed = parseFloat(raw);
+  return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function envBool(key: string, fallback: boolean): boolean {
+  const raw = process.env[key];
+  if (raw === undefined) return fallback;
+  return raw === "1" || raw.toLowerCase() === "true";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,10 +250,12 @@ export function loadConfig(): ProxyConfig {
     maxTokensFallback:       envInt("MAX_TOKENS_FALLBACK", DEFAULT_MAX_TOKENS_FALLBACK),
     contextToMaxTokensRatio: envInt("CONTEXT_TO_MAX_TOKENS_RATIO", DEFAULT_CONTEXT_TO_MAX_TOKENS_RATIO),
 
-    // System prompt (populated at runtime by ProxyServer.initialize(), not from env)
-    systemPromptAppend:      "",
-
     // i18n
     locale:                  env("LOCALE", Locale.EnUS) as Locale,
+
+    // Chat defaults
+    temperature:             envFloat("TEMPERATURE", DEFAULT_TEMPERATURE),
+    systemPrompt:            env("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
+    enableThinking:          envBool("ENABLE_THINKING", DEFAULT_ENABLE_THINKING),
   };
 }

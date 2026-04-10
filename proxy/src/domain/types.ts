@@ -38,6 +38,7 @@ export enum ContentBlockType {
   ToolUse = "tool_use",
   ToolResult = "tool_result",
   Thinking = "thinking",
+  Image = "image",
 }
 
 /** Anthropic SSE event types emitted in streaming responses. */
@@ -102,11 +103,20 @@ export interface LoadedModelInfo {
   /** Model identifier as reported by LM Studio (e.g., "nemotron-cascade-2-30b-a3b@6bit"). */
   id: string;
 
+  /** Model type as reported by LM Studio: "llm" for text-only, "vlm" for vision-language models. */
+  type: string;
+
+  /** Who quantized/published the model (e.g., "bartowski", "lmstudio-community"). */
+  publisher: string;
+
   /** Model architecture family (e.g., "nemotron_h", "llama"). */
   arch: string;
 
   /** Quantization format (e.g., "6bit", "Q4_K_M"). */
   quantization: string;
+
+  /** Execution backend (e.g., "gguf", "mlx"). */
+  compatibilityType: string;
 
   /** Context window actually loaded (may be less than max due to VRAM constraints). */
   loadedContextLength: number;
@@ -153,6 +163,7 @@ export interface OpenAIRequest {
   temperature?: number;
   top_p?: number;
   stream: boolean;
+  stream_options?: { include_usage: boolean };
   tools?: OpenAITool[];
   tool_choice?: string | { type: string; function: { name: string } };
   stop?: string[];

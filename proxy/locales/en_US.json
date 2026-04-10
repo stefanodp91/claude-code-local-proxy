@@ -23,7 +23,6 @@
 
   "request.incoming": "→ {{model}} | {{msgs}} msgs | {{tools}} tools | stream={{stream}} | thinking={{thinking}} | max_tokens={{from}}→{{to}}",
   "request.invalidJson": "Invalid JSON in request body",
-  "request.pruned": "Context pruned: removed {{count}} messages ({{remaining}} remaining)",
 
   "response.stopReason": "← stop_reason={{reason}}",
   "response.streamStarted": "← streaming started",
@@ -32,7 +31,6 @@
   "response.invalidJson": "LLM returned non-JSON response: {{error}}",
 
   "server.notReady": "Proxy is still initializing (tool probe in progress), please retry",
-  "server.claudeLocalLoaded": "claude-local.md loaded ({{chars}} chars) — injecting into every request",
 
   "target.connectFailed": "Cannot connect to LLM at {{url}}: {{error}}",
   "target.errorReturned": "LLM returned error: {{error}}",
@@ -40,8 +38,6 @@
   "stream.clientDisconnected": "Client disconnected, stopping stream",
   "stream.processingError": "Proxy stream error: {{error}}",
   "stream.parseError": "Failed to parse SSE data",
-  "stream.abruptClose": "LLM closed stream without completing the response",
-  "stream.upstreamError": "LLM returned error mid-stream: {{error}}",
 
   "useTool.description": "Invoke a tool not in your current set. Available:\n{{listing}}\n\nSpecify tool_name and its parameters.",
   "useTool.toolNameDesc": "Exact name of the tool to invoke",

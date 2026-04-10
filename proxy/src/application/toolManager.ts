@@ -20,8 +20,8 @@ import {
   OpenAIToolType,
   ContentBlockType,
   USE_TOOL_NAME,
-} from "../domain/types.ts";
-import { t } from "../domain/i18n.ts";
+} from "../domain/types";
+import { t } from "../domain/i18n";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configuration Interface (DIP: narrow interface, not full ProxyConfig)

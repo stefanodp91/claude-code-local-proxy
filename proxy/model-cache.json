@@ -2,7 +2,16 @@
   "google/gemma-4-26b-a4b": {
     "maxTools": 32
   },
+  "nemotron-cascade-2-30b-a3b": {
+    "maxTools": 32
+  },
+  "qwen_qwen3.5-35b-a3b": {
+    "maxTools": 1
+  },
   "qwen/qwen3.5-35b-a3b": {
     "maxTools": 0
+  },
+  "nemotron-cascade-2-30b-a3b@4bit": {
+    "maxTools": 32
   }
 }

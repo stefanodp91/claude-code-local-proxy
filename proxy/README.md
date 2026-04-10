@@ -25,6 +25,17 @@ Claude Code (Anthropic SDK)
 
 ---
 
+## Documentation
+
+- [Architecture](docs/architecture.md) — hexagonal structure, request flow, SSE state machine, slash commands, workspace tool
+- [Configuration](docs/configuration.md) — complete reference for all environment variables
+- [Lifecycle](docs/lifecycle.md) — multi-instance architecture and port discovery
+- [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
+- [Startup Scripts](docs/startup-scripts.md) — start_agent_cli.sh internals
+- [Tool Management](docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe, persistent cache
+
+---
+
 ## Table of Contents
 
 1.  [Requirements](#requirements)

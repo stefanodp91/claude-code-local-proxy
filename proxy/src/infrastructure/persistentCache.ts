@@ -42,7 +42,7 @@ export class PersistentCache<T extends object> {
    */
   get(key: string): T | null {
     try {
-      const data = JSON.parse(readFileSync(this.path, "utf8")) as Record<string, T>;
+      const data = JSON.parse(readFileSync(this.path, "utf-8")) as Record<string, T>;
       return data[key] ?? null;
     } catch {
       return null;
@@ -82,7 +82,7 @@ export class PersistentCache<T extends object> {
 
   private readAll(): Record<string, T> {
     try {
-      return JSON.parse(readFileSync(this.path, "utf8")) as Record<string, T>;
+      return JSON.parse(readFileSync(this.path, "utf-8")) as Record<string, T>;
     } catch {
       return {};
     }
@@ -90,7 +90,7 @@ export class PersistentCache<T extends object> {
 
   private async writeAll(data: Record<string, T>): Promise<void> {
     try {
-      await writeFile(this.path, JSON.stringify(data, null, 2) + "\n", "utf8");
+      await writeFile(this.path, JSON.stringify(data, null, 2) + "\n");
     } catch {
       // Best-effort: silently ignore write failures
     }

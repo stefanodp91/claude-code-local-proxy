@@ -25,9 +25,9 @@ import {
   ContentBlockType,
   ToolChoiceType,
   MessageRole,
-} from "../domain/types.ts";
-import type { ProxyConfig } from "../infrastructure/config.ts";
-import type { ToolManager } from "./toolManager.ts";
+} from "../domain/types";
+import type { ProxyConfig } from "../infrastructure/config";
+import type { ToolManager } from "./toolManager";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -71,17 +71,16 @@ export class RequestTranslator {
    * @param body - The parsed Anthropic request body from Claude Code.
    * @returns The translated OpenAI request and tool selection metadata.
    */
-  translate(body: AnthropicRequest): { request: OpenAIRequest; toolSelection: ToolSelection | null; prunedMessages: number } {
+  translate(body: AnthropicRequest): { request: OpenAIRequest; toolSelection: ToolSelection | null } {
+    const messages = this.translateMessages(body);
     const maxTokens = this.capMaxTokens(body.max_tokens);
-    const allMessages = this.translateMessages(body);
-    const messages = this.pruneMessages(allMessages, maxTokens);
-    const prunedMessages = allMessages.length - messages.length;
 
     const req: OpenAIRequest = {
       model: this.modelInfo?.id ?? body.model,
       messages,
       max_tokens: maxTokens,
       stream: body.stream ?? true,
+      stream_options: { include_usage: true },
     };
 
     // Optional parameters — only include if explicitly set
@@ -103,7 +102,7 @@ export class RequestTranslator {
       req.tool_choice = this.translateToolChoice(body.tool_choice);
     }
 
-    return { request: req, toolSelection, prunedMessages };
+    return { request: req, toolSelection };
   }
 
   // ── Private: Message Translation ────────────────────────────────────────
@@ -143,28 +142,18 @@ export class RequestTranslator {
    * Anthropic system can be either an array of text blocks or a plain string.
    */
   private appendSystemMessage(system: any, messages: any[]): void {
-    if (system) {
-      if (Array.isArray(system)) {
-        const text = system
-          .filter((b: any) => b.type === ContentBlockType.Text)
-          .map((b: any) => b.text)
-          .join("\n\n");
-        if (text) {
-          messages.push({ role: MessageRole.System, content: text });
-        }
-      } else if (typeof system === "string") {
-        messages.push({ role: MessageRole.System, content: system });
-      }
-    }
+    if (!system) return;
 
-    // Inject claude-local.md — only active in local proxy sessions, never in premium
-    if (this.config.systemPromptAppend) {
-      const last = messages[messages.length - 1];
-      if (last?.role === MessageRole.System) {
-        last.content += "\n\n" + this.config.systemPromptAppend;
-      } else {
-        messages.push({ role: MessageRole.System, content: this.config.systemPromptAppend });
+    if (Array.isArray(system)) {
+      const text = system
+        .filter((b: any) => b.type === ContentBlockType.Text)
+        .map((b: any) => b.text)
+        .join("\n\n");
+      if (text) {
+        messages.push({ role: MessageRole.System, content: text });
       }
+    } else if (typeof system === "string") {
+      messages.push({ role: MessageRole.System, content: system });
     }
   }
 
@@ -190,6 +179,7 @@ export class RequestTranslator {
     }
 
     const textParts: string[] = [];
+    const imageParts: any[] = [];
     const toolResults: any[] = [];
 
     for (const block of content) {
@@ -197,8 +187,13 @@ export class RequestTranslator {
         toolResults.push(block);
       } else if (block.type === ContentBlockType.Text) {
         textParts.push(block.text);
+      } else if (block.type === ContentBlockType.Image && block.source?.type === "base64") {
+        imageParts.push({
+          type: "image_url",
+          image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` },
+        });
       }
-      // thinking, image, document → skip
+      // thinking, document → skip
     }
 
     // Emit tool results first (they must follow the assistant's tool_calls)
@@ -210,10 +205,19 @@ export class RequestTranslator {
       });
     }
 
-    // Then emit user text if any
-    const userText = textParts.join("\n\n");
-    if (userText) {
-      messages.push({ role: MessageRole.User, content: userText });
+    // Then emit user message: mixed content array if images present, plain string otherwise
+    if (imageParts.length > 0) {
+      const textContent = textParts.join("\n\n").trim();
+      const contentArray = [
+        ...imageParts,
+        ...(textContent ? [{ type: "text", text: textContent }] : []),
+      ];
+      messages.push({ role: MessageRole.User, content: contentArray });
+    } else {
+      const userText = textParts.join("\n\n");
+      if (userText) {
+        messages.push({ role: MessageRole.User, content: userText });
+      }
     }
   }
 
@@ -356,70 +360,5 @@ export class RequestTranslator {
   private capMaxTokens(requested: number): number {
     const cap = this.modelInfo?.maxTokensCap ?? this.config.maxTokensFallback;
     return cap > 0 ? Math.min(requested, cap) : requested;
-  }
-
-  // ── Private: Context Pruning ──────────────────────────────────────────────
-
-  /**
-   * Estimate token count for an array of messages using a char/4 heuristic.
-   * Fast and model-agnostic — no tokenizer needed.
-   */
-  private estimateTokens(messages: any[]): number {
-    return Math.ceil(
-      messages.reduce((sum, m) => {
-        const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content ?? "");
-        const toolCalls = m.tool_calls ? JSON.stringify(m.tool_calls) : "";
-        return sum + (content.length + toolCalls.length) / 4;
-      }, 0),
-    );
-  }
-
-  /**
-   * Prune oldest conversation turns when messages exceed the available context budget.
-   *
-   * Budget = loadedContextLength - cappedMaxTokens.
-   * If loadedContextLength is unavailable, falls back to maxTokensFallback * contextToMaxTokensRatio.
-   *
-   * The system message and the last user turn are always preserved.
-   * Turns are removed oldest-first in complete units (assistant + following tool/user responses)
-   * to keep the conversation structurally valid.
-   *
-   * @param messages - Translated OpenAI-format messages.
-   * @param cappedMaxTokens - Already-capped max_tokens for this request.
-   * @returns Pruned messages array (may be identical if no pruning needed).
-   */
-  private pruneMessages(messages: any[], cappedMaxTokens: number): any[] {
-    const contextLength =
-      this.modelInfo?.loadedContextLength ??
-      (this.config.maxTokensFallback * this.config.contextToMaxTokensRatio);
-
-    const budget = contextLength - cappedMaxTokens;
-    if (budget <= 0) return messages;
-
-    if (this.estimateTokens(messages) <= budget) return messages;
-
-    // Separate the system message (always first, always kept)
-    const system = messages[0]?.role === "system" ? [messages[0]] : [];
-    const conversation = messages[0]?.role === "system" ? messages.slice(1) : messages;
-
-    // Find conversation "turns": each turn starts at an assistant message.
-    // We identify turn boundaries by assistant message indices, then drop
-    // the oldest turn (and all its associated tool/user follow-ups) at a time.
-    let pruned = [...conversation];
-    while (pruned.length > 1 && this.estimateTokens([...system, ...pruned]) > budget) {
-      // Find the first assistant message index — drop from there until the next assistant
-      const firstAssistantIdx = pruned.findIndex(m => m.role === "assistant");
-      if (firstAssistantIdx === -1) break; // nothing left to prune
-
-      // Find where the next turn starts (next assistant message after this one)
-      const nextAssistantIdx = pruned.findIndex(
-        (m, i) => i > firstAssistantIdx && m.role === "assistant",
-      );
-
-      const cutEnd = nextAssistantIdx === -1 ? pruned.length : nextAssistantIdx;
-      pruned = [...pruned.slice(0, firstAssistantIdx), ...pruned.slice(cutEnd)];
-    }
-
-    return [...system, ...pruned];
   }
 }
