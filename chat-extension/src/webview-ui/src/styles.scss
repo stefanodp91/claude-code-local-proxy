@@ -1,0 +1,172 @@
+@use '@angular/material' as mat;
+@import 'material-icons/iconfont/material-icons.css';
+@import 'katex/dist/katex.min.css';
+@import 'bootstrap/dist/css/bootstrap-utilities.min.css';
+
+// Minimal dark Material theme (only for mat-expansion-panel used in thinking-block)
+$dark-theme: mat.define-theme((
+  color: (
+    theme-type: dark,
+    primary: mat.$violet-palette,
+  ),
+));
+
+// ── Design tokens ─────────────────────────────────────────────────────────────
+:root {
+  /* Backgrounds & surfaces */
+  --c-bg:         #0f0f0f;
+  --c-surface:    #161616;
+  --c-surface-2:  #1e1e1e;
+
+  /* Borders */
+  --c-border:     rgba(255, 255, 255, 0.07);
+  --c-border-2:   rgba(255, 255, 255, 0.13);
+
+  /* Text */
+  --c-text:        #e5e5e5;
+  --c-text-muted:  rgba(229, 229, 229, 0.42);
+  --c-text-dim:    rgba(229, 229, 229, 0.55);
+  --c-text-subtle: rgba(229, 229, 229, 0.85);
+  --c-text-strong: #f0f0f0;
+
+  /* Accent */
+  --c-accent:       #7c8cf8;
+  --c-accent-hover: #9aaafa;
+  --c-accent-dim:   rgba(124, 140, 248, 0.12);
+  --c-accent-muted: rgba(124, 140, 248, 0.15);
+  --c-accent-border: rgba(124, 140, 248, 0.20);
+  --c-accent-focus:  rgba(124, 140, 248, 0.45);
+  --c-accent-link:   rgba(124, 140, 248, 0.35);
+
+  /* User message */
+  --c-user-bg:   #1a2444;
+  --c-user-text: #bfcfff;
+
+  /* Code */
+  --c-code-bg:          #111318;
+  --c-code-text:        #dde3f0;
+  --c-code-inline-bg:   rgba(255, 255, 255, 0.08);
+  --c-code-inline-text: #c4b5fd;
+
+  /* Interactive states */
+  --c-disabled-bg:   rgba(255, 255, 255, 0.07);
+  --c-disabled-text: rgba(255, 255, 255, 0.25);
+  --c-overlay-subtle: rgba(255, 255, 255, 0.03);
+  --c-overlay-soft:   rgba(255, 255, 255, 0.06);
+
+  /* Status */
+  --c-success:      #4ade80;
+  --c-success-text: #86efac;
+  --c-warning:      #fb923c;
+  --c-warning-text: #fdba74;
+  --c-error:        #f87171;
+  --c-error-text:   #fca5a5;
+  --c-error-muted:  rgba(248, 113, 113, 0.15);
+  --c-error-hover:  rgba(248, 113, 113, 0.25);
+  --c-thinking:     #67e8f9;
+
+  /* Border radius scale */
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   10px;
+  --radius-xl:   12px;
+  --radius-full: 50%;
+
+  /* Control dimensions */
+  --btn-size-sm: 28px;
+  --btn-size-md: 30px;
+
+  /* Shadows */
+  --shadow-dropdown: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+// ── Base ──────────────────────────────────────────────────────────────────────
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+  font-size: 13.5px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  @include mat.all-component-themes($dark-theme);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+app-root          { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+app-chat-container { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+
+// ── Scrollbar ─────────────────────────────────────────────────────────────────
+::-webkit-scrollbar       { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+// ── Code block wrapper (added by markdown pipe custom renderer) ───────────────
+.code-block-wrap {
+  margin: 10px 0;
+  border: 1px solid var(--c-border-2);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.code-block-wrap pre {
+  margin: 0 !important;
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+.code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-border);
+  min-height: 28px;
+}
+
+.code-lang {
+  font-size: 11px;
+  color: var(--c-text-muted);
+  font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+}
+
+.code-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.run-code-btn {
+  font-size: 11px;
+  padding: 2px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--c-accent);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.run-code-btn:hover { background: var(--c-accent-hover); }
+
+.copy-code-btn {
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--c-border-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s;
+}
+.copy-code-btn:hover { color: var(--c-text); border-color: var(--c-accent); }
+
+// ── KaTeX ─────────────────────────────────────────────────────────────────────
+.katex-display { margin: 10px 0; overflow-x: auto; }
+.katex         { font-size: 1.05em; }
+.latex-error   { color: var(--c-error); font-style: italic; font-size: 12px; }

@@ -1,0 +1,79 @@
+{
+  "name": "claudio",
+  "displayName": "Claudio",
+  "description": "Chat UI for the Anthropic-to-OpenAI local proxy",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Chat"],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudio-sidebar",
+          "title": "Claudio",
+          "icon": "media/claudio.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudio-sidebar": [
+        {
+          "type": "webview",
+          "id": "claudio.sidebarView",
+          "name": "Claudio"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudio.openChat",
+        "title": "Open Claudio",
+        "category": "Claudio"
+      }
+    ],
+    "configuration": {
+      "title": "Claudio",
+      "properties": {
+        "claudio.proxyHost": {
+          "type": "string",
+          "default": "http://127.0.0.1",
+          "description": "Proxy server host URL."
+        },
+        "claudio.proxyPort": {
+          "type": "number",
+          "default": 5678,
+          "description": "Base port for proxy port discovery. When ProxyManager starts the proxy, it finds the first available port starting from this value. All other settings (temperature, system prompt, locale, etc.) are read from the proxy's /config endpoint."
+        },
+        "claudio.proxyDir": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the proxy/ directory of the project. Supports ${workspaceFolder}. When set and autoStartProxy is true, Claudio spawns and stops the proxy process automatically. Leave empty to connect to an externally-started proxy."
+        },
+        "claudio.autoStartProxy": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start the proxy when VS Code opens and stop it when VS Code closes. Requires claudio.proxyDir to be configured."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build:webview": "cd src/webview-ui && npx ng build --configuration production",
+    "build:extension": "node esbuild.config.mjs",
+    "build": "npm run build:webview && npm run build:extension",
+    "watch:extension": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "package": "npx @vscode/vsce package --no-dependencies --allow-missing-repository --baseContentUrl https://localhost"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.6.0"
+  }
+}
