@@ -22,6 +22,7 @@ export enum ToWebviewType {
   CodeProgress = "codeProgress",
   HistoryRestore = "historyRestore",
   FilesRead = "filesRead",
+  ToolApprovalRequest = "toolApprovalRequest",
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +38,7 @@ export enum ToExtensionType {
   ExecuteSlashCommand = "executeSlashCommand",
   ExecuteCode = "executeCode",
   ReadFiles = "readFiles",
+  ToolApprovalResponse = "toolApprovalResponse",
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -159,12 +161,41 @@ export interface HistoryRestorePayload {
 // Envelope Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tool Approval Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Sent from extension → webview when the proxy requests approval for a destructive action. */
+export interface ToolApprovalRequestPayload {
+  requestId: string;
+  action: string;
+  params: {
+    path?: string;
+    pattern?: string;
+    content?: string;
+    old_string?: string;
+    new_string?: string;
+    cmd?: string;
+    [key: string]: string | undefined;
+  };
+}
+
+/** Sent from webview → extension after the user approves or denies a tool action. */
+export interface ToolApprovalResponsePayload {
+  requestId: string;
+  approved: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Envelope Types
+// ─────────────────────────────────────────────────────────────────────────────
+
 export interface ToWebviewMessage {
   type: ToWebviewType;
-  payload?: StreamDeltaPayload | StreamErrorPayload | ConnectionStatus | SlashCommandResultPayload | HistoryRestorePayload | Record<string, any>;
+  payload?: StreamDeltaPayload | StreamErrorPayload | ConnectionStatus | SlashCommandResultPayload | HistoryRestorePayload | ToolApprovalRequestPayload | Record<string, any>;
 }
 
 export interface ToExtensionMessage {
   type: ToExtensionType;
-  payload?: SendMessagePayload | SlashCommandPayload | Record<string, any>;
+  payload?: SendMessagePayload | SlashCommandPayload | ToolApprovalResponsePayload | Record<string, any>;
 }

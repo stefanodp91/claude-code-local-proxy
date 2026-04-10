@@ -118,6 +118,22 @@ export class ProxyClient {
   }
 
   /**
+   * Respond to a tool_request_pending approval gate at the proxy.
+   * Called after the user approves or denies the action in the UI.
+   */
+  async approve(requestId: string, approved: boolean): Promise<void> {
+    try {
+      await fetch(`${this.baseUrl}/v1/messages/${requestId}/approve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved }),
+      });
+    } catch {
+      // If the request fails the proxy will auto-deny on timeout — nothing more to do.
+    }
+  }
+
+  /**
    * Cancel an in-progress stream.
    */
   cancel(): void {

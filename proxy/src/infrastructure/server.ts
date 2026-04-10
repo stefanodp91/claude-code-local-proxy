@@ -27,7 +27,7 @@ import { ResponseTranslator } from "../application/responseTranslator";
 import { StreamTranslator } from "../application/streamTranslator";
 import { SlashCommandInterceptor, SLASH_COMMAND_REGISTRY } from "../application/slashCommandInterceptor";
 import { buildWorkspaceContextSummary } from "../application/workspaceTool";
-import { WORKSPACE_TOOL_DEF, executeAction, type ActionArgs } from "../infrastructure/workspaceActions";
+import { WORKSPACE_TOOL_DEF, executeAction, ACTION_CLASSIFICATION, type ActionArgs } from "../infrastructure/workspaceActions";
 import { runTextualAgentLoop, TEXTUAL_TOOL_MANUAL } from "../application/textualAgentLoop";
 
 import type { LoadedModelInfo, AnthropicRequest, ModelCapabilities } from "../domain/types";
@@ -64,6 +64,8 @@ export class ProxyServer {
   private streamTranslator!: StreamTranslator;
   private readonly slashInterceptor = new SlashCommandInterceptor();
   private maxTools = 0;
+  /** Pending human-approval requests keyed by request_id. */
+  private readonly pendingApprovals = new Map<string, (approved: boolean) => void>();
 
   /**
    * @param config - Fully populated proxy configuration.
@@ -173,6 +175,13 @@ export class ProxyServer {
     // Main endpoint: POST /v1/messages (Anthropic Messages API)
     if (req.method === "POST" && pathname === "/v1/messages") {
       await this.handleMessages(req, res);
+      return;
+    }
+
+    // Tool approval endpoint: POST /v1/messages/:requestId/approve
+    const approveMatch = pathname.match(/^\/v1\/messages\/([^/]+)\/approve$/);
+    if (req.method === "POST" && approveMatch) {
+      await this.handleApprove(req, res, approveMatch[1]);
       return;
     }
 
@@ -290,6 +299,7 @@ export class ProxyServer {
           this.config.targetUrl,
           this.modelInfo?.id ?? openaiReq.model ?? "unknown",
           this.logger,
+          (action, args, writeFn) => this.requestApproval(writeFn, action, args),
         );
         return;
       }
@@ -373,6 +383,67 @@ export class ProxyServer {
     // Handle client disconnect
     res.on("close", () => {
       nodeStream.destroy();
+    });
+  }
+
+  // ── Approval Gate ──────────────────────────────────────────────────────
+
+  /**
+   * Handle POST /v1/messages/:requestId/approve.
+   * Resolves the pending approval promise for the given request ID.
+   */
+  private async handleApprove(req: IncomingMessage, res: ServerResponse, requestId: string): Promise<void> {
+    let body: { approved?: boolean };
+    try {
+      const raw = await readBody(req);
+      body = JSON.parse(raw);
+    } catch {
+      this.sendJson(res, 400, { error: "invalid JSON body" });
+      return;
+    }
+
+    const resolver = this.pendingApprovals.get(requestId);
+    if (!resolver) {
+      this.sendJson(res, 404, { error: "unknown or expired request_id" });
+      return;
+    }
+
+    this.pendingApprovals.delete(requestId);
+    resolver(body.approved === true);
+    this.sendJson(res, 200, { ok: true });
+  }
+
+  /**
+   * Emit a `tool_request_pending` SSE event and wait for the client to call
+   * POST /v1/messages/:requestId/approve.
+   *
+   * Automatically denies after 5 minutes to prevent the agent loop from
+   * hanging indefinitely if the user dismisses the modal without deciding.
+   *
+   * @returns true if the user approved, false if denied or timed out.
+   */
+  private requestApproval(
+    writeSSE: (text: string) => void,
+    action: string,
+    args: ActionArgs,
+  ): Promise<boolean> {
+    const requestId = crypto.randomUUID().replace(/-/g, "").slice(0, 16);
+
+    // Custom SSE event — client handles `event: tool_request_pending`
+    writeSSE(
+      `event: tool_request_pending\ndata: ${JSON.stringify({ request_id: requestId, action, params: args })}\n\n`,
+    );
+
+    return new Promise<boolean>((resolve) => {
+      this.pendingApprovals.set(requestId, resolve);
+
+      setTimeout(() => {
+        if (this.pendingApprovals.has(requestId)) {
+          this.pendingApprovals.delete(requestId);
+          this.logger.dbg(`[approval] timeout for ${requestId} (${action}) — auto-deny`);
+          resolve(false);
+        }
+      }, 5 * 60 * 1000);
     });
   }
 
@@ -496,7 +567,7 @@ export class ProxyServer {
           return true;
         }
 
-        // Tool calls: emit tool_use blocks, execute each call, continue loop.
+        // Tool calls: emit tool_use blocks, gate destructive, execute, continue loop.
         messages.push(choice.message);
         for (const tc of workspaceCalls) {
           let args: ActionArgs;
@@ -508,7 +579,19 @@ export class ProxyServer {
           writeSSE(sseEvent(SseEventType.ContentBlockStop, { type: "content_block_stop", index: contentIndex }));
           contentIndex++;
 
-          const result = executeAction(args, workspaceCwd);
+          let result: string;
+          if (ACTION_CLASSIFICATION[args.action] === "destructive") {
+            const approved = await this.requestApproval(writeSSE, args.action, args);
+            if (!approved) {
+              this.logger.dbg(`[workspace] ${args.action} denied by user`);
+              result = `Action '${args.action}' was denied by the user.`;
+            } else {
+              result = executeAction(args, workspaceCwd);
+            }
+          } else {
+            result = executeAction(args, workspaceCwd);
+          }
+
           this.logger.dbg(`[workspace] ${args.action} "${args.path ?? ""}" → ${result.slice(0, 120)}`);
           messages.push({ role: "tool", tool_call_id: tc.id, content: result });
         }
@@ -560,7 +643,19 @@ export class ProxyServer {
         try { args = JSON.parse(tc.arguments); }
         catch { args = { action: "list", path: "." }; }
 
-        const result = executeAction(args, workspaceCwd);
+        let result: string;
+        if (ACTION_CLASSIFICATION[args.action] === "destructive") {
+          const approved = await this.requestApproval(writeSSE, args.action, args);
+          if (!approved) {
+            this.logger.dbg(`[workspace] ${args.action} denied by user`);
+            result = `Action '${args.action}' was denied by the user.`;
+          } else {
+            result = executeAction(args, workspaceCwd);
+          }
+        } else {
+          result = executeAction(args, workspaceCwd);
+        }
+
         this.logger.dbg(`[workspace] ${args.action} "${args.path ?? ""}" → ${result.slice(0, 120)}`);
         messages.push({ role: "tool", tool_call_id: tc.id, content: result });
       }

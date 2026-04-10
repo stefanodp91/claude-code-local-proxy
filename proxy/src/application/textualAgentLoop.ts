@@ -15,7 +15,7 @@
 import type { ServerResponse } from "node:http";
 import { sseEvent, msgId } from "../domain/utils";
 import { SseEventType, StopReason, ContentBlockType, DeltaType } from "../domain/types";
-import { executeAction, type ActionArgs } from "../infrastructure/workspaceActions";
+import { executeAction, ACTION_CLASSIFICATION, type ActionArgs } from "../infrastructure/workspaceActions";
 import type { ILogger } from "../domain/ports";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,8 +60,19 @@ const SSE_HEADERS = {
 const TAG_LOOKAHEAD = 7;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal types
+// Types
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Callback for destructive-action approval.
+ * `writeFn` is the loop's `writeSSE` helper — the gate uses it to emit the
+ * `tool_request_pending` SSE event to the client before suspending.
+ */
+export type TextualApprovalGate = (
+  action: string,
+  args: ActionArgs,
+  writeFn: (text: string) => void,
+) => Promise<boolean>;
 
 interface TextualIterationResult {
   /** All text forwarded to the client as text_delta events before the action. */
@@ -104,6 +115,7 @@ export async function runTextualAgentLoop(
   targetUrl: string,
   modelId: string,
   logger: ILogger,
+  approvalGate?: TextualApprovalGate,
 ): Promise<void> {
   // Strip any tool-related fields — this model cannot use them.
   const baseReq = { ...openaiReq, tools: undefined, tool_choice: undefined };
@@ -229,9 +241,21 @@ export async function runTextualAgentLoop(
     }));
     contentIndex++;
 
-    const actionResult = executeAction(result.actionArgs, workspaceCwd);
+    const actionArgs = result.actionArgs;
+    let actionResult: string;
+    if (ACTION_CLASSIFICATION[actionArgs.action] === "destructive" && approvalGate) {
+      const approved = await approvalGate(actionArgs.action, actionArgs, writeSSE);
+      if (!approved) {
+        logger.dbg(`[workspace/textual] ${actionArgs.action} denied by user`);
+        actionResult = `Action '${actionArgs.action}' was denied by the user.`;
+      } else {
+        actionResult = executeAction(actionArgs, workspaceCwd);
+      }
+    } else {
+      actionResult = executeAction(actionArgs, workspaceCwd);
+    }
     logger.dbg(
-      `[workspace/textual] ${result.actionArgs.action} "${result.actionArgs.path ?? ""}" → ${actionResult.slice(0, 120)}`,
+      `[workspace/textual] ${actionArgs.action} "${actionArgs.path ?? ""}" → ${actionResult.slice(0, 120)}`,
     );
 
     // Re-inject as assistant (text before action + the action tag itself) and

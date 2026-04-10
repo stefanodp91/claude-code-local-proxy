@@ -4,6 +4,7 @@ import { Subscription } from "rxjs";
 import { ToolbarComponent } from "../toolbar/toolbar.component";
 import { MessageListComponent } from "../message-list/message-list.component";
 import { InputAreaComponent, type SendPayload } from "../input-area/input-area.component";
+import { ToolApprovalModalComponent, type ApprovalDecision } from "../tool-approval-modal/tool-approval-modal.component";
 import { MessageStoreService } from "../../../core/services/message-store.service";
 import { WebviewBridgeService } from "../../../core/services/webview-bridge.service";
 import { StreamingService } from "../../../core/services/streaming.service";
@@ -21,12 +22,14 @@ import {
   type CodeProgressPhase,
   type Attachment,
   type ReadFilesPayload,
+  type ToolApprovalRequestPayload,
+  type ToolApprovalResponsePayload,
 } from "@shared/message-protocol";
 
 @Component({
   selector: "app-chat-container",
   standalone: true,
-  imports: [CommonModule, ToolbarComponent, MessageListComponent, InputAreaComponent],
+  imports: [CommonModule, ToolbarComponent, MessageListComponent, InputAreaComponent, ToolApprovalModalComponent],
   template: `
     <div class="chat-layout">
       <app-toolbar
@@ -50,6 +53,9 @@ import {
         (cancel)="onCancel()"
         (requestFileRead)="onRequestFileRead($event)" />
     </div>
+    <app-tool-approval-modal
+      [request]="pendingApproval()"
+      (decision)="onApprovalDecision($event)" />
   `,
   styles: [`
     :host {
@@ -100,8 +106,9 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
   @ViewChild("inputArea") inputAreaRef!: InputAreaComponent;
 
   connectionStatus = ConnectionStatus.Checking;
-  availableCommands = signal<SlashCommand[]>([]);
-  supportsVision    = signal(false);
+  availableCommands  = signal<SlashCommand[]>([]);
+  supportsVision     = signal(false);
+  pendingApproval    = signal<ToolApprovalRequestPayload | null>(null);
 
   private readonly subscriptions = new Subscription();
 
@@ -181,12 +188,27 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
       }),
     );
 
+    // Show approval modal when the proxy needs user confirmation for a destructive action
+    this.subscriptions.add(
+      this.bridge.onToolApprovalRequest().subscribe((req) => {
+        this.pendingApproval.set(req);
+      }),
+    );
+
     // Request initial health check
     this.bridge.send({ type: ToExtensionType.CheckHealth });
   }
 
   ngOnDestroy(): void {
     this.subscriptions.unsubscribe();
+  }
+
+  onApprovalDecision(decision: ApprovalDecision): void {
+    this.pendingApproval.set(null);
+    this.bridge.send({
+      type: ToExtensionType.ToolApprovalResponse,
+      payload: { requestId: decision.requestId, approved: decision.approved } satisfies ToolApprovalResponsePayload,
+    });
   }
 
   onSendMessage(payload: SendPayload): void {

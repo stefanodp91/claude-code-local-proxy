@@ -16,6 +16,7 @@ import {
   type CodeProgressPayload,
   type HistoryRestorePayload,
   type FilesReadPayload,
+  type ToolApprovalRequestPayload,
 } from "@shared/message-protocol";
 
 @Injectable({ providedIn: "root" })
@@ -128,6 +129,14 @@ export class WebviewBridgeService implements OnDestroy {
     return this.messages$.pipe(
       filter((msg) => msg.type === ToWebviewType.FilesRead),
       map((msg) => msg.payload as FilesReadPayload),
+    );
+  }
+
+  /** Emits when the proxy requests human approval for a destructive workspace action. */
+  onToolApprovalRequest(): Observable<ToolApprovalRequestPayload> {
+    return this.messages$.pipe(
+      filter((msg) => msg.type === ToWebviewType.ToolApprovalRequest),
+      map((msg) => msg.payload as ToolApprovalRequestPayload),
     );
   }
 }

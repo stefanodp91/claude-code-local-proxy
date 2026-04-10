@@ -34,6 +34,8 @@ import {
   type HistoryRestorePayload,
   type Attachment,
   type FilesReadPayload,
+  type ToolApprovalRequestPayload,
+  type ToolApprovalResponsePayload,
 } from "../shared/message-protocol";
 import { SseEventType } from "../shared/anthropic-events";
 import {
@@ -147,6 +149,9 @@ export class ChatSession implements vscode.Disposable {
   /** Workspace root passed as X-Workspace-Root to the proxy. */
   private readonly workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
+  /** Pending tool approval promises keyed by request_id. */
+  private readonly pendingApprovals = new Map<string, (approved: boolean) => void>();
+
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly globalStoragePath: string,
@@ -209,6 +214,14 @@ export class ChatSession implements vscode.Disposable {
     this.bridge.on(ToExtensionType.ReadFiles, (msg) =>
       void this.handleReadFiles((msg.payload as { uris: string[] }).uris),
     );
+    this.bridge.on(ToExtensionType.ToolApprovalResponse, (msg) => {
+      const { requestId, approved } = msg.payload as ToolApprovalResponsePayload;
+      const resolve = this.pendingApprovals.get(requestId);
+      if (resolve) {
+        this.pendingApprovals.delete(requestId);
+        resolve(approved);
+      }
+    });
 
     // Send current conversation history to the newly attached view
     const historyPayload: HistoryRestorePayload = {
@@ -302,6 +315,12 @@ export class ChatSession implements vscode.Disposable {
         },
         workspaceRoot: this.workspaceRoot,
       })) {
+        // Custom event: proxy is requesting human approval for a destructive action.
+        if (sseEvent.event === "tool_request_pending") {
+          await this.handleToolApproval(sseEvent.data);
+          continue;
+        }
+
         let parsed: any = {};
         try {
           parsed = JSON.parse(sseEvent.data);
@@ -331,6 +350,41 @@ export class ChatSession implements vscode.Disposable {
         });
       }
     }
+  }
+
+  /**
+   * Bridge a tool_request_pending event from the proxy to the webview approval modal.
+   *
+   * Flow: proxy emits SSE → extension parses → webview shows modal →
+   * user decides → extension receives ToolApprovalResponse → POST /approve to proxy.
+   * The proxy SSE stream is blocked until the POST arrives (or the 5-min timeout fires).
+   */
+  private async handleToolApproval(dataStr: string): Promise<void> {
+    let payload: { request_id: string; action: string; params: Record<string, unknown> };
+    try { payload = JSON.parse(dataStr); } catch { return; }
+
+    const requestPayload: ToolApprovalRequestPayload = {
+      requestId: payload.request_id,
+      action: payload.action,
+      params: payload.params as ToolApprovalRequestPayload["params"],
+    };
+    this.bridge?.send({ type: ToWebviewType.ToolApprovalRequest, payload: requestPayload });
+
+    const approved = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingApprovals.has(payload.request_id)) {
+          this.pendingApprovals.delete(payload.request_id);
+          resolve(false);
+        }
+      }, 5 * 60 * 1000);
+
+      this.pendingApprovals.set(payload.request_id, (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+
+    await this.proxyClient.approve(payload.request_id, approved);
   }
 
   private async handleClientSlashCommand(payload: SlashCommandPayload): Promise<void> {

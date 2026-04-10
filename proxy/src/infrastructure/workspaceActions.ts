@@ -101,13 +101,15 @@ export const WORKSPACE_TOOL_DEF = {
       "  read   – read a file",
       "  grep   – search for a regex pattern across files",
       "  glob   – find files matching a glob-style pattern",
+      "  write  – create or overwrite a file  ⚠ requires user approval",
+      "  edit   – replace exact text in a file ⚠ requires user approval",
     ].join("\n"),
     parameters: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["list", "read", "grep", "glob"],
+          enum: ["list", "read", "grep", "glob", "write", "edit"],
           description: "Action to perform.",
         },
         path: {
@@ -115,7 +117,7 @@ export const WORKSPACE_TOOL_DEF = {
           description:
             "Path relative to the workspace root " +
             "(e.g. '.', 'src/components', 'package.json'). " +
-            "Required for list, read, and grep (scopes the search).",
+            "Required for list, read, grep, write, and edit.",
         },
         pattern: {
           type: "string",
@@ -128,6 +130,20 @@ export const WORKSPACE_TOOL_DEF = {
           description:
             "For grep: a file name pattern to restrict the search " +
             "(e.g. '*.ts', '*.{ts,tsx}'). Optional.",
+        },
+        content: {
+          type: "string",
+          description: "For write: the complete text content to write to the file.",
+        },
+        old_string: {
+          type: "string",
+          description:
+            "For edit: the exact string to find in the file " +
+            "(must match character-for-character including whitespace).",
+        },
+        new_string: {
+          type: "string",
+          description: "For edit: the replacement string.",
         },
       },
       required: ["action"],
@@ -144,10 +160,22 @@ export interface ActionArgs {
   path?: string;
   pattern?: string;
   include?: string;
-  content?: string; // for write/edit
-  cmd?: string;     // for bash
+  content?: string;     // for write: full file content
+  old_string?: string;  // for edit: exact text to replace
+  new_string?: string;  // for edit: replacement text
+  cmd?: string;         // for bash
   [key: string]: string | undefined;
 }
+
+/**
+ * Async callback the agent loops use to request human approval before
+ * executing a destructive action (write, edit, bash).
+ *
+ * @param action - action name (e.g. "write")
+ * @param args   - full action arguments
+ * @returns      - true if approved, false if denied or timed out
+ */
+export type ApprovalGate = (action: string, args: ActionArgs) => Promise<boolean>;
 
 /**
  * Execute a workspace action and return the result as a string.
@@ -168,9 +196,9 @@ export function executeAction(args: ActionArgs, workspaceCwd: string): string {
       case "glob":
         return actionGlob(args, workspaceCwd);
       case "write":
-        return "Error: write is a destructive action and has not been approved yet";
+        return actionWrite(args, workspaceCwd);
       case "edit":
-        return "Error: edit is a destructive action and has not been approved yet";
+        return actionEdit(args, workspaceCwd);
       case "bash":
         return "Error: bash is a destructive action and has not been approved yet";
       default:
@@ -393,6 +421,60 @@ function matchGlob(pattern: string, filePath: string): boolean {
 
 function escapeRegex(s: string): string {
   return s.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action: write
+// ─────────────────────────────────────────────────────────────────────────────
+
+function actionWrite(args: ActionArgs, workspaceCwd: string): string {
+  if (!args.path) return "Error: 'path' is required for action='write'";
+  if (args.content === undefined) return "Error: 'content' is required for action='write'";
+
+  const safe = safeResolvePath(args.path, workspaceCwd);
+  if (!safe) return `Error: path '${args.path}' is outside the workspace root`;
+
+  try {
+    mkdirSync(dirname(safe), { recursive: true });
+    writeFileSync(safe, args.content, "utf-8");
+    return `Written ${args.content.length} chars to '${args.path}'`;
+  } catch (err) {
+    return `Error writing '${args.path}': ${String(err)}`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action: edit
+// ─────────────────────────────────────────────────────────────────────────────
+
+function actionEdit(args: ActionArgs, workspaceCwd: string): string {
+  if (!args.path) return "Error: 'path' is required for action='edit'";
+  if (args.old_string === undefined) return "Error: 'old_string' is required for action='edit'";
+  if (args.new_string === undefined) return "Error: 'new_string' is required for action='edit'";
+
+  const safe = safeResolvePath(args.path, workspaceCwd);
+  if (!safe) return `Error: path '${args.path}' is outside the workspace root`;
+
+  let content: string;
+  try {
+    content = readFileSync(safe, "utf-8");
+  } catch (err) {
+    return `Error reading '${args.path}': ${String(err)}`;
+  }
+
+  if (!content.includes(args.old_string)) {
+    return `Error: 'old_string' not found in '${args.path}' — no changes made`;
+  }
+
+  // Replace only the first occurrence to match Claude Code behaviour.
+  const newContent = content.replace(args.old_string, args.new_string);
+
+  try {
+    writeFileSync(safe, newContent, "utf-8");
+    return `Replaced 1 occurrence in '${args.path}'`;
+  } catch (err) {
+    return `Error writing '${args.path}': ${String(err)}`;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
