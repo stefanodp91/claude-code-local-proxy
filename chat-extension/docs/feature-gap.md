@@ -1,16 +1,16 @@
 # Feature Gap — Claudio vs. Claude Code
 
-> Stato verificato delle funzionalità della chat-extension (Claudio) rispetto a Claude Code CLI di Anthropic, con riferimenti puntuali al codice. Questo documento è il punto di partenza per chi vuole portare Claudio a parità funzionale con Claude Code.
+> Verified state of the chat-extension (Claudio) features relative to Anthropic's Claude Code CLI, with precise code references. This document is the starting point for anyone who wants to bring Claudio to functional parity with Claude Code.
 
-> **Nota di scopo**: Claudio non è un porting "uno-a-uno" di Claude Code. È un client VS Code per il proxy Anthropic↔OpenAI che gira sopra modelli LLM locali. Tuttavia diverse feature di Claude Code sono fattibili anche con modelli locali, e questo documento traccia quali sono già presenti, quali mancano, e dove la logica vive (Claudio stesso o il proxy condiviso).
+> **Scope note**: Claudio is not a one-to-one port of Claude Code. It is a VS Code client for the Anthropic↔OpenAI proxy running on top of local LLM models. However, many Claude Code features are feasible even with local models, and this document tracks which ones are already present, which are missing, and where the logic lives (Claudio itself or the shared proxy).
 
-> **Aggiornare questo documento** ogni volta che una feature viene implementata o lo stato cambia. Riflette il codice al momento della scrittura.
+> **Update this document** whenever a feature is implemented or its status changes. It reflects the code at the time of writing.
 
 ---
 
-## 1. Architettura: dove vive cosa
+## 1. Architecture: Where Things Live
 
-Claudio è composto da tre superfici, ma non tutte le feature "agentiche" vivono dentro la chat-extension. Molte sono nel **proxy**, condiviso tra Claudio e Claude Code CLI:
+Claudio is composed of three surfaces, but not all "agentic" features live inside the chat-extension. Many are in the **proxy**, shared between Claudio and the Claude Code CLI:
 
 ```
 ┌─────────────┐         ┌────────┐         ┌───────────┐
@@ -24,97 +24,97 @@ Claudio è composto da tre superfici, ma non tutte le feature "agentiche" vivono
                          system prompt injection
 ```
 
-Questo significa che alcune feature "mancanti dalla chat-extension" sono in realtà **già implementate nel proxy** ma non sfruttate, o sfruttate solo parzialmente, dalla chat-extension. Vedi la tabella sotto.
+This means that some features "missing from the chat-extension" are actually **already implemented in the proxy** but not exploited, or only partially exploited, by the chat-extension. See the table below.
 
 ---
 
-## 2. Cose già PRESENTI (alcune erroneamente date per assenti in passato)
+## 2. Things Already PRESENT (some erroneously thought absent in the past)
 
-| Feature | Dove vive | Evidenza |
+| Feature | Where it lives | Evidence |
 |---|---|---|
-| **Agent loop nativo** | Proxy | [server.ts:367-444](../../proxy/src/infrastructure/server.ts#L367-L444) — `runAgentLoop()` itera fino a 10 volte con il tool `workspace` (action `list`/`read`). Si attiva quando `maxTools > 0 && workspaceCwd` ([server.ts:272](../../proxy/src/infrastructure/server.ts#L272)). Documentato in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md). Per Nemotron@4bit (con `maxTools=32`) è attivo; per Qwen 3.5 35B (`maxTools=0`) è spento. |
-| **Auto-loaded project context** | Proxy | [server.ts:234-250](../../proxy/src/infrastructure/server.ts#L234-L250) inietta automaticamente nel system prompt: per modelli con tool nativi solo `Working directory: <cwd>`, per modelli senza tool il pieno `buildWorkspaceContextSummary()` (dir listing + package.json + primi 2000 char di README). Documentato in [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md). Funzionalmente equivalente al loading di un file di progetto, anche se non c'è un file `.claudio/...` dedicato. |
-| **Thinking blocks in streaming** | Proxy + Claudio | [server.ts:209-210](../../proxy/src/infrastructure/server.ts#L209-L210) attiva il flag, [streamTranslator.ts:307-354](../../proxy/src/application/streamTranslator.ts#L307-L354) converte `reasoning_content` OpenAI in blocchi `thinking` Anthropic, [proxy-client.ts:54-56](../src/extension/proxy/proxy-client.ts#L54-L56) lo abilita lato client. Visibile come pannello espandibile nella chat. |
-| **Tool probe & dynamic management** | Proxy | `toolProbe.ts` fa binary search del `maxTools` del modello locale; `toolManager.ts` fa selezione dinamica con scoring + meta-tool `UseTool` per overflow; cache in `proxy/model-cache.json`. Documentato in [proxy/docs/tool-management.md](../../proxy/docs/tool-management.md). |
-| **Slash command rich** | Proxy + Claudio | [slashCommandInterceptor.ts](../../proxy/src/application/slashCommandInterceptor.ts) gestisce 13 comandi proxy-side (`/status`, `/version`, `/commit`, `/diff`, `/review`, `/compact`, `/brief`, `/plan`, ecc.); [chat-session.ts:347-403](../src/extension/chat-session.ts#L347-L403) gestisce i comandi client-side (`/files`, `/copy`, `/branch`, `/commit-push-pr`, ecc.). Documentato in [slash-commands.md](slash-commands.md). |
-| **Session persistence (parziale)** | Claudio webview | [message-store.service.ts:223-232](../src/webview-ui/src/app/core/services/message-store.service.ts#L223-L232) usa `vscodeApi.setState`. **Funziona solo nel ciclo di vita della webview**: collapse del sidebar e reload di VS Code resettano la cronologia. Vedi sezione "QUASI ASSENTE" sotto. |
+| **Native agent loop** | Proxy | [server.ts:367-444](../../proxy/src/infrastructure/server.ts#L367-L444) — `runAgentLoop()` iterates up to 10 times with the `workspace` tool (action `list`/`read`). Activated when `maxTools > 0 && workspaceCwd` ([server.ts:272](../../proxy/src/infrastructure/server.ts#L272)). Documented in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md). Active for Nemotron@4bit (with `maxTools=32`); disabled for Qwen 3.5 35B (`maxTools=0`). |
+| **Auto-loaded project context** | Proxy | [server.ts:234-250](../../proxy/src/infrastructure/server.ts#L234-L250) automatically injects into the system prompt: for tool-capable models, only `Working directory: <cwd>`; for models without tools, the full `buildWorkspaceContextSummary()` (dir listing + package.json + first 2000 chars of README). Documented in [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md). Functionally equivalent to loading a project file, even though there is no dedicated `.claudio/...` file. |
+| **Thinking blocks in streaming** | Proxy + Claudio | [server.ts:209-210](../../proxy/src/infrastructure/server.ts#L209-L210) enables the flag, [streamTranslator.ts:307-354](../../proxy/src/application/streamTranslator.ts#L307-L354) converts `reasoning_content` OpenAI into Anthropic `thinking` blocks, [proxy-client.ts:54-56](../src/extension/proxy/proxy-client.ts#L54-L56) enables it on the client side. Visible as an expandable panel in the chat. |
+| **Tool probe & dynamic management** | Proxy | `toolProbe.ts` does binary search for the model's `maxTools`; `toolManager.ts` does dynamic selection with scoring + `UseTool` meta-tool for overflow; cache in `proxy/model-cache.json`. Documented in [proxy/docs/tool-management.md](../../proxy/docs/tool-management.md). |
+| **Rich slash commands** | Proxy + Claudio | [slashCommandInterceptor.ts](../../proxy/src/application/slashCommandInterceptor.ts) handles 13 proxy-side commands (`/status`, `/version`, `/commit`, `/diff`, `/review`, `/compact`, `/brief`, `/plan`, etc.); [chat-session.ts:347-403](../src/extension/chat-session.ts#L347-L403) handles client-side commands (`/files`, `/copy`, `/branch`, `/commit-push-pr`, etc.). Documented in [slash-commands.md](slash-commands.md). |
+| **Session persistence (partial)** | Claudio webview | [message-store.service.ts:223-232](../src/webview-ui/src/app/core/services/message-store.service.ts#L223-L232) uses `vscodeApi.setState`. **Works only within the webview lifecycle**: collapsing the sidebar or reloading VS Code resets the history. See the "NEARLY ABSENT" section below. |
 
 ---
 
-## 3. Cose CONFERMATE ASSENTI o limitate
+## 3. Things CONFIRMED ABSENT or Limited
 
-| Feature | Stato | Evidenza |
+| Feature | Status | Evidence |
 |---|---|---|
-| **Tool ricchi** (Write, Edit, Bash, Grep, Glob) | ASSENTI | Il `WORKSPACE_TOOL_DEF` espone solo `list` e `read` ([workspaceTool.ts:21-42](../../proxy/src/application/workspaceTool.ts#L21-L42)). Indipendente dal modello caricato. |
-| **Streaming durante agent loop nativo** | ROTTO | [server.ts:393-398](../../proxy/src/infrastructure/server.ts#L393-L398) — `runAgentLoop` invia `stream: false` ad ogni iterazione e poi emette SSE sintetico finale ([server.ts:419-421](../../proxy/src/infrastructure/server.ts#L419-L421)). Per modelli con tool nativi attivi, l'utente vede silenzio fino a fine loop. |
-| **Context compaction automatica** | ASSENTE | Nessun token counting in Claudio o nel proxy. Il `conversation[]` ([chat-session.ts:131](../src/extension/chat-session.ts#L131)) cresce unbounded. Il `/compact` proxy-side è solo un enrich-prompt manuale, non automatico. |
-| **Memory cross-session** | ASSENTE | Nessun `MEMORY.md` o equivalente persistente. L'unico stato cross-request lato proxy è la `promoted` map del ToolManager, in-memory e resettata al restart. |
-| **Permission system** | ASSENTE | Nessuna conferma per-tool, nessun allowlist. Oggi accettabile perché tutte le action sono read-only. Quando saranno aggiunte write/bash diventerà bloccante — vedi [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md) per il design. |
-| **Plan mode** | ASSENTE | Nessun mode toggle. Lo `/plan` proxy-side è solo un enrich-prompt ("think step by step"), non una vera modalità con tool gating. |
-| **Hooks** | ASSENTI | Nessun sistema di hook event-driven (`pre-tool-use`, `post-tool-use`, ecc.). |
-| **Skills** | ASSENTI | I slash command sono hardcoded nei due file sopra, non markdown-defined caricati a runtime. |
-| **MCP (Model Context Protocol)** | ASSENTE | Nessun MCP client né nel proxy né in Claudio. |
-| **Sub-agents** | ASSENTI | Nessuno spawn di agenti indipendenti. |
-| **TodoWrite / task tracking** | ASSENTE | Nessuna gestione strutturata di task list integrata. |
-| **Web tools** (WebFetch, WebSearch) | ASSENTI | Non implementati. |
-| **Worktree isolation** | ASSENTE | Nessun codice di git worktree spawn. |
-| **Session persistence reale** | QUASI ASSENTE | Verificato: la `vscodeApi.setState` funziona, ma [sidebar-provider.ts](../src/extension/webview/sidebar-provider.ts) **non setta `retainContextWhenHidden`**, e in [chat-session.ts:213-224](../src/extension/chat-session.ts#L213-L224) sull'`attachView` l'extension **sovrascrive** la history del webview con la `conversation[]` in-memory dell'extension. Risultato: collapse sidebar → history persa; reload VS Code → history persa. Il codice di persistenza esiste ma è praticamente inerte. |
-| **Visualizzazione blocchi `tool_use` in streaming** | ASSENTE | [chat-session.ts:295-321](../src/extension/chat-session.ts#L295-L321) gestisce solo `text_delta`. I blocchi `tool_use` Anthropic in arrivo dal proxy sono ignorati silenziosamente. Anche quando l'agent loop nativo del proxy esegue `workspace.list()` e `workspace.read()`, l'utente in Claudio non vede nessuna indicazione visiva del tool in corso. |
+| **Rich tools** (Write, Edit, Bash, Grep, Glob) | ABSENT | The `WORKSPACE_TOOL_DEF` exposes only `list` and `read` ([workspaceTool.ts:21-42](../../proxy/src/application/workspaceTool.ts#L21-L42)). Independent of which model is loaded. |
+| **Streaming during native agent loop** | BROKEN | [server.ts:393-398](../../proxy/src/infrastructure/server.ts#L393-L398) — `runAgentLoop` sends `stream: false` on each iteration and then emits a synthetic final SSE ([server.ts:419-421](../../proxy/src/infrastructure/server.ts#L419-L421)). For models with native tools active, the user sees silence until the loop completes. |
+| **Automatic context compaction** | ABSENT | No token counting in Claudio or the proxy. The `conversation[]` ([chat-session.ts:131](../src/extension/chat-session.ts#L131)) grows unbounded. The proxy-side `/compact` is only a manual prompt enrich, not automatic. |
+| **Cross-session memory** | ABSENT | No `MEMORY.md` or persistent equivalent. The only cross-request state on the proxy side is the `promoted` map in ToolManager, in-memory and reset on restart. |
+| **Permission system** | ABSENT | No per-tool confirmation, no allowlist. Currently acceptable because all actions are read-only. When write/bash are added it becomes a blocker — see [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md) for the design. |
+| **Plan mode** | ABSENT | No mode toggle. The proxy-side `/plan` is only a prompt enrich ("think step by step"), not a real mode with tool gating. |
+| **Hooks** | ABSENT | No event-driven hook system (`pre-tool-use`, `post-tool-use`, etc.). |
+| **Skills** | ABSENT | Slash commands are hardcoded in the two files above, not markdown-defined loaded at runtime. |
+| **MCP (Model Context Protocol)** | ABSENT | No MCP client in either the proxy or Claudio. |
+| **Sub-agents** | ABSENT | No independent agent spawning. |
+| **TodoWrite / task tracking** | ABSENT | No structured task list management integrated. |
+| **Web tools** (WebFetch, WebSearch) | ABSENT | Not implemented. |
+| **Worktree isolation** | ABSENT | No git worktree spawn code. |
+| **Real session persistence** | NEARLY ABSENT | Verified: `vscodeApi.setState` works, but [sidebar-provider.ts](../src/extension/webview/sidebar-provider.ts) **does not set `retainContextWhenHidden`**, and in [chat-session.ts:213-224](../src/extension/chat-session.ts#L213-L224) on `attachView` the extension **overwrites** the webview history with the in-memory `conversation[]`. Result: sidebar collapse → history lost; VS Code reload → history lost. The persistence code exists but is practically inert. |
+| **Visualization of `tool_use` blocks in streaming** | ABSENT | [chat-session.ts:295-321](../src/extension/chat-session.ts#L295-L321) handles only `text_delta`. Incoming Anthropic `tool_use` blocks from the proxy are silently ignored. Even when the proxy's native agent loop executes `workspace.list()` and `workspace.read()`, the user in Claudio sees no visual indication of the tool in progress. |
 
 ---
 
-## 4. Cosa il modello può fare oggi (matrice modello-dipendente)
+## 4. What the Model Can Do Today (Model-Dependent Matrix)
 
-Il comportamento di Claudio dipende da quale modello è caricato in LM Studio e dal `maxTools` rilevato dal probe:
+Claudio's behavior depends on which model is loaded in LM Studio and the `maxTools` detected by the probe:
 
-| Capability | Modelli con tool nativi (es. Nemotron@4bit, `maxTools=32`) | Modelli senza tool (es. Qwen 3.5 35B, `maxTools=0`) |
+| Capability | Models with native tools (e.g. Nemotron@4bit, `maxTools=32`) | Models without tools (e.g. Qwen 3.5 35B, `maxTools=0`) |
 |---|---|---|
-| Lettura on-demand di file workspace | ✅ via `runAgentLoop` (workspace tool: list/read) | ❌ ha solo il summary statico iniettato nel prompt |
-| Scrittura / edit / shell | ❌ tool non implementato (in entrambi i casi) | ❌ tool non implementato |
-| Grep / glob | ❌ tool non implementato | ❌ tool non implementato |
-| Streaming dei token finali | ❌ rotto durante il loop nativo | ✅ funziona normalmente (loop disattivato) |
-| Streaming dei thinking | ❌ rotto durante il loop nativo | ✅ funziona normalmente |
+| On-demand workspace file reading | ✅ via `runAgentLoop` (workspace tool: list/read) | ❌ only the static summary injected in the prompt |
+| Write / edit / shell | ❌ tool not implemented (in both cases) | ❌ tool not implemented |
+| Grep / glob | ❌ tool not implemented | ❌ tool not implemented |
+| Streaming of final tokens | ❌ broken during native loop | ✅ works normally (loop disabled) |
+| Streaming of thinking | ❌ broken during native loop | ✅ works normally |
 
-L'incongruenza più visibile è il punto streaming: con un modello che supporta tool, l'esperienza utente è **peggiore** durante la fase agentica (silenzio prolungato) rispetto a un modello senza tool che semplicemente "stream"a thinking + risposta.
-
----
-
-## 5. Cosa manca davvero per essere un "junior agent" stabile
-
-Indipendentemente dal modello caricato, i punti che bloccano l'utilità reale di Claudio come agente sono:
-
-1. **Set di action ricche**: read/list/grep/glob/write/edit/bash. Oggi solo read/list.
-2. **Esposizione delle action model-agnostic**: serve un meccanismo che funzioni sia per modelli con `maxTools > 0` (tool calling nativo) sia per `maxTools == 0` (tool emulation tramite parsing testuale). Vedi il piano in [proxy/docs/agent-loop.md § Planned](../../proxy/docs/agent-loop.md#planned-model-agnostic-dual-path-architecture).
-3. **Streaming dei token visibile durante l'agent loop**: nessun gap di silenzio per l'utente.
-4. **Permission gate** per le action distruttive (write/bash) condiviso tra i path agentici. Vedi [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md).
-5. **Visualizzazione lato client dei blocchi tool_use** in streaming, così l'utente vede in tempo reale "📂 list .", "📄 read README.md", "🔍 grep parseConfig", ecc.
-
-I punti 1-4 sono lavoro **lato proxy**. Il punto 5 è lavoro **lato Claudio** (parsing dei `content_block` `tool_use`/`tool_result` nel `chat-session.ts` e nel webview).
-
-Tutto il resto (skills, MCP, hooks, plan mode, sub-agents, todo, web tool, memory cross-session, plan mode) è importante per la "parità completa" con Claude Code, ma è secondario rispetto ai punti 1-5.
+The most visible inconsistency is around streaming: with a model that supports tools, the user experience is **worse** during the agentic phase (prolonged silence) compared to a model without tools that simply streams thinking + response.
 
 ---
 
-## 6. Roadmap di alto livello
+## 5. What's Truly Missing to Be a Stable "Junior Agent"
 
-Per chiudere il gap minimo per "junior agent":
+Regardless of the loaded model, the points that block Claudio's real utility as an agent are:
 
-1. **Shared action backend** lato proxy: nuovo file `proxy/src/infrastructure/workspaceActions.ts` con read/list/grep/glob/write/edit/bash, validazione path, timeout, truncation.
-2. **Path A**: refactor di `runAgentLoop` per fare streaming reale durante le iterazioni e per gestire le nuove action.
-3. **Path B**: nuovo `runTextualAgentLoop` per i modelli con `maxTools == 0`, basato su parsing di tag XML inline emessi dal modello in plain text.
-4. **Output normalization**: entrambi i path producono SSE Anthropic standard verso il client. Claudio non sa quale path è in uso.
-5. **Visualizzazione tool_use**: estensione di `chat-session.ts` e nuovo componente Angular per mostrare i blocchi `tool_use` in chat man mano che arrivano.
-6. **Permission gate**: evento custom SSE `tool_request_pending` + endpoint `POST /v1/messages/:id/approve` + modal Angular di conferma.
-7. **Update di questo documento** dopo ogni step.
+1. **Rich action set**: read/list/grep/glob/write/edit/bash. Today only read/list.
+2. **Model-agnostic action exposure**: a mechanism that works both for models with `maxTools > 0` (native tool calling) and `maxTools == 0` (tool emulation via textual parsing). See the plan in [proxy/docs/agent-loop.md § Planned](../../proxy/docs/agent-loop.md#planned-model-agnostic-dual-path-architecture).
+3. **Visible token streaming during the agent loop**: no silence gaps for the user.
+4. **Permission gate** for destructive actions (write/bash) shared across both agentic paths. See [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md).
+5. **Client-side visualization of `tool_use` blocks** in streaming, so the user sees in real time "📂 list .", "📄 read README.md", "🔍 grep parseConfig", etc.
 
-L'architettura completa di destinazione è in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md).
+Points 1–4 are **proxy-side** work. Point 5 is **Claudio-side** work (parsing `content_block` `tool_use`/`tool_result` in `chat-session.ts` and the webview).
+
+Everything else (skills, MCP, hooks, plan mode, sub-agents, todo, web tools, cross-session memory, plan mode) is important for "full parity" with Claude Code, but secondary to points 1–5.
 
 ---
 
-## Documenti correlati
+## 6. High-Level Roadmap
 
-- [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md) — agent loop attuale e roadmap dual-path
-- [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md) — context auto-loading nel system prompt
-- [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md) — permission gate planned
+To close the minimum gap for "junior agent":
+
+1. **Shared action backend** on the proxy side: new file `proxy/src/infrastructure/workspaceActions.ts` with read/list/grep/glob/write/edit/bash, path validation, timeout, truncation.
+2. **Path A**: refactor of `runAgentLoop` for real streaming during iterations and to handle the new actions.
+3. **Path B**: new `runTextualAgentLoop` for models with `maxTools == 0`, based on parsing inline XML tags emitted by the model in plain text.
+4. **Output normalization**: both paths produce standard Anthropic SSE towards the client. Claudio doesn't know which path is in use.
+5. **Tool_use visualization**: extension of `chat-session.ts` and new Angular component to show `tool_use` blocks in chat as they arrive.
+6. **Permission gate**: custom SSE event `tool_request_pending` + endpoint `POST /v1/messages/:id/approve` + Angular confirmation modal.
+7. **Update this document** after each step.
+
+The complete target architecture is in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md).
+
+---
+
+## Related Docs
+
+- [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md) — current agent loop and dual-path roadmap
+- [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md) — context auto-loading in the system prompt
+- [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md) — planned permission gate
 - [proxy/docs/tool-management.md](../../proxy/docs/tool-management.md) — probe + scoring + UseTool
-- [architecture.md](architecture.md) — struttura interna di Claudio
+- [architecture.md](architecture.md) — Claudio's internal structure

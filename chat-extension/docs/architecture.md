@@ -1,12 +1,12 @@
 # Claudio — Architecture
 
-> Struttura interna dell'estensione VS Code per sviluppatori che vogliono contribuire o estendere Claudio.
+> Internal structure of the VS Code extension for developers who want to contribute to or extend Claudio.
 
 ---
 
 ## High-Level Overview
 
-Claudio ha tre componenti principali che comunicano tra loro:
+Claudio has three main components that communicate with each other:
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -15,7 +15,7 @@ Claudio ha tre componenti principali che comunicano tra loro:
 │  activation.ts ──> ChatSession (singleton)            │
 │      │                                                │
 │      ├── ProxyClient      (HTTP + SSE streaming)      │
-│      ├── HealthChecker    (polling /health ogni 10s)  │
+│      ├── HealthChecker    (polling /health every 10s) │
 │      ├── Python executor  (subprocess + venv)         │
 │      └── WebviewBridge    (postMessage bus)           │
 └────────────────────┬──────────────────────────────────┘
@@ -163,165 +163,165 @@ src/webview-ui/src/app/
 ├── app.component.ts                    # Root component (bootstrap Angular)
 │
 ├── core/
-│   ├── models/                         # Tipi dati (ChatMessage, Attachment, ecc.)
-│   ├── enums/                          # Enum (MessageRole, ContentType, ecc.)
+│   ├── models/                         # Data types (ChatMessage, Attachment, etc.)
+│   ├── enums/                          # Enums (MessageRole, ContentType, etc.)
 │   └── services/
-│       ├── message-store.service.ts    # Stato conversazione (signal-based)
-│       ├── streaming.service.ts        # Gestisce gli eventi SSE in arrivo
-│       └── vscode-api.service.ts       # Wrapper attorno a acquireVsCodeApi()
+│       ├── message-store.service.ts    # Conversation state (signal-based)
+│       ├── streaming.service.ts        # Handles incoming SSE events
+│       └── vscode-api.service.ts       # Wrapper around acquireVsCodeApi()
 │
 ├── features/
 │   └── chat/
-│       ├── chat-container/             # Layout principale della chat
-│       ├── message-list/               # Lista messaggi scrollabile
-│       ├── message-bubble/             # Singolo messaggio con rendering MD
-│       ├── input-area/                 # Input testo + allegati
-│       ├── toolbar/                    # Azioni e impostazioni
-│       ├── connection-indicator/       # Badge stato connessione
-│       ├── thinking-block/             # Reasoning block espandibile
-│       └── message-metadata/          # Contatore token
+│       ├── chat-container/             # Main chat layout
+│       ├── message-list/               # Scrollable message list
+│       ├── message-bubble/             # Single message with MD rendering
+│       ├── input-area/                 # Text input + attachments
+│       ├── toolbar/                    # Actions and settings
+│       ├── connection-indicator/       # Connection status badge
+│       ├── thinking-block/             # Expandable reasoning block
+│       └── message-metadata/          # Token counter
 │
 └── shared/
-    ├── directives/                     # Direttive Angular custom
-    ├── pipes/                          # Pipe Angular custom
+    ├── directives/                     # Custom Angular directives
+    ├── pipes/                          # Custom Angular pipes
     └── services/
-        ├── webview-bridge.service.ts   # on()/send() wrapper per postMessage
+        ├── webview-bridge.service.ts   # on()/send() wrapper for postMessage
         └── code-registry.service.ts    # Syntax highlighting support
 ```
 
 ---
 
-## Protocollo Messaggi Tipizzato
+## Typed Message Protocol
 
-Il file `src/shared/message-protocol.ts` definisce il contratto tra extension host e webview. È compilato sia da esbuild (per l'extension host) che da Angular CLI (per la webview).
+The file `src/shared/message-protocol.ts` defines the contract between extension host and webview. It is compiled by both esbuild (for the extension host) and Angular CLI (for the webview).
 
-### Messaggi dall'Extension Host alla Webview (`ToWebviewType`)
+### Messages from Extension Host to Webview (`ToWebviewType`)
 
-| Tipo | Payload | Scopo |
-|------|---------|-------|
-| `streamDelta` | `StreamDeltaPayload` (evento SSE) | Chunk di risposta in streaming |
-| `streamEnd` | — | Generazione completata |
-| `streamError` | `{ message: string }` | Errore durante la generazione |
-| `connectionStatus` | `ConnectionStatus` enum | Risultato health check |
-| `configUpdate` | `ChatConfig` | Config del proxy ricevuta/aggiornata |
-| `slashCommandResult` | `{ command, content }` | Risposta a un slash command |
-| `codeResult` | `{ type: "text" \| "image", data }` | Risultato esecuzione Python |
-| `codeProgress` | `{ phase }` | Fase esecuzione (creating_env, installing_packages, executing) |
-| `historyRestore` | `{ messages: [...] }` | Cronologia conversazione al riattacco del pannello |
-| `filesRead` | `{ attachments: [...] }` | File letti per allegato |
+| Type | Payload | Purpose |
+|------|---------|---------|
+| `streamDelta` | `StreamDeltaPayload` (SSE event) | Streaming response chunk |
+| `streamEnd` | — | Generation complete |
+| `streamError` | `{ message: string }` | Error during generation |
+| `connectionStatus` | `ConnectionStatus` enum | Health check result |
+| `configUpdate` | `ChatConfig` | Proxy config received/updated |
+| `slashCommandResult` | `{ command, content }` | Response to a slash command |
+| `codeResult` | `{ type: "text" \| "image", data }` | Python execution result |
+| `codeProgress` | `{ phase }` | Execution phase (creating_env, installing_packages, executing) |
+| `historyRestore` | `{ messages: [...] }` | Conversation history on panel reattach |
+| `filesRead` | `{ attachments: [...] }` | Files read for attachment |
 
-### Messaggi dalla Webview all'Extension Host (`ToExtensionType`)
+### Messages from Webview to Extension Host (`ToExtensionType`)
 
-| Tipo | Payload | Scopo |
-|------|---------|-------|
-| `sendMessage` | `{ content, attachments?, temperature?, maxTokens?, systemPrompt? }` | Messaggio utente |
-| `cancelStream` | — | Annulla la generazione in corso |
-| `checkHealth` | — | Health check manuale |
-| `clearHistory` | — | Cancella la cronologia |
-| `executeSlashCommand` | `{ command }` | Esegui uno slash command |
-| `executeCode` | `{ code }` | Esegui snippet Python |
-| `readFiles` | `{ uris: string[] }` | Carica file per allegato |
+| Type | Payload | Purpose |
+|------|---------|---------|
+| `sendMessage` | `{ content, attachments?, temperature?, maxTokens?, systemPrompt? }` | User message |
+| `cancelStream` | — | Cancel ongoing generation |
+| `checkHealth` | — | Manual health check |
+| `clearHistory` | — | Clear conversation history |
+| `executeSlashCommand` | `{ command }` | Execute a slash command |
+| `executeCode` | `{ code }` | Execute Python snippet |
+| `readFiles` | `{ uris: string[] }` | Load files for attachment |
 
 ---
 
-## Flusso: Messaggio Utente → Risposta in Streaming
+## Flow: User Message → Streaming Response
 
 ```
-1. Utente digita nella InputArea e preme Invio
-   └── Angular emette evento → WebviewBridgeService.send({ type: "sendMessage", ... })
-         └── postMessage alla extension host
+1. User types in the InputArea and presses Enter
+   └── Angular emits event → WebviewBridgeService.send({ type: "sendMessage", ... })
+         └── postMessage to extension host
 
-2. Extension Host riceve in ChatSession.handleSendMessage()
-   ├── Aggiunge messaggio utente alla history
-   ├── Legge config (temperatura, systemPrompt, enableThinking)
-   └── Chiama ProxyClient.sendMessage(messages, config)
+2. Extension Host receives in ChatSession.handleSendMessage()
+   ├── Adds user message to history
+   ├── Reads config (temperature, systemPrompt, enableThinking)
+   └── Calls ProxyClient.sendMessage(messages, config)
          └── fetch POST http://127.0.0.1:5678/v1/messages
                Headers: Content-Type: application/json
-                        X-Workspace-Root: /percorso/workspace (se disponibile)
+                        X-Workspace-Root: /path/to/workspace (if available)
                Body: { model, messages, max_tokens, temperature, stream: true, ... }
 
-3. ProxyClient itera gli eventi SSE con SSEParser
-   Per ogni evento Anthropic:
+3. ProxyClient iterates SSE events with SSEParser
+   For each Anthropic event:
      └── WebviewBridge.send({ type: "streamDelta", event: <SseEvent> })
-           └── postMessage alla webview
+           └── postMessage to webview
 
-4. Webview riceve in WebviewBridgeService
+4. Webview receives in WebviewBridgeService
    └── StreamingService.handleDelta(event)
-         ├── content_block_delta (text_delta) → appende testo al messaggio corrente
-         ├── content_block_delta (thinking_delta) → aggiorna thinking block
-         └── message_stop → flush, notifica fine streaming
+         ├── content_block_delta (text_delta) → appends text to current message
+         ├── content_block_delta (thinking_delta) → updates thinking block
+         └── message_stop → flush, notify streaming end
 
-5. Webview invia { type: "streamEnd" } alla fine
-   └── ChatSession aggiunge la risposta completa alla history in-memory
+5. Webview sends { type: "streamEnd" } at the end
+   └── ChatSession adds the complete response to the in-memory history
 ```
 
 ---
 
-## Flusso: Slash Command
+## Flow: Slash Command
 
-### Comandi gestiti dall'extension host (client-side)
+### Commands handled by the extension host (client-side)
 
 ```
-Utente digita /files nella webview
+User types /files in the webview
   └── WebviewBridge.send({ type: "executeSlashCommand", command: "/files" })
         └── ChatSession.handleClientSlashCommand("/files")
-              ├── Legge i file aperti nell'editor VS Code
-              ├── Costruisce la lista
+              ├── Reads open files in the VS Code editor
+              ├── Builds the list
               └── WebviewBridge.send({ type: "slashCommandResult", content: "..." })
 ```
 
-### Comandi gestiti dal proxy (proxy-side)
+### Commands handled by the proxy (proxy-side)
 
 ```
-Utente digita /commit nella webview
+User types /commit in the webview
   └── sendMessage({ content: "/commit" })
         └── ProxyClient.sendMessage() → POST /v1/messages
               └── SlashCommandInterceptor.intercept()
-                    ├── Detecta "/commit"
-                    ├── Esegue git diff --staged
-                    ├── type: "enrich" → sostituisce il contenuto con il diff
-                    └── Chiama l'LLM con il prompt arricchito
-              └── Risposta SSE normale → streaming in Claudio
+                    ├── Detects "/commit"
+                    ├── Runs git diff --staged
+                    ├── type: "enrich" → replaces content with the diff
+                    └── Calls the LLM with the enriched prompt
+              └── Normal SSE response → streaming in Claudio
 ```
 
 ---
 
-## Flusso: Esecuzione Codice Python
+## Flow: Python Code Execution
 
 ```
-Utente clicca ▶ su un blocco Python nella webview
+User clicks ▶ on a Python block in the webview
   └── WebviewBridge.send({ type: "executeCode", code: "..." })
         └── ChatSession.handleExecuteCode(code)
 
-1. Trova Python:
-   └── Cerca "python3" o "python" in PATH
+1. Find Python:
+   └── Search for "python3" or "python" in PATH
 
-2. Crea/verifica venv:
+2. Create/verify venv:
    └── .claudio-venv in VS Code globalStoragePath
    └── send({ type: "codeProgress", phase: "creating_env" })
 
-3. Scansiona import nel codice:
-   └── Regex per trovare "import X" e "from X import"
+3. Scan imports in the code:
+   └── Regex to find "import X" and "from X import"
 
-4. Installa pacchetti mancanti:
-   └── pip install <mancanti>
+4. Install missing packages:
+   └── pip install <missing>
    └── send({ type: "codeProgress", phase: "installing_packages" })
 
-5. Modifica matplotlib (se presente):
-   └── Sostituisce plt.show() con salvataggio su file temporaneo
+5. Patch matplotlib (if present):
+   └── Replace plt.show() with save to temp file
 
-6. Esegue il codice:
+6. Execute the code:
    └── python3 <temp_file.py>
    └── send({ type: "codeProgress", phase: "executing" })
 
-7. Invia il risultato:
-   ├── Testo: send({ type: "codeResult", data: { type: "text", data: stdout } })
-   └── Plot: legge PNG dal file → base64 → send({ type: "codeResult", data: { type: "image", data: base64 } })
+7. Send the result:
+   ├── Text: send({ type: "codeResult", data: { type: "text", data: stdout } })
+   └── Plot: read PNG from file → base64 → send({ type: "codeResult", data: { type: "image", data: base64 } })
 ```
 
 ---
 
-## Pipeline di Build
+## Build Pipeline
 
 ```
 npm run build
@@ -338,8 +338,8 @@ npm run build
               Entry:    src/extension/activation.ts
               Output:   dist/extension.js
               Format:   CommonJS
-              External: vscode (fornito da VS Code al runtime)
-              Bundle:   sì (include shared/message-protocol.ts e tutto il resto)
+              External: vscode (provided by VS Code at runtime)
+              Bundle:   yes (includes shared/message-protocol.ts and everything else)
 
 npm run package
   └── npx @vscode/vsce package --no-dependencies
@@ -349,15 +349,15 @@ npm run package
 
 ---
 
-## Architettura Configurazione
+## Configuration Architecture
 
-La configurazione di Claudio ha una gerarchia precisa:
+Claudio's configuration has a precise hierarchy:
 
 ```
-Priorità (dalla più alta alla più bassa):
+Priority (highest to lowest):
 
-1. Overrides per-messaggio
-   (temperatura, maxTokens, systemPrompt passati dall'UI)
+1. Per-message overrides
+   (temperature, maxTokens, systemPrompt passed from the UI)
 
 2. Proxy config (GET /config)
    { temperature, systemPrompt, enableThinking, maxTokensFallback, locale, model }
@@ -365,78 +365,78 @@ Priorità (dalla più alta alla più bassa):
 3. VS Code settings
    { claudio.proxyHost, claudio.proxyPort }
 
-4. Default hardcoded
+4. Hardcoded defaults
    { temperature: 0.7, maxTokens: 4096, locale: "en" }
 ```
 
-La funzione `buildChatConfig()` in `extension-config.ts` esegue il merge in questo ordine.
+The `buildChatConfig()` function in `extension-config.ts` performs the merge in this order.
 
-**Flusso di caricamento:**
-1. All'attivazione, `ChatSession` chiama `ExtensionConfig.load()`
-2. Legge VS Code settings (`proxyHost`, `proxyPort`)
+**Loading flow:**
+1. On activation, `ChatSession` calls `ExtensionConfig.load()`
+2. Reads VS Code settings (`proxyHost`, `proxyPort`)
 3. Fetch `GET {proxyHost}:{proxyPort}/config`
-4. Merge: proxy config sovrascrive i default, VS Code settings sovrascrivono host/porta
-5. Config disponibile per tutti i messaggi successivi
-6. `HealthChecker` rileva reconnect → `refreshProxyConfig()` → repeat step 3-4
+4. Merge: proxy config overwrites defaults, VS Code settings overwrite host/port
+5. Config available for all subsequent messages
+6. `HealthChecker` detects reconnect → `refreshProxyConfig()` → repeat steps 3-4
 
 ---
 
 ## Tech Stack
 
-| Componente | Tecnologia |
+| Component | Technology |
 |---|---|
 | Extension host | TypeScript 5.6 + Node.js 18 |
 | Extension bundler | esbuild 0.24 |
 | Webview UI | Angular 19 |
 | Webview bundler | Angular CLI (@angular/build) |
-| Styling webview | SCSS + Bootstrap 5 |
-| Rendering Markdown | marked + marked-highlight |
-| Rendering formule | KaTeX |
+| Webview styling | SCSS + Bootstrap 5 |
+| Markdown rendering | marked + marked-highlight |
+| Formula rendering | KaTeX |
 | i18n | @ngx-translate/core (en + it) |
-| Packaging VS Code | @vscode/vsce |
+| VS Code packaging | @vscode/vsce |
 
 ---
 
 ## Tool Use & Permission Flow (planned)
 
-> **Status: planned, not yet implemented.** Questa sezione descrive come Claudio dovrà evolversi per visualizzare l'attività agentica del proxy e per gestire le approvazioni utente per le action distruttive. Il quadro complessivo è in [feature-gap.md](feature-gap.md); l'architettura completa lato proxy è in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md).
+> **Status: planned, not yet implemented.** This section describes how Claudio will need to evolve to visualize the proxy's agentic activity and to handle user approvals for destructive actions. The overall picture is in [feature-gap.md](feature-gap.md); the full proxy-side architecture is in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md).
 
-### Stato attuale
+### Current State
 
-Il proxy oggi può eseguire un agent loop con il tool `workspace` (action `list`/`read`) per modelli con `maxTools > 0`. Quando lo fa, emette il risultato finale come testo "sintetico" — i blocchi `tool_use` Anthropic intermedi **esistono nel flusso SSE** ma sono ignorati lato Claudio:
+The proxy can today run an agent loop with the `workspace` tool (actions `list`/`read`) for models with `maxTools > 0`. When it does so, it emits the final result as "synthetic" text — intermediate Anthropic `tool_use` blocks **exist in the SSE stream** but are ignored on the Claudio side:
 
-- [chat-session.ts:295-321](../src/extension/chat-session.ts#L295-L321) gestisce solo `text_delta` nello switch sugli eventi SSE
-- I blocchi `content_block_start` con `content_block.type === "tool_use"` non vengono parsati
-- Risultato: l'utente non vede mai "📂 list .", "📄 read README.md", ecc. Vede solo la risposta finale
+- [chat-session.ts:295-321](../src/extension/chat-session.ts#L295-L321) handles only `text_delta` in the switch over SSE events
+- `content_block_start` blocks with `content_block.type === "tool_use"` are not parsed
+- Result: the user never sees "📂 list .", "📄 read README.md", etc. — only the final response
 
-### Cosa servirà aggiungere
+### What Needs to Be Added
 
-1. **Parsing dei blocchi `tool_use`** in `chat-session.ts`:
-   - Riconoscere `content_block_start` con `content_block.type === "tool_use"` e propagare al webview con un nuovo message type
-   - Bufferare gli `input_json_delta` chunk (l'input JSON arriva in più pezzi)
-   - Riconoscere `content_block_stop` per finalizzare il blocco
+1. **Parsing of `tool_use` blocks** in `chat-session.ts`:
+   - Recognize `content_block_start` with `content_block.type === "tool_use"` and propagate to the webview with a new message type
+   - Buffer `input_json_delta` chunks (the JSON input arrives in multiple pieces)
+   - Recognize `content_block_stop` to finalize the block
 
-2. **Nuovi tipi nel message protocol** ([message-protocol.ts](../src/shared/message-protocol.ts)):
-   - `ToolUseBlockPayload` — un blocco `tool_use` completo o parziale da mostrare in chat
-   - `ToolRequestPayload` — il proxy chiede approvazione per un'action distruttiva
-   - `ToolApprovalPayload` — l'utente decide approve/reject
+2. **New types in the message protocol** ([message-protocol.ts](../src/shared/message-protocol.ts)):
+   - `ToolUseBlockPayload` — a complete or partial `tool_use` block to display in chat
+   - `ToolRequestPayload` — the proxy is asking for approval for a destructive action
+   - `ToolApprovalPayload` — the user decides approve/reject
 
-3. **Componente Angular per la visualizzazione** dei blocchi `tool_use` in `MessageList`:
-   - Rendering inline dell'azione: "📂 list `src/`", "📄 read `README.md`", ecc.
-   - Mostrare lo stato (pending → executing → completed)
-   - Espansione opzionale per vedere il risultato dell'azione
+3. **Angular component for visualization** of `tool_use` blocks in `MessageList`:
+   - Inline rendering of the action: "📂 list `src/`", "📄 read `README.md`", etc.
+   - Show the state (pending → executing → completed)
+   - Optional expansion to see the action result
 
-4. **Componente Angular modal di approvazione** per le action distruttive (write/edit/bash):
-   - Triggered da un nuovo evento custom SSE `tool_request_pending` (vedi [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md))
-   - Mostra preview del file/comando
-   - Bottoni Approve / Reject
-   - Su click → POST `/v1/messages/:request_id/approve` al proxy via `proxy-client.ts`
+4. **Angular approval modal component** for destructive actions (write/edit/bash):
+   - Triggered by a new custom SSE event `tool_request_pending` (see [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md))
+   - Shows file/command preview
+   - Approve / Reject buttons
+   - On click → POST `/v1/messages/:request_id/approve` to the proxy via `proxy-client.ts`
 
-### Vincolo cardinale: agnostic verso il path agentico
+### Cardinal Constraint: Agnostic to the Agentic Path
 
-Il proxy implementerà due path agentici (native per modelli con tool, textual per modelli senza). Claudio **non deve sapere quale path è in uso**: in entrambi i casi riceve blocchi `tool_use` Anthropic-standard nello stream SSE. Tutta la complessità di emulazione testuale o di decodifica di tool_calls OpenAI vive nel proxy.
+The proxy will implement two agentic paths (native for tool-capable models, textual for models without tools). Claudio **must not know which path is in use**: in both cases it receives standard Anthropic `tool_use` blocks in the SSE stream. All the complexity of textual emulation or OpenAI tool_calls decoding lives in the proxy.
 
-Questo significa che le modifiche elencate sopra in Claudio sono **una sola volta** — non serve un parser separato per ogni path.
+This means the Claudio-side changes listed above need to be implemented **once** — no separate parser is needed for each path.
 
 ---
 
@@ -445,7 +445,7 @@ Questo significa che le modifiche elencate sopra in Claudio sono **una sola volt
 - [Quick Start](quick-start.md) — step-by-step installation guide
 - [Slash Commands](slash-commands.md) — complete command reference
 - [Troubleshooting](troubleshooting.md) — problem resolution
-- [Feature Gap](feature-gap.md) — Claudio vs Claude Code, cosa è presente e cosa manca
+- [Feature Gap](feature-gap.md) — Claudio vs Claude Code, what is present and what is missing
 - [Proxy Architecture](../../proxy/docs/architecture.md) — internal proxy structure
-- [Proxy Agent Loop](../../proxy/docs/agent-loop.md) — agent loop attuale e roadmap dual-path
-- [Proxy Permission Protocol](../../proxy/docs/permission-protocol.md) — wire format approvazioni planned
+- [Proxy Agent Loop](../../proxy/docs/agent-loop.md) — current agent loop and dual-path roadmap
+- [Proxy Permission Protocol](../../proxy/docs/permission-protocol.md) — planned approval wire format
