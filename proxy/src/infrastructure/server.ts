@@ -28,6 +28,7 @@ import { StreamTranslator } from "../application/streamTranslator";
 import { SlashCommandInterceptor, SLASH_COMMAND_REGISTRY } from "../application/slashCommandInterceptor";
 import { buildWorkspaceContextSummary } from "../application/workspaceTool";
 import { WORKSPACE_TOOL_DEF, executeAction, type ActionArgs } from "../infrastructure/workspaceActions";
+import { runTextualAgentLoop, TEXTUAL_TOOL_MANUAL } from "../application/textualAgentLoop";
 
 import type { LoadedModelInfo, AnthropicRequest, ModelCapabilities } from "../domain/types";
 
@@ -240,7 +241,7 @@ export class ProxyServer {
     if (workspaceCwd) {
       const pathLine = `Working directory: ${workspaceCwd} (${basename(workspaceCwd)})`;
       const wsContext = this.maxTools === 0
-        ? `${pathLine}\n\n${buildWorkspaceContextSummary(workspaceCwd)}`
+        ? `${pathLine}\n\n${buildWorkspaceContextSummary(workspaceCwd)}\n\n${TEXTUAL_TOOL_MANUAL}`
         : pathLine;
 
       if (!body.system) {
@@ -269,12 +270,29 @@ export class ProxyServer {
       }));
     }
 
-    // Option A: model supports tools — run agentic workspace exploration loop.
-    // runNativeAgentLoop returns true if it handled the response, false if the
-    // model didn't use the workspace tool (fall through to normal streaming).
-    if (this.maxTools > 0 && workspaceCwd) {
-      const handled = await this.runNativeAgentLoop(res, openaiReq, workspaceCwd, thinkingEnabled);
-      if (handled) return;
+    // Agent loop routing — activated only when a workspace directory is known.
+    // Path A (native tools):  model supports tool_calls → runNativeAgentLoop.
+    //   Returns false if the model produced nothing at iteration 0, allowing
+    //   fall-through to normal streaming for simple non-workspace queries.
+    // Path B (textual tags):  model has no tool support → runTextualAgentLoop.
+    //   Always handles the response; injects TEXTUAL_TOOL_MANUAL into the
+    //   system prompt (done above) so the model knows the action tag protocol.
+    if (workspaceCwd) {
+      if (this.maxTools > 0) {
+        const handled = await this.runNativeAgentLoop(res, openaiReq, workspaceCwd, thinkingEnabled);
+        if (handled) return;
+      } else {
+        await runTextualAgentLoop(
+          res,
+          openaiReq,
+          workspaceCwd,
+          thinkingEnabled,
+          this.config.targetUrl,
+          this.modelInfo?.id ?? openaiReq.model ?? "unknown",
+          this.logger,
+        );
+        return;
+      }
     }
 
     // Forward to the LLM backend
