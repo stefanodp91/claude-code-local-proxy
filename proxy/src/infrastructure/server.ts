@@ -16,6 +16,8 @@ import { type ProxyConfig } from "./config";
 import { Logger } from "./logger";
 import { loadLocale } from "./i18nLoader";
 import { t } from "../domain/i18n";
+import { sseEvent, msgId } from "../domain/utils";
+import { SseEventType, StopReason, ContentBlockType, DeltaType } from "../domain/types";
 import { ModelInfoService } from "./modelInfo";
 import { ToolProbe } from "./toolProbe";
 import { PersistentCache } from "./persistentCache";
@@ -24,7 +26,8 @@ import { RequestTranslator } from "../application/requestTranslator";
 import { ResponseTranslator } from "../application/responseTranslator";
 import { StreamTranslator } from "../application/streamTranslator";
 import { SlashCommandInterceptor, SLASH_COMMAND_REGISTRY } from "../application/slashCommandInterceptor";
-import { WORKSPACE_TOOL_DEF, executeWorkspaceTool, buildWorkspaceContextSummary } from "../application/workspaceTool";
+import { buildWorkspaceContextSummary } from "../application/workspaceTool";
+import { WORKSPACE_TOOL_DEF, executeAction, type ActionArgs } from "../infrastructure/workspaceActions";
 
 import type { LoadedModelInfo, AnthropicRequest, ModelCapabilities } from "../domain/types";
 
@@ -267,10 +270,10 @@ export class ProxyServer {
     }
 
     // Option A: model supports tools — run agentic workspace exploration loop.
-    // runAgentLoop returns true if it handled the response, false if the model
-    // didn't use the workspace tool (fall through to normal streaming).
+    // runNativeAgentLoop returns true if it handled the response, false if the
+    // model didn't use the workspace tool (fall through to normal streaming).
     if (this.maxTools > 0 && workspaceCwd) {
-      const handled = await this.runAgentLoop(res, openaiReq, workspaceCwd);
+      const handled = await this.runNativeAgentLoop(res, openaiReq, workspaceCwd, thinkingEnabled);
       if (handled) return;
     }
 
@@ -358,16 +361,23 @@ export class ProxyServer {
   // ── Utility Methods ────────────────────────────────────────────────────
 
   /**
-   * Agentic loop for workspace-aware file exploration (Option A).
+   * Native agentic loop for workspace-aware file exploration (Path A).
    *
-   * Runs non-streaming requests to the LLM, executing `workspace` tool calls
-   * (list/read) until the model produces a plain text response, then emits
-   * the final answer as synthetic Anthropic SSE.
+   * Iteration 0 uses stream:false as a fallback guard (returns false if the
+   * model produces nothing, letting normal streaming handle the response).
+   * Iterations 1+ use stream:true, forwarding thinking and text deltas to the
+   * client in real time.  Tool calls are accumulated and emitted as tool_use
+   * blocks when each iteration's stream ends.
+   *
+   * The resulting Anthropic SSE stream is one continuous message
+   * (single message_start … message_stop) regardless of how many iterations
+   * the loop takes.  The client does not know which iteration it is on.
    */
-  private async runAgentLoop(
+  private async runNativeAgentLoop(
     res: ServerResponse,
     openaiReq: any,
     workspaceCwd: string,
+    thinkingEnabled: boolean,
   ): Promise<boolean> {
     const MAX_ITERATIONS = 10;
     const SSE_HEADERS = {
@@ -376,71 +386,338 @@ export class ProxyServer {
       "Connection": "keep-alive",
     };
 
-    // Use ONLY the workspace tool — replacing any tools from ToolManager.
-    // This prevents the model from calling unhandled tools (which return content=null)
-    // and ensures the loop terminates cleanly with either a tool call or a text response.
-    openaiReq = {
-      ...openaiReq,
-      tools: [WORKSPACE_TOOL_DEF],
-      tool_choice: "auto",
+    // Replace all client tools with only the workspace tool so the model can
+    // only call workspace actions and text responses terminate the loop cleanly.
+    const agentReq = { ...openaiReq, tools: [WORKSPACE_TOOL_DEF], tool_choice: "auto" };
+    const messages: any[] = [...openaiReq.messages];
+    const messageId = msgId();
+    let headersSent = false;
+    let contentIndex = 0;
+
+    // Lazy write: sends SSE headers + message_start on the first call.
+    const writeSSE = (text: string): void => {
+      if (!headersSent) {
+        headersSent = true;
+        res.writeHead(200, SSE_HEADERS);
+        res.write(
+          sseEvent(SseEventType.MessageStart, {
+            type: "message_start",
+            message: {
+              id: messageId,
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: this.modelInfo?.id ?? agentReq.model ?? "unknown",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 0, output_tokens: 0 },
+            },
+          }),
+        );
+      }
+      res.write(text);
     };
 
-    const messages: any[] = [...openaiReq.messages];
+    // Emit final message_delta + message_stop and close the response.
+    const endMessage = (outputTokens = 0, stopReason: StopReason = StopReason.EndTurn): void => {
+      writeSSE(
+        sseEvent(SseEventType.MessageDelta, {
+          type: "message_delta",
+          delta: { stop_reason: stopReason, stop_sequence: null },
+          usage: { output_tokens: outputTokens },
+        }),
+      );
+      writeSSE(sseEvent(SseEventType.MessageStop, { type: "message_stop" }));
+      res.end();
+    };
+
+    // Emit a text block (convenience helper for error messages and simple text).
+    const emitTextBlock = (text: string): void => {
+      writeSSE(sseEvent(SseEventType.ContentBlockStart, { type: "content_block_start", index: contentIndex, content_block: { type: "text", text: "" } }));
+      writeSSE(sseEvent(SseEventType.ContentBlockDelta, { type: "content_block_delta", index: contentIndex, delta: { type: "text_delta", text } }));
+      writeSSE(sseEvent(SseEventType.ContentBlockStop, { type: "content_block_stop", index: contentIndex }));
+      contentIndex++;
+    };
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
-      let data: any;
+      // ── Iteration 0: non-streaming fallback guard ──────────────────────────
+      if (i === 0) {
+        let data: any;
+        try {
+          const resp = await fetch(this.config.targetUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...agentReq, messages, stream: false }),
+          });
+          if (!resp.ok) {
+            const errText = await resp.text().catch(() => "");
+            emitTextBlock(`Error from LLM: ${errText}`);
+            endMessage();
+            return true;
+          }
+          data = await resp.json();
+        } catch (err) {
+          emitTextBlock(`Error contacting LLM: ${String(err)}`);
+          endMessage();
+          return true;
+        }
+
+        const choice = data?.choices?.[0];
+        const workspaceCalls: any[] = (choice?.message?.tool_calls ?? []).filter(
+          (tc: any) => tc.function?.name === "workspace",
+        );
+        const text: string = choice?.message?.content ?? "";
+
+        // Nothing produced: fall back to normal streaming (no response sent yet).
+        if (workspaceCalls.length === 0 && !text.trim()) return false;
+
+        // Text only (no tool calls): emit as a single text block and finish.
+        if (workspaceCalls.length === 0) {
+          emitTextBlock(text);
+          endMessage(text.length);
+          return true;
+        }
+
+        // Tool calls: emit tool_use blocks, execute each call, continue loop.
+        messages.push(choice.message);
+        for (const tc of workspaceCalls) {
+          let args: ActionArgs;
+          try { args = JSON.parse(tc.function.arguments ?? "{}"); }
+          catch { args = { action: "list", path: "." }; }
+
+          writeSSE(sseEvent(SseEventType.ContentBlockStart, { type: "content_block_start", index: contentIndex, content_block: { type: "tool_use", id: tc.id, name: "workspace", input: {} } }));
+          writeSSE(sseEvent(SseEventType.ContentBlockDelta, { type: "content_block_delta", index: contentIndex, delta: { type: "input_json_delta", partial_json: tc.function.arguments ?? "" } }));
+          writeSSE(sseEvent(SseEventType.ContentBlockStop, { type: "content_block_stop", index: contentIndex }));
+          contentIndex++;
+
+          const result = executeAction(args, workspaceCwd);
+          this.logger.dbg(`[workspace] ${args.action} "${args.path ?? ""}" → ${result.slice(0, 120)}`);
+          messages.push({ role: "tool", tool_call_id: tc.id, content: result });
+        }
+        continue;
+      }
+
+      // ── Iterations 1+: streaming ────────────────────────────────────────────
+      let resp: Response;
       try {
-        const resp = await fetch(this.config.targetUrl, {
+        resp = await fetch(this.config.targetUrl, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...openaiReq, messages, stream: false }),
+          body: JSON.stringify({ ...agentReq, messages, stream: true }),
         });
-        data = await resp.json();
-      } catch (err) {
-        res.writeHead(200, SSE_HEADERS);
-        this.writeSyntheticSse(res, `Error contacting LLM: ${String(err)}`);
-        return true;
-      }
-
-      const choice = data?.choices?.[0];
-      if (!choice) break;
-
-      const workspaceCalls: any[] = (choice.message?.tool_calls ?? []).filter(
-        (tc: any) => tc.function?.name === "workspace",
-      );
-
-      if (workspaceCalls.length === 0) {
-        const text: string = choice.message?.content ?? "";
-
-        // First iteration with no tool calls and no content: fall back to normal
-        // streaming so the model can respond without the workspace tool overhead.
-        if (i === 0 && !text.trim()) return false;
-
-        res.writeHead(200, SSE_HEADERS);
-        this.writeSyntheticSse(res, text);
-        return true;
-      }
-
-      // Execute tool calls and append results to the conversation
-      messages.push(choice.message);
-
-      for (const tc of workspaceCalls) {
-        let args: { action: string; path: string };
-        try {
-          args = JSON.parse(tc.function.arguments ?? "{}");
-        } catch {
-          args = { action: "list", path: "." };
+        if (!resp.ok || !resp.body) {
+          const errText = !resp.ok ? await resp.text().catch(() => "") : "";
+          emitTextBlock(`Error from LLM: ${errText || "no response body"}`);
+          endMessage();
+          return true;
         }
-        const result = executeWorkspaceTool(args, workspaceCwd);
-        this.logger.dbg(`[workspace] ${args.action} "${args.path}" → ${result.slice(0, 120)}`);
+      } catch (err) {
+        emitTextBlock(`Error contacting LLM: ${String(err)}`);
+        endMessage();
+        return true;
+      }
+
+      const { toolCalls, nextContentIndex, outputTokens } =
+        await this.parseStreamingIteration(resp.body, writeSSE, contentIndex, thinkingEnabled);
+      contentIndex = nextContentIndex;
+
+      if (toolCalls.length === 0) {
+        // Final answer fully streamed — close the message.
+        endMessage(outputTokens);
+        return true;
+      }
+
+      // Tool calls from a streaming iteration: inject into messages, loop again.
+      messages.push({
+        role: "assistant",
+        content: null,
+        tool_calls: toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function",
+          function: { name: "workspace", arguments: tc.arguments },
+        })),
+      });
+      for (const tc of toolCalls) {
+        let args: ActionArgs;
+        try { args = JSON.parse(tc.arguments); }
+        catch { args = { action: "list", path: "." }; }
+
+        const result = executeAction(args, workspaceCwd);
+        this.logger.dbg(`[workspace] ${args.action} "${args.path ?? ""}" → ${result.slice(0, 120)}`);
         messages.push({ role: "tool", tool_call_id: tc.id, content: result });
       }
     }
 
-    // Fallback: max iterations reached without a text response
-    res.writeHead(200, SSE_HEADERS);
-    this.writeSyntheticSse(res, "(Max workspace tool iterations reached — response may be incomplete)");
+    // Max iterations reached without a final text response.
+    emitTextBlock("(Max workspace tool iterations reached — response may be incomplete)");
+    endMessage();
     return true;
+  }
+
+  /**
+   * Stream one agent loop iteration to the client.
+   *
+   * Reads an OpenAI SSE stream and:
+   * - Forwards thinking deltas as Anthropic thinking_delta events in real time.
+   * - Forwards text deltas as Anthropic text_delta events in real time.
+   * - Accumulates tool calls silently, emitting them as tool_use blocks at [DONE].
+   *
+   * Content block indices start at startContentIndex and are incremented as
+   * blocks are opened and closed.  The returned nextContentIndex is where the
+   * next block should start in subsequent iterations.
+   */
+  private async parseStreamingIteration(
+    body: ReadableStream<Uint8Array>,
+    writeSSE: (text: string) => void,
+    startContentIndex: number,
+    thinkingEnabled: boolean,
+  ): Promise<{ toolCalls: Array<{ id: string; name: string; arguments: string }>; nextContentIndex: number; outputTokens: number }> {
+    const decoder = new TextDecoder();
+    const reader = body.getReader();
+    let lineBuffer = "";
+
+    let thinkingOpen = false;
+    let thinkingIndex = -1;
+    let textOpen = false;
+    let textIndex = -1;
+    let currentIndex = startContentIndex;
+    let outputTokens = 0;
+    let doneSeen = false;
+
+    // Keyed by OpenAI delta index (the `index` field in tool_calls deltas).
+    const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
+
+    const emit = (eventType: string, data: any): void => writeSSE(sseEvent(eventType, data));
+
+    const closeThinking = (): void => {
+      if (!thinkingOpen) return;
+      emit(SseEventType.ContentBlockStop, { type: "content_block_stop", index: thinkingIndex });
+      thinkingOpen = false;
+      currentIndex++;
+    };
+
+    const closeText = (): void => {
+      if (!textOpen) return;
+      emit(SseEventType.ContentBlockStop, { type: "content_block_stop", index: textIndex });
+      textOpen = false;
+      currentIndex++;
+    };
+
+    const processLine = (line: string): void => {
+      if (!line.startsWith("data: ")) return;
+      const dataStr = line.slice(6).trim();
+
+      if (dataStr === "[DONE]") {
+        doneSeen = true;
+        closeText();
+        closeThinking();
+        // Emit accumulated tool_use blocks in order.
+        for (const [, tc] of toolCallMap) {
+          const blockIdx = currentIndex++;
+          emit(SseEventType.ContentBlockStart, { type: "content_block_start", index: blockIdx, content_block: { type: "tool_use", id: tc.id, name: tc.name, input: {} } });
+          emit(SseEventType.ContentBlockDelta, { type: "content_block_delta", index: blockIdx, delta: { type: "input_json_delta", partial_json: tc.arguments } });
+          emit(SseEventType.ContentBlockStop, { type: "content_block_stop", index: blockIdx });
+        }
+        return;
+      }
+
+      let parsed: any;
+      try { parsed = JSON.parse(dataStr); } catch { return; }
+
+      if (parsed.usage?.completion_tokens) outputTokens = parsed.usage.completion_tokens;
+
+      const choice = parsed.choices?.[0];
+      if (!choice) return;
+      const delta = choice.delta ?? {};
+
+      // 1. Thinking (reasoning_content)
+      if (delta.reasoning_content && thinkingEnabled) {
+        if (!thinkingOpen) {
+          thinkingIndex = currentIndex; // do NOT increment — incremented on close
+          thinkingOpen = true;
+          emit(SseEventType.ContentBlockStart, {
+            type: "content_block_start",
+            index: thinkingIndex,
+            content_block: { type: ContentBlockType.Thinking, thinking: "", signature: "" },
+          });
+        }
+        emit(SseEventType.ContentBlockDelta, {
+          type: "content_block_delta",
+          index: thinkingIndex,
+          delta: { type: DeltaType.ThinkingDelta, thinking: delta.reasoning_content },
+        });
+      }
+
+      // 2. Text content
+      if (delta.content != null && delta.content !== "") {
+        closeThinking(); // close thinking block if thinking preceded text
+        if (!textOpen) {
+          textIndex = currentIndex;
+          textOpen = true;
+          emit(SseEventType.ContentBlockStart, {
+            type: "content_block_start",
+            index: textIndex,
+            content_block: { type: ContentBlockType.Text, text: "" },
+          });
+        }
+        emit(SseEventType.ContentBlockDelta, {
+          type: "content_block_delta",
+          index: textIndex,
+          delta: { type: DeltaType.TextDelta, text: delta.content },
+        });
+      }
+
+      // 3. Tool calls: accumulate silently, emit at [DONE] as complete blocks.
+      if (delta.tool_calls && Array.isArray(delta.tool_calls)) {
+        closeThinking();
+        closeText();
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          if (tc.id) {
+            toolCallMap.set(idx, {
+              id: tc.id,
+              name: tc.function?.name ?? "",
+              arguments: tc.function?.arguments ?? "",
+            });
+          } else {
+            const existing = toolCallMap.get(idx);
+            if (existing) {
+              if (tc.function?.name) existing.name += tc.function.name;
+              if (tc.function?.arguments) existing.arguments += tc.function.arguments;
+            }
+          }
+        }
+      }
+    };
+
+    // Main read loop
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          if (lineBuffer.trim()) processLine(lineBuffer.trim());
+          break;
+        }
+        lineBuffer += decoder.decode(value, { stream: true });
+        const lines = lineBuffer.split("\n");
+        lineBuffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed) processLine(trimmed);
+        }
+        if (doneSeen) break;
+      }
+    } catch (err) {
+      this.logger.error(`[agent stream] Read error: ${String(err)}`);
+      closeText();
+      closeThinking();
+    }
+
+    return {
+      toolCalls: [...toolCallMap.values()],
+      nextContentIndex: currentIndex,
+      outputTokens,
+    };
   }
 
   /**
