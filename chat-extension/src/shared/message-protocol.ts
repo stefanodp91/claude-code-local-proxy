@@ -23,6 +23,9 @@ export enum ToWebviewType {
   HistoryRestore = "historyRestore",
   FilesRead = "filesRead",
   ToolApprovalRequest = "toolApprovalRequest",
+  PlanExitRequest = "planExitRequest",
+  NotificationShow = "notificationShow",
+  NotificationDismiss = "notificationDismiss",
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,6 +42,9 @@ export enum ToExtensionType {
   ExecuteCode = "executeCode",
   ReadFiles = "readFiles",
   ToolApprovalResponse = "toolApprovalResponse",
+  SetAgentMode = "setAgentMode",
+  PlanExitResponse = "planExitResponse",
+  NotificationDismissed = "notificationDismissed",
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,12 +184,80 @@ export interface ToolApprovalRequestPayload {
     cmd?: string;
     [key: string]: string | undefined;
   };
+  /**
+   * For `write` actions on existing files: the current file contents.
+   * `null` means the file does not exist yet (new file — no diff, just added lines).
+   * `undefined` for non-write actions.
+   */
+  oldContent?: string | null;
 }
+
+/**
+ * Approval scope chosen by the user when confirming a destructive action.
+ *
+ * - `once`  — the default. Approve only this specific action.
+ * - `turn`  — approve all destructive actions until the current turn ends.
+ *             The proxy stores the flag in the agent-loop closure, so it
+ *             resets automatically on the next user message.
+ * - `file`  — approve this action AND any future write/edit on the same path
+ *             until the proxy process restarts. Not applicable to bash.
+ */
+export type ApprovalScope = "once" | "turn" | "file";
 
 /** Sent from webview → extension after the user approves or denies a tool action. */
 export interface ToolApprovalResponsePayload {
   requestId: string;
   approved: boolean;
+  scope: ApprovalScope;
+}
+
+/** Agent mode controls how the proxy gates destructive workspace actions. */
+export type AgentMode = "ask" | "auto" | "plan";
+
+/** Sent from webview → extension to set the agent mode on the proxy. */
+export interface SetAgentModePayload {
+  mode: AgentMode;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plan-Mode Exit Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sent from extension → webview when the model calls `workspace(action="exit_plan_mode")`.
+ * The webview shows an embedded modal asking the user to switch to Auto/Ask mode
+ * or stay in Plan mode.
+ */
+export interface PlanExitRequestPayload {
+  /** Relative path of the existing plan file, if any. `null` when the model signals exit before writing any plan. */
+  planPath: string | null;
+  /** The user's latest message text (used to re-run the turn after the mode switch). */
+  lastMessage: string;
+}
+
+/** Sent from webview → extension after the user picks an option in the PlanExit modal. */
+export interface PlanExitResponsePayload {
+  /** `null` = "Stay in Plan mode" (no change). Otherwise the new agent mode. */
+  mode: "auto" | "ask" | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Notification Banner Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Embedded banner shown at the top of the chat. Used to surface errors and
+ * informational messages without resorting to `vscode.window.showErrorMessage`.
+ */
+export interface NotificationPayload {
+  id: string;
+  level: "error" | "warn" | "info";
+  message: string;
+}
+
+/** Sent from webview → extension when the user dismisses a banner with the × button. */
+export interface NotificationDismissedPayload {
+  id: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,10 +266,26 @@ export interface ToolApprovalResponsePayload {
 
 export interface ToWebviewMessage {
   type: ToWebviewType;
-  payload?: StreamDeltaPayload | StreamErrorPayload | ConnectionStatus | SlashCommandResultPayload | HistoryRestorePayload | ToolApprovalRequestPayload | Record<string, any>;
+  payload?:
+    | StreamDeltaPayload
+    | StreamErrorPayload
+    | ConnectionStatus
+    | SlashCommandResultPayload
+    | HistoryRestorePayload
+    | ToolApprovalRequestPayload
+    | PlanExitRequestPayload
+    | NotificationPayload
+    | Record<string, any>;
 }
 
 export interface ToExtensionMessage {
   type: ToExtensionType;
-  payload?: SendMessagePayload | SlashCommandPayload | ToolApprovalResponsePayload | Record<string, any>;
+  payload?:
+    | SendMessagePayload
+    | SlashCommandPayload
+    | ToolApprovalResponsePayload
+    | SetAgentModePayload
+    | PlanExitResponsePayload
+    | NotificationDismissedPayload
+    | Record<string, any>;
 }

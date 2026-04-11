@@ -5,6 +5,54 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-04-11
+
+### Changed — Proxy: SOLID/hexagonal architecture refactor (Fix 8)
+
+- **`server.ts` ridotto da 1633 → 280 righe** — ora è un puro composition root + HTTP router.
+  Zero business logic: nessun `fetch()` diretto, nessun `readFileSync`, nessun loop agente.
+
+- **Nuovi service estratti** (`application/services/`):
+  - `NativeAgentLoopService` — Path A agent loop (tool_calls nativi); metodo `processToolCall()` condiviso tra iter-0 e iter-1+, elimina la duplicazione precedente
+  - `ApprovalGateService` — macchina a stati per approvazioni (ask/auto/plan, trusted files, auto-approve allowlist)
+  - `SystemPromptBuilder` — costruzione del system prompt via `PromptRepositoryPort` + `PlanFileRepositoryPort`
+
+- **Nuovi use case** (`application/useCases/`):
+  - `HandleChatMessageUseCase` — orchestrazione completa di `POST /v1/messages` (slash intercept → system prompt → compaction → translate → route → stream)
+  - `ResolveApprovalUseCase` — `POST /v1/messages/:id/approve`
+
+- **Nuovi adapter infrastrutturali** (`infrastructure/adapters/`):
+  - `FetchLlmClient` — implementa `LlmClientPort` via `fetch()` globale
+  - `NodeSseWriter` — implementa `SseWriterPort` via `ServerResponse` Node.js
+  - `FsPlanFileRepository` — implementa `PlanFileRepositoryPort` via `node:fs`
+  - `FsPromptRepository` — implementa `PromptRepositoryPort` via `node:fs`
+  - `SseApprovalInteractor` — implementa `ApprovalInteractorPort` via SSE custom event + promise resolver
+  - `SystemClock` — implementa `ClockPort` via `Date.now()`
+  - `autoApproveConfig` — helpers `loadOldContent` e `checkAutoApprove` per `.claudio/auto-approve.json`
+
+- **Nuovi file infrastrutturali**:
+  - `infrastructure/toolLimitDetector.ts` — strategia override/cache/probe per `maxTools`
+
+- **Domain layer**:
+  - `domain/entities/workspaceAction.ts` — `WorkspaceAction`, `ActionClass`, `ActionArgs`, `WORKSPACE_TOOL_DEF` spostati dal layer infrastrutturale al dominio puro
+  - `domain/ports/` barrel — re-export di tutti i port types da un unico punto
+
+- **Textual agent loop** (`application/textualAgentLoop.ts`) ora usa `SseWriterPort` + `LlmClientPort` invece di `ServerResponse` e URL diretto
+
+### Added — Chat Extension: UI improvements (Fix 7 + mode selector)
+
+- **`ToolApprovalModalComponent`** — modal che visualizza le richieste di approvazione tool in attesa: nome action, path, preview diff side-by-side per `write`, pulsanti Approve / Approve All / Deny
+- **`PlanExitModalComponent`** — dialog di conferma per l'uscita da Plan mode
+- **`ModalShellComponent`** (`shared/components/`) — shell modale riutilizzabile con backdrop, animazione, slot header/body/footer
+- **`NotificationBannerComponent`** (`shared/components/`) — banner non bloccante per notifiche in-stream (`plan_file_created`, `plan_mode_exit_suggestion`, ecc.)
+- **Mode selector redesign** — sostituito `MatMenu` di Angular Material con panel custom dark:
+  - Indicatori dot colorati per modalità (arancione=Ask, verde=Auto, viola=Plan) visibili sia nel bottone trigger che nelle voci dropdown
+  - Bottone compatto: `● Ask / Auto / Plan` + chevron animato
+  - Panel: `--c-surface-2` + `--c-border-2` + shadow del design system; ogni voce ha nome + descrizione breve
+  - Chiusura su click esterno (stesso `@HostListener` del slash menu)
+
+---
+
 ## [1.1.0] — 2026-04-10
 
 ### Added — Proxy lifecycle management

@@ -54,6 +54,10 @@ import { ConnectionStatus } from "@shared/message-protocol";
       background: var(--c-overlay-soft);
       color: var(--c-text);
     }
+    .icon-btn--active {
+      color: var(--c-accent) !important;
+      background: var(--c-overlay-subtle);
+    }
     .icon-btn mat-icon { font-size: 18px; width: 18px; height: 18px; }
   `],
 })

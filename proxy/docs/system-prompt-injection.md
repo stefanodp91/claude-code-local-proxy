@@ -1,130 +1,142 @@
 # System Prompt Injection
 
-> What the proxy automatically prepends to the system prompt of every workspace-aware request, and why.
+> How the proxy constructs the system prompt for every workspace-aware request, and why this logic is centralized in the application layer behind a port.
 
 ## Overview
 
-When a client sends `POST /v1/messages` with the `X-Workspace-Root` HTTP header, the proxy enriches the system prompt **before** forwarding the request to the local LLM. This injection has two purposes:
+When a client sends `POST /v1/messages` with the `X-Workspace-Root` header, the proxy builds a complete system prompt **before** forwarding the request to the local LLM. The goal is threefold:
 
-1. **Tell the model where it is** — give it the workspace path so any references to "the project" or "this codebase" have grounding.
-2. **Prime its context** — for models without tool calling, hand it a static snapshot of the project (directory listing, `package.json`, README) so it can answer questions about the code without having to ask for files it cannot fetch anyway.
+1. **Tell the model where it is** — give it the workspace path so references to "the project" have grounding.
+2. **Tell the model what it can do** — in ask/auto modes, instruct it to call the `workspace` tool rather than explain commands in markdown.
+3. **Guide its behaviour in Plan mode** — inject a forced directive ("you are in Plan mode, write to `<plansDir>/<slug>.md`") and the content of any existing plan file so follow-up requests refine the same plan instead of spawning new ones.
 
-The injection adapts to the model's capabilities: a tool-capable model gets a minimal hint and is left to explore via the agent loop, while a non-tool model gets a complete static summary baked into its prompt.
+The injection adapts to (a) the current `agentMode`, (b) whether the model supports native tool calls, and (c) whether a plan file already exists in the workspace.
 
 ---
 
 ## Where It Happens
 
-The injection is implemented at [server.ts:234-250](../src/infrastructure/server.ts#L234-L250), inside the main request handler, **after** slash command interception and **before** the request is translated to OpenAI format and forwarded.
+The injection is implemented by **[`SystemPromptBuilder`](../src/application/services/systemPromptBuilder.ts)**, an application-layer service wired in `ProxyServer.handleMessages`. The service depends only on two ports:
+
+- [`PromptRepositoryPort`](../src/domain/ports/promptRepositoryPort.ts) — loads the localized prompt templates.
+- [`PlanFileRepositoryPort`](../src/domain/ports/planFileRepositoryPort.ts) — exposes `isPlanPath()` and `loadMostRecent()`; it is the single source of truth for where plan files live.
+
+`SystemPromptBuilder` does not touch the filesystem, `fetch`, or any global state. It can be unit-tested by substituting the two ports with in-memory fakes.
+
+### Composition root
+
+In `ProxyServer`'s constructor ([server.ts](../src/infrastructure/server.ts)):
 
 ```typescript
-if (workspaceCwd) {
-  const pathLine = `Working directory: ${workspaceCwd} (${basename(workspaceCwd)})`;
-  const wsContext = this.maxTools === 0
-    ? `${pathLine}\n\n${buildWorkspaceContextSummary(workspaceCwd)}`
-    : pathLine;
+const clock = new SystemClock();
+this.planFiles     = new FsPlanFileRepository(config.plansDir, clock);
+this.promptRepo    = new FsPromptRepository(config.locale);
+this.promptBuilder = new SystemPromptBuilder(this.promptRepo, this.planFiles);
+```
 
-  if (!body.system) {
-    (body as any).system = wsContext;
-  } else if (typeof body.system === "string") {
-    (body as any).system = `${wsContext}\n\n${body.system}`;
-  } else if (Array.isArray(body.system)) {
-    body.system = [{ type: "text", text: wsContext }, ...body.system];
-  }
+The concrete adapters (`FsPlanFileRepository`, `FsPromptRepository`, `SystemClock`) live in `infrastructure/adapters/`. `ProxyServer` is the only place that creates them; every other consumer sees the ports.
+
+At boot, `ProxyServer.initialize()` calls `await this.promptRepo.load()`, which reads all prompt templates from `proxy/prompts/<locale>/` once. Subsequent requests hit the in-memory map — no filesystem traffic on the hot path.
+
+---
+
+## Prompt Templates
+
+Long LLM prompts live as `.md` files under `proxy/prompts/<locale>/`. This keeps them diff-friendly, editable without recompiling, and localizable. The current set:
+
+| File | Purpose |
+|---|---|
+| [`agent-base.md`](../prompts/en_US/agent-base.md) | Instructions for ask/auto modes — tells the model to CALL the `workspace` tool rather than explain commands. |
+| [`plan-mode.md`](../prompts/en_US/plan-mode.md) | Forced Plan-mode directive — mandatory write to `<plansDir>/<slug>.md`, forbidden behaviors, and the `exit_plan_mode` control action. |
+| [`existing-plan-section.md`](../prompts/en_US/existing-plan-section.md) | Template injected into `plan-mode.md` when an existing plan is found, so the model refines the same file instead of spawning a new one. |
+
+### Templating
+
+Templates use `{{name}}` placeholders — the same syntax as `domain/i18n.ts`. The builder passes a parameter map to `PromptRepositoryPort.get(key, params)`:
+
+| Placeholder | Source | Where used |
+|---|---|---|
+| `{{cwd}}` | `workspaceCwd` from the request header | All prompts (final "Working directory:" line) |
+| `{{cwdBase}}` | `basename(workspaceCwd)` | All prompts |
+| `{{plansDir}}` | `PlanFileRepositoryPort.plansDirRelative` (from `ProxyConfig.plansDir`) | `plan-mode.md` (every mention of the plans directory) |
+| `{{existingPlanSection}}` | Rendered `existing-plan-section.md` or empty string | `plan-mode.md` |
+| `{{planPath}}` | `existing.relPath` | `existing-plan-section.md` |
+| `{{mtimeRelative}}` | `existing.mtimeRelative` | `existing-plan-section.md` |
+| `{{planContent}}` | Full content of the existing plan file | `existing-plan-section.md` |
+
+**Key consequence**: changing `PLANS_DIR` env var (see [configuration.md](configuration.md#plan-mode)) re-routes every mention of the plans directory in the prompt — the model is told to write to the new location without any code change.
+
+---
+
+## The Decision Tree
+
+```
+SystemPromptBuilder.build(workspaceCwd, mode, textualPath)
+│
+├── mode === Plan ?
+│     ├── YES → loadMostRecent(cwd) → ExistingPlan | null
+│     │         ├── ExistingPlan non-null → render existing-plan-section.md
+│     │         └── null → existingPlanSection = ""
+│     │         render plan-mode.md with {cwd, cwdBase, plansDir, existingPlanSection}
+│     │
+│     └── NO  → render agent-base.md with {cwd, cwdBase, plansDir}
+│
+└── textualPath ?
+      └── YES → append buildWorkspaceContextSummary(cwd)
+                append TEXTUAL_TOOL_MANUAL
+      (Path B only — models without native tool calling)
+```
+
+The `textualPath` flag is set by `ProxyServer` when `this.maxTools === 0`. On that path the model has no way to fetch workspace context later, so the builder front-loads a project snapshot and a manual for the `<action>` XML protocol.
+
+---
+
+## Plan-File Path Classification
+
+Plan mode's auto-approve rule ("writes inside the plans directory are auto-approved") needs to answer "is this path a plan file?" for arbitrary `args.path` values sent by the model. That check lives in **one place**: `PlanFileRepositoryPort.isPlanPath()`, implemented by `FsPlanFileRepository`:
+
+```typescript
+isPlanPath(relPath: string): boolean {
+  if (!relPath.endsWith(".md")) return false;
+  const norm = relPath.replace(/\\/g, "/");
+  const dir = this.plansDirRelative.replace(/\\/g, "/").replace(/\/$/, "");
+  return norm.startsWith(`${dir}/`) || norm.includes(`/${dir}/`);
 }
 ```
 
-The injection is gated by the presence of `workspaceCwd`. If the client did not send `X-Workspace-Root`, the proxy adds nothing — the system prompt is forwarded as-is.
+`ProxyServer.requestApproval` calls `this.planFiles.isPlanPath(args.path)` during the Plan-mode gate. The native agent loop's `emitPlanFileCreated` helper also delegates here. **No other code knows the plans directory path** — change `PLANS_DIR` and the whole system follows.
 
 ---
 
-## Two Modes Driven by `maxTools`
+## Merging with the Client's System Prompt
 
-The shape of the injected text depends on whether the loaded model supports OpenAI tool calling, as detected by `ToolProbe` and stored in `this.maxTools`:
-
-| `maxTools` | Injected content | Rationale |
-|---|---|---|
-| `> 0` | Just `Working directory: <cwd> (<basename>)` | The model can request additional context on demand via the workspace tool — see [agent-loop.md](agent-loop.md). No need to bloat the prompt up front. |
-| `== 0` | `Working directory: ...` + full `buildWorkspaceContextSummary()` output | The model has no way to ask for files later, so the proxy front-loads a project snapshot. |
-
-### Static summary contents
-
-`buildWorkspaceContextSummary()` ([workspaceTool.ts:96-137](../src/application/workspaceTool.ts#L96-L137)) produces a plain-text block with three sections:
-
-1. **Top-level directory listing** — every entry in the workspace root, prefixed with `[dir]` or `[file]`. No recursion.
-2. **`package.json` summary** — name, description, and `workspaces` field if present. Parsed via `JSON.parse`; silently skipped on error.
-3. **README excerpt** — the first 2000 characters of `README.md` (or `readme.md`), appended with `[truncated]` if cut.
-
-Example output (paraphrased):
-
-```
-Workspace structure (top level):
-  [dir] proxy
-  [dir] chat-extension
-  [dir] claude_code
-  [file] README.md
-  [file] CHANGELOG.md
-  [file] .gitignore
-
-package.json: name="anthropic-openai-proxy", description="..."
-
-README.md:
-# Claude Code + Local LLM Proxy
-...
-```
-
-This summary is rebuilt fresh on **every request**. It is not cached. Cost is negligible (a few `readdirSync` + small `readFile` calls).
-
----
-
-## How It Merges with the Client's System Prompt
-
-The proxy is careful not to overwrite a system prompt the client may have built itself. The merge depends on the shape of `body.system`:
+The proxy is careful not to overwrite a system prompt the client may have built itself. After building its own prompt, `ProxyServer.handleMessages` merges:
 
 | Existing `body.system` | Result |
 |---|---|
-| Absent / empty | `body.system = wsContext` (string) |
-| String | `body.system = wsContext + "\n\n" + clientSystem` (string) |
-| Array of content blocks | A new `{type: "text", text: wsContext}` block is **prepended** |
+| Absent / empty | `body.system = builtPrompt` (string) |
+| String | `body.system = builtPrompt + "\n\n" + clientSystem` (string) |
+| Array of content blocks | A new `{type: "text", text: builtPrompt}` block is **prepended** |
 
-This preserves whatever the client wanted to say while ensuring the workspace context appears first.
-
----
-
-## Slash Command Enrichment (Adjacent Mechanism)
-
-The system prompt injection is one of two ways the proxy mutates a request before forwarding. The other is **slash command enrichment**, handled by [slashCommandInterceptor.ts](../src/application/slashCommandInterceptor.ts) and described in [architecture.md § Slash Command Interception](architecture.md#slash-command-interception).
-
-The two mechanisms coexist cleanly because they target different parts of the payload:
-
-- **Slash command enrichment** rewrites the **last user message** (e.g. `/diff` becomes the actual diff text plus a prompt asking the model to explain it).
-- **System prompt injection** rewrites the **system field**.
-
-Both run in the same request handler, with slash command interception happening first ([server.ts:215-232](../src/infrastructure/server.ts#L215-L232)) so that the workspace context injection sees the already-rewritten message list if applicable.
+This preserves anything the client wanted to say while ensuring the workspace context appears first.
 
 ---
 
-## Planned: Tool Manual for Path B
+## Localization
 
-> **Status: planned, not yet implemented.**
+Today only `en_US` is implemented. To add another locale:
 
-When the dual-path agent loop lands (see [agent-loop.md § Planned](agent-loop.md#planned-model-agnostic-dual-path-architecture)), the injection logic will gain a third mode: when `maxTools == 0` and the textual agent loop is active, the static workspace summary will be **followed by a "tool manual"** — short instructions teaching the model to emit XML action tags inline:
+1. Create `proxy/prompts/<locale>/agent-base.md`, `plan-mode.md`, and `existing-plan-section.md`.
+2. Set `LOCALE=<locale>` in `.env.proxy`.
+3. Restart the proxy. `FsPromptRepository.load()` reads the new files at boot; if any are missing it throws a clear error.
 
-```
-You can take actions in the workspace by emitting XML tags inline:
-<action name="read" path="src/foo.ts"/>
-<action name="grep" pattern="parseConfig"/>
-<action name="bash" cmd="ls -la"/>
-After each action you'll receive an <observation>...</observation>
-with the result. Continue from there.
-```
-
-The manual will be additive — the static summary stays — so the model still gets its initial snapshot but also learns it can request more on demand through the textual protocol. The tool list embedded in the manual will be derived from the same shared action backend (`workspaceActions.ts`) used by both agentic paths, so there is a single source of truth for what actions exist.
+The `PromptKey` enum in `domain/ports/promptRepositoryPort.ts` is the authoritative list of required files. If you add a new key there, all locales must add the corresponding `.md` file.
 
 ---
 
 ## Related Docs
 
-- [Agent Loop](agent-loop.md) — how the workspace tool is exposed and iterated
-- [Architecture](architecture.md) — where injection sits in the overall request flow
-- [Tool Management](tool-management.md) — how `maxTools` is detected
+- [Configuration](configuration.md#plan-mode) — `PLANS_DIR` and `LOCALE` env vars
+- [Agent Loop](agent-loop.md) — how the prompt drives the loop (native + textual paths)
+- [Permission Protocol](permission-protocol.md) — how `isPlanPath` gates Plan-mode writes
+- [Architecture](architecture.md) — where the builder sits in the hexagonal layout

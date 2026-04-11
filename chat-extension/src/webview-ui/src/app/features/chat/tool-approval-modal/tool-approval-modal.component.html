@@ -1,0 +1,54 @@
+<app-modal-shell [open]="!!request" (dismissed)="deny()">
+  @if (request) {
+    <div class="d-flex align-items-center gap-2 mb-3 modal-header">
+      <span class="action-icon">{{ headerIcon }}</span>
+      <span class="flex-grow-1 action-label">
+        {{ headerLabel }} <strong class="action-target">{{ headerTarget }}</strong>?
+      </span>
+    </div>
+
+    @if (request.action === 'bash') {
+      <div class="cmd-block p-2 rounded-2 border">
+        <pre class="cmd-pre m-0">{{ request.params.cmd }}</pre>
+      </div>
+    } @else {
+      <div class="diff-view border rounded-2 py-1">
+        @for (line of diffDisplayLines; track $index) {
+          <div
+            class="diff-line d-flex px-2"
+            [class.diff-added]="line.kind === 'added'"
+            [class.diff-removed]="line.kind === 'removed'"
+            [class.diff-context]="line.kind === 'context'"
+            [class.diff-ellipsis]="line.kind === 'ellipsis'"
+          >
+            <span class="diff-marker flex-shrink-0">{{ line.marker }}</span>
+            <span class="diff-text flex-grow-1">{{ line.text }}</span>
+          </div>
+        }
+      </div>
+    }
+
+    <div class="d-flex justify-content-center align-items-center gap-2 mt-3 mb-1 small secondary-actions">
+      <button
+        type="button"
+        class="btn-link-secondary"
+        (click)="approveTurn()"
+        title="Auto-approve destructive actions for the rest of this turn"
+      >Allow for this turn</button>
+      @if (request.action !== 'bash') {
+        <span class="text-muted">·</span>
+        <button
+          type="button"
+          class="btn-link-secondary"
+          (click)="approveFile()"
+          title="Always allow write/edit on this file for the rest of this session"
+        >Always allow this file</button>
+      }
+    </div>
+
+    <div class="d-flex justify-content-end gap-2 mt-2">
+      <button class="btn-deny px-3 py-1 rounded-2" (click)="deny()">Deny</button>
+      <button class="btn-approve px-3 py-1 rounded-2 fw-semibold" (click)="approveOnce()">Allow</button>
+    </div>
+  }
+</app-modal-shell>

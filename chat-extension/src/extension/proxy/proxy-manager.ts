@@ -29,6 +29,12 @@ export class ProxyManager implements vscode.Disposable {
     private readonly proxyDir: string,
     private readonly globalStoragePath: string,
     private readonly outputChannel: vscode.OutputChannel,
+    /**
+     * Called whenever ProxyManager needs to surface an error to the user.
+     * Wired to `ChatSession.notify("error", msg)` in activation.ts so errors
+     * appear as embedded banners in the webview, not as native VS Code toasts.
+     */
+    private readonly onError: (message: string) => void,
   ) {
     this.pidFile = path.join(globalStoragePath, ".claudio-proxy.pid");
   }
@@ -65,26 +71,15 @@ export class ProxyManager implements vscode.Disposable {
       const msg = d.toString();
       this.outputChannel.append(msg);
       if (msg.includes("MODULE_NOT_FOUND") || msg.includes("tsx: not found")) {
-        vscode.window
-          .showErrorMessage(
-            "Claudio: proxy dependencies missing. Run `npm install` in the proxy/ directory.",
-            "How to fix",
-          )
-          .then((action) => {
-            if (action) {
-              void vscode.env.openExternal(
-                vscode.Uri.parse("https://github.com/anthropics/claude-code"),
-              );
-            }
-          });
+        this.onError(
+          "Proxy dependencies missing. Run `npm install` in the proxy/ directory.",
+        );
       }
     });
 
     child.on("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "ENOENT") {
-        vscode.window.showErrorMessage(
-          "Claudio: Node.js not found. Install Node.js 18+ from https://nodejs.org",
-        );
+        this.onError("Node.js not found. Install Node.js 18+ from https://nodejs.org");
       } else {
         this.outputChannel.appendLine(`[ProxyManager] Spawn error: ${err.message}`);
       }

@@ -1,0 +1,19 @@
+@if (notifications.length > 0) {
+  <div class="d-flex flex-column gap-2 px-3 pt-2">
+    @for (n of notifications; track n.id) {
+      <div
+        class="banner banner--{{ n.level }} d-flex align-items-center gap-2 p-2 rounded-2 border"
+        role="alert"
+      >
+        <mat-icon class="banner-icon flex-shrink-0">{{ iconFor(n.level) }}</mat-icon>
+        <span class="banner-msg flex-grow-1 small">{{ n.message }}</span>
+        <button
+          class="banner-close p-0 px-2"
+          (click)="dismiss.emit(n.id)"
+          aria-label="Dismiss notification"
+          title="Dismiss"
+        >×</button>
+      </div>
+    }
+  </div>
+}

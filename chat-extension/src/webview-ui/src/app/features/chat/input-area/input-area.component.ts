@@ -4,7 +4,7 @@ import { FormsModule } from "@angular/forms";
 import { MatIconModule } from "@angular/material/icon";
 import { MatTooltipModule } from "@angular/material/tooltip";
 import { TranslateModule } from "@ngx-translate/core";
-import type { SlashCommand, Attachment } from "@shared/message-protocol";
+import type { SlashCommand, Attachment, AgentMode } from "@shared/message-protocol";
 
 export interface SendPayload {
   text: string;
@@ -74,47 +74,98 @@ function guessMimeType(filename: string): string {
           </div>
         }
 
-        <div class="input-row">
+        <textarea
+          #textarea
+          class="input-textarea"
+          [(ngModel)]="inputText"
+          placeholder="Message Claudio…"
+          [disabled]="isStreaming"
+          rows="1"
+          (keydown)="onKeydown($event)"
+          (focus)="focused = true"
+          (blur)="focused = false"
+          (input)="autoResize()"
+          (paste)="onPaste($event)"
+        ></textarea>
+
+        <div class="input-bottom-bar">
+          <!-- Left: attach + slash -->
           <button
-            class="action-btn slash-btn"
+            class="bottom-btn attach-btn"
+            matTooltip="Attach file"
+            (click)="attachInput.click()">
+            <mat-icon>add</mat-icon>
+          </button>
+          <input #attachInput type="file" multiple style="display:none" (change)="onFileInputChange($event)" />
+
+          <button
+            class="bottom-btn slash-btn"
             [class.slash-btn--active]="showMenu"
             [matTooltip]="'slash.tooltip' | translate"
             (click)="toggleMenu(); $event.stopPropagation()">
             <span class="slash-icon">/</span>
           </button>
 
-          <textarea
-            #textarea
-            class="input-textarea"
-            [(ngModel)]="inputText"
-            placeholder="Message Claudio…"
-            [disabled]="isStreaming"
-            rows="1"
-            (keydown)="onKeydown($event)"
-            (focus)="focused = true"
-            (blur)="focused = false"
-            (input)="autoResize()"
-            (paste)="onPaste($event)"
-          ></textarea>
+          <span class="bottom-spacer"></span>
 
-          <div class="input-actions">
-            @if (isStreaming) {
-              <button
-                class="action-btn stop-btn"
-                matTooltip="Stop"
-                (click)="cancel.emit()">
-                <mat-icon>stop</mat-icon>
-              </button>
-            } @else {
-              <button
-                class="action-btn send-btn"
-                matTooltip="Send (Enter)"
-                [disabled]="!inputText.trim() && attachments.length === 0"
-                (click)="sendMessage()">
-                <mat-icon>arrow_upward</mat-icon>
-              </button>
+          <!-- Right: mode selector + send/stop -->
+          <div class="mode-selector">
+            @if (showModeMenu) {
+              <div class="mode-panel">
+                <div class="mode-panel-header">Agent mode</div>
+
+                <button class="mode-item" [class.mode-item--active]="agentMode === 'ask'" (click)="selectMode('ask')">
+                  <span class="mode-dot mode-dot--ask"></span>
+                  <span class="mode-item-body">
+                    <span class="mode-item-name">Ask before edits</span>
+                    <span class="mode-item-desc">Approves each change</span>
+                  </span>
+                  @if (agentMode === 'ask') { <mat-icon class="mode-item-check">check</mat-icon> }
+                </button>
+
+                <button class="mode-item" [class.mode-item--active]="agentMode === 'auto'" (click)="selectMode('auto')">
+                  <span class="mode-dot mode-dot--auto"></span>
+                  <span class="mode-item-body">
+                    <span class="mode-item-name">Edit automatically</span>
+                    <span class="mode-item-desc">No approval required</span>
+                  </span>
+                  @if (agentMode === 'auto') { <mat-icon class="mode-item-check">check</mat-icon> }
+                </button>
+
+                <button class="mode-item" [class.mode-item--active]="agentMode === 'plan'" (click)="selectMode('plan')">
+                  <span class="mode-dot mode-dot--plan"></span>
+                  <span class="mode-item-body">
+                    <span class="mode-item-name">Plan mode</span>
+                    <span class="mode-item-desc">Writes plan, no edits</span>
+                  </span>
+                  @if (agentMode === 'plan') { <mat-icon class="mode-item-check">check</mat-icon> }
+                </button>
+              </div>
             }
+
+            <button
+              class="mode-btn"
+              [class.mode-btn--open]="showModeMenu"
+              (click)="toggleModeMenu(); $event.stopPropagation()">
+              <span class="mode-dot mode-dot--{{ agentMode }}"></span>
+              <span class="mode-label">{{ modeShort }}</span>
+              <mat-icon class="mode-chevron" [class.mode-chevron--open]="showModeMenu">expand_less</mat-icon>
+            </button>
           </div>
+
+          @if (isStreaming) {
+            <button class="bottom-btn send-btn stop-btn" matTooltip="Stop" (click)="cancel.emit()">
+              <mat-icon>stop</mat-icon>
+            </button>
+          } @else {
+            <button
+              class="bottom-btn send-btn"
+              matTooltip="Send (Enter)"
+              [disabled]="!inputText.trim() && attachments.length === 0"
+              (click)="sendMessage()">
+              <mat-icon>arrow_upward</mat-icon>
+            </button>
+          }
         </div>
       </div>
 
@@ -263,14 +314,34 @@ function guessMimeType(filename: string): string {
     }
     .chip-remove:hover { color: var(--c-text); }
 
-    /* Input row */
-    .input-row {
+    .input-textarea {
+      width: 100%;
+      background: transparent;
+      border: none;
+      outline: none;
+      resize: none;
+      color: var(--c-text);
+      font-family: inherit;
+      font-size: 13.5px;
+      line-height: 1.55;
+      max-height: 180px;
+      overflow-y: auto;
+      padding: 4px 2px 2px;
+    }
+    .input-textarea::placeholder { color: var(--c-text-muted); }
+    .input-textarea:disabled { opacity: 0.5; }
+
+    /* Bottom bar ─────────────────────────────── */
+    .input-bottom-bar {
       display: flex;
-      align-items: flex-end;
-      gap: 8px;
+      align-items: center;
+      gap: 4px;
+      padding-top: 4px;
     }
 
-    .action-btn {
+    .bottom-spacer { flex: 1; }
+
+    .bottom-btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -282,21 +353,139 @@ function guessMimeType(filename: string): string {
       cursor: pointer;
       transition: background 0.15s, color 0.15s, opacity 0.15s;
     }
-    .action-btn mat-icon { font-size: 17px; width: 17px; height: 17px; }
+    .bottom-btn mat-icon { font-size: 17px; width: 17px; height: 17px; }
+
+    .attach-btn {
+      background: transparent;
+      color: var(--c-text-muted);
+    }
+    .attach-btn:hover { background: var(--c-overlay-soft); color: var(--c-text); }
 
     .slash-btn {
-      background: var(--c-accent);
-      color: #fff;
-    }
-    .slash-btn:hover,
-    .slash-btn--active {
-      background: var(--c-accent-hover);
-    }
-    .slash-icon {
-      font-size: 16px;
+      background: transparent;
+      color: var(--c-text-muted);
+      font-size: 15px;
       font-weight: 700;
-      line-height: 1;
     }
+    .slash-btn:hover, .slash-btn--active {
+      background: var(--c-overlay-soft);
+      color: var(--c-text);
+    }
+    .slash-icon { font-size: 15px; font-weight: 700; line-height: 1; }
+
+    /* Mode selector */
+    .mode-selector {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .mode-panel {
+      position: absolute;
+      bottom: calc(100% + 6px);
+      right: 0;
+      width: 216px;
+      background: var(--c-surface-2);
+      border: 1px solid var(--c-border-2);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.04);
+      overflow: hidden;
+      z-index: 200;
+    }
+
+    .mode-panel-header {
+      padding: 9px 12px 5px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--c-text-muted);
+    }
+
+    .mode-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 7px 12px 7px 12px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.1s;
+    }
+    .mode-item:last-child { margin-bottom: 3px; }
+    .mode-item:hover { background: var(--c-overlay-soft); }
+    .mode-item--active { background: var(--c-accent-dim); }
+    .mode-item--active:hover { background: rgba(124,140,248,0.14); }
+
+    .mode-item-body {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+      min-width: 0;
+    }
+    .mode-item-name {
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--c-text);
+      line-height: 1.3;
+    }
+    .mode-item-desc {
+      font-size: 10.5px;
+      color: var(--c-text-muted);
+      line-height: 1.3;
+    }
+    .mode-item-check {
+      flex-shrink: 0;
+      font-size: 14px;
+      width: 14px;
+      height: 14px;
+      color: var(--c-accent);
+    }
+
+    /* Mode dot — colored indicator */
+    .mode-dot {
+      flex-shrink: 0;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+    }
+    .mode-dot--ask  { background: #fb923c; box-shadow: 0 0 5px rgba(251,146,60,0.5); }
+    .mode-dot--auto { background: #4ade80; box-shadow: 0 0 5px rgba(74,222,128,0.5); }
+    .mode-dot--plan { background: #7c8cf8; box-shadow: 0 0 5px rgba(124,140,248,0.5); }
+
+    /* Mode trigger button */
+    .mode-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: var(--btn-size-sm);
+      padding: 0 7px;
+      border: none;
+      border-radius: var(--radius-md);
+      background: var(--c-overlay-subtle);
+      color: var(--c-text-dim);
+      font-size: 12px;
+      font-family: inherit;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+      white-space: nowrap;
+    }
+    .mode-btn:hover, .mode-btn--open {
+      background: var(--c-overlay-soft);
+      color: var(--c-text);
+    }
+    .mode-label { font-size: 12px; font-weight: 500; }
+    .mode-chevron {
+      font-size: 14px;
+      width: 14px;
+      height: 14px;
+      transition: transform 0.15s;
+    }
+    .mode-chevron--open { transform: rotate(180deg); }
 
     .send-btn {
       background: var(--c-accent);
@@ -310,32 +499,10 @@ function guessMimeType(filename: string): string {
     }
 
     .stop-btn {
-      background: var(--c-error-muted);
-      color: var(--c-error);
+      background: var(--c-error-muted) !important;
+      color: var(--c-error) !important;
     }
-    .stop-btn:hover { background: var(--c-error-hover); }
-
-    .input-textarea {
-      flex: 1;
-      background: transparent;
-      border: none;
-      outline: none;
-      resize: none;
-      color: var(--c-text);
-      font-family: inherit;
-      font-size: 13.5px;
-      line-height: 1.55;
-      max-height: 180px;
-      overflow-y: auto;
-    }
-    .input-textarea::placeholder {
-      color: var(--c-text-muted);
-    }
-    .input-textarea:disabled {
-      opacity: 0.5;
-    }
-
-    .input-actions { flex-shrink: 0; }
+    .stop-btn:hover { background: var(--c-error-hover) !important; }
 
     .input-hint {
       font-size: 10.5px;
@@ -356,18 +523,43 @@ export class InputAreaComponent implements AfterViewInit {
   @Input() isStreaming    = false;
   @Input() slashCommands: SlashCommand[] = [];
   @Input() supportsVision = false;
+  @Input() agentMode: AgentMode = "ask";
   @Output() sendMsg = new EventEmitter<SendPayload>();
   @Output() cancel  = new EventEmitter<void>();
   @Output() requestFileRead = new EventEmitter<string[]>();
+  @Output() agentModeChange = new EventEmitter<AgentMode>();
 
   @ViewChild("textarea") textareaRef!: ElementRef<HTMLTextAreaElement>;
 
   inputText      = "";
   focused        = false;
   showMenu       = false;
+  showModeMenu   = false;
   isDragOver     = false;
   visionWarning  = false;
   attachments: Attachment[] = [];
+
+  get modeShort(): string {
+    return this.agentMode === "ask" ? "Ask" : this.agentMode === "auto" ? "Auto" : "Plan";
+  }
+
+  toggleModeMenu(): void {
+    this.showModeMenu = !this.showModeMenu;
+  }
+
+  selectMode(mode: AgentMode): void {
+    this.showModeMenu = false;
+    this.agentModeChange.emit(mode);
+  }
+
+  onFileInputChange(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    if (!input.files) return;
+    for (const file of Array.from(input.files)) {
+      void this.readFile(file);
+    }
+    input.value = "";
+  }
 
   constructor(private readonly el: ElementRef) {}
 
@@ -390,6 +582,7 @@ export class InputAreaComponent implements AfterViewInit {
   onDocumentClick(event: MouseEvent): void {
     if (!this.el.nativeElement.contains(event.target as Node)) {
       this.showMenu = false;
+      this.showModeMenu = false;
     }
   }
 

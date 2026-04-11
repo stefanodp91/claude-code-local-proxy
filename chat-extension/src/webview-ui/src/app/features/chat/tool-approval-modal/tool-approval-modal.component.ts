@@ -1,207 +1,168 @@
 import { Component, Input, Output, EventEmitter } from "@angular/core";
 import { CommonModule } from "@angular/common";
-import type { ToolApprovalRequestPayload } from "@shared/message-protocol";
+import { diffLines } from "diff";
+import type { ToolApprovalRequestPayload, ApprovalScope } from "@shared/message-protocol";
+import { ModalShellComponent } from "../../../shared/components/modal-shell/modal-shell.component";
 
 /** Emitted when the user makes a decision. */
 export interface ApprovalDecision {
   requestId: string;
   approved: boolean;
+  scope: ApprovalScope;
 }
+
+/** One rendered diff line with its visual classification. */
+interface DiffLine {
+  kind: "added" | "removed" | "context" | "ellipsis";
+  marker: string;
+  text: string;
+}
+
+const CONTEXT_LINES = 3;
 
 /**
  * Modal overlay that asks the user to approve or deny a destructive
  * workspace action (write, edit, bash) requested by the LLM.
  *
- * Displayed by ChatContainerComponent when it receives a
- * ToWebviewType.ToolApprovalRequest message from the extension host.
+ * Renders a unified diff for write/edit actions, and a plain command block
+ * for bash. Behaviour by action:
+ *   - write, new file    → every line shown as added (green +)
+ *   - write, existing    → unified diff of oldContent vs params.content
+ *   - edit               → unified diff of old_string vs new_string
+ *   - bash               → command shown verbatim, no diff
+ *
+ * The overlay + card chrome comes from `<app-modal-shell>` — all modals in
+ * the webview share that single shell so z-index / backdrop / ESC handling
+ * live in one place.
  */
 @Component({
   selector: "app-tool-approval-modal",
   standalone: true,
-  imports: [CommonModule],
-  template: `
-    @if (request) {
-      <div class="overlay" (click)="deny()">
-        <div class="modal" (click)="$event.stopPropagation()">
-          <div class="modal-header">
-            <span class="action-icon">{{ actionIcon }}</span>
-            <span class="action-label">Allow <strong>{{ request.action }}</strong>?</span>
-          </div>
-
-          @if (request.params.path) {
-            <div class="param-row">
-              <span class="param-key">path</span>
-              <code class="param-val">{{ request.params.path }}</code>
-            </div>
-          }
-          @if (request.params.pattern) {
-            <div class="param-row">
-              <span class="param-key">pattern</span>
-              <code class="param-val">{{ request.params.pattern }}</code>
-            </div>
-          }
-          @if (request.params.cmd) {
-            <div class="param-row">
-              <span class="param-key">cmd</span>
-              <code class="param-val">{{ request.params.cmd }}</code>
-            </div>
-          }
-          @if (request.params.old_string) {
-            <div class="param-row">
-              <span class="param-key">old</span>
-              <pre class="param-pre">{{ request.params.old_string }}</pre>
-            </div>
-          }
-          @if (request.params.new_string) {
-            <div class="param-row">
-              <span class="param-key">new</span>
-              <pre class="param-pre">{{ request.params.new_string }}</pre>
-            </div>
-          }
-          @if (contentPreview) {
-            <div class="param-row">
-              <span class="param-key">content</span>
-              <pre class="param-pre">{{ contentPreview }}</pre>
-            </div>
-          }
-
-          <div class="modal-actions">
-            <button class="btn btn--deny"    (click)="deny()">Deny</button>
-            <button class="btn btn--approve" (click)="approve()">Allow</button>
-          </div>
-        </div>
-      </div>
-    }
-  `,
-  styles: [`
-    .overlay {
-      position: fixed;
-      inset: 0;
-      z-index: 9000;
-      background: rgba(0, 0, 0, 0.55);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      animation: fade-in 0.12s ease;
-    }
-    @keyframes fade-in {
-      from { opacity: 0; }
-      to   { opacity: 1; }
-    }
-
-    .modal {
-      background: var(--c-bg);
-      border: 1px solid var(--c-border-2);
-      border-radius: var(--radius-xl);
-      padding: 18px 20px 16px;
-      min-width: 320px;
-      max-width: min(480px, 92vw);
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    }
-
-    .modal-header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 14px;
-      font-size: 14px;
-      color: var(--c-text);
-    }
-    .action-icon { font-size: 20px; }
-    .action-label strong { color: var(--c-accent); }
-
-    .param-row {
-      display: flex;
-      flex-direction: column;
-      gap: 3px;
-      margin-bottom: 10px;
-    }
-    .param-key {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--c-text-muted);
-    }
-    .param-val {
-      font-family: 'Cascadia Code', 'Fira Code', monospace;
-      font-size: 12px;
-      color: var(--c-code-text);
-      background: var(--c-code-bg);
-      border: 1px solid var(--c-border-2);
-      border-radius: var(--radius-sm);
-      padding: 3px 7px;
-      word-break: break-all;
-    }
-    .param-pre {
-      font-family: 'Cascadia Code', 'Fira Code', monospace;
-      font-size: 11.5px;
-      color: var(--c-code-text);
-      background: var(--c-code-bg);
-      border: 1px solid var(--c-border-2);
-      border-radius: var(--radius-sm);
-      padding: 6px 9px;
-      margin: 0;
-      white-space: pre-wrap;
-      word-break: break-all;
-      max-height: 140px;
-      overflow-y: auto;
-    }
-
-    .modal-actions {
-      display: flex;
-      justify-content: flex-end;
-      gap: 8px;
-      margin-top: 16px;
-    }
-    .btn {
-      border: 1px solid var(--c-border-2);
-      border-radius: var(--radius-md);
-      padding: 5px 16px;
-      font-size: 12.5px;
-      cursor: pointer;
-      transition: background 0.12s, color 0.12s;
-    }
-    .btn--deny {
-      background: none;
-      color: var(--c-text-muted);
-    }
-    .btn--deny:hover { background: var(--c-overlay-subtle); color: var(--c-text); }
-    .btn--approve {
-      background: var(--c-accent);
-      color: #fff;
-      border-color: transparent;
-      font-weight: 600;
-    }
-    .btn--approve:hover { filter: brightness(1.1); }
-  `],
+  imports: [CommonModule, ModalShellComponent],
+  templateUrl: "./tool-approval-modal.component.html",
+  styleUrl: "./tool-approval-modal.component.scss",
 })
 export class ToolApprovalModalComponent {
   @Input() request: ToolApprovalRequestPayload | null = null;
   @Output() decision = new EventEmitter<ApprovalDecision>();
 
-  get actionIcon(): string {
+  get headerIcon(): string {
     switch (this.request?.action) {
-      case "write":  return "✏️";
-      case "edit":   return "📝";
-      case "bash":   return "⚡";
-      default:       return "⚠️";
+      case "write":
+        return this.request.oldContent == null ? "📄" : "✏️";
+      case "edit":  return "📝";
+      case "bash":  return "⚡";
+      default:      return "⚠️";
     }
   }
 
-  /** Show at most 400 chars of content to keep the modal compact. */
-  get contentPreview(): string | null {
-    const c = this.request?.params?.content;
-    if (!c) return null;
-    return c.length > 400 ? c.slice(0, 400) + "\n…" : c;
+  get headerLabel(): string {
+    switch (this.request?.action) {
+      case "write":
+        return this.request.oldContent == null ? "Create" : "Modify";
+      case "edit":  return "Edit";
+      case "bash":  return "Run command";
+      default:      return "Allow";
+    }
   }
 
-  approve(): void {
+  get headerTarget(): string {
+    if (!this.request) return "";
+    if (this.request.action === "bash") return "";
+    return this.request.params.path ?? "";
+  }
+
+  /**
+   * Compute the diff lines to render. Logic:
+   *   write (new)      → all new content as added lines
+   *   write (existing) → diffLines(oldContent, params.content)
+   *   edit             → diffLines(params.old_string, params.new_string)
+   *   bash             → [] (not used — template renders cmd block instead)
+   */
+  get diffDisplayLines(): DiffLine[] {
+    const req = this.request;
+    if (!req) return [];
+
+    let oldText = "";
+    let newText = "";
+    if (req.action === "write") {
+      oldText = req.oldContent ?? "";
+      newText = req.params.content ?? "";
+    } else if (req.action === "edit") {
+      oldText = req.params.old_string ?? "";
+      newText = req.params.new_string ?? "";
+    } else {
+      return [];
+    }
+
+    // New file: no diff, just added lines.
+    if (req.action === "write" && (req.oldContent == null || req.oldContent === "")) {
+      return newText.split("\n").map((line) => ({
+        kind: "added" as const,
+        marker: "+",
+        text: line,
+      }));
+    }
+
+    const chunks = diffLines(oldText, newText);
+    const lines: DiffLine[] = [];
+
+    for (let i = 0; i < chunks.length; i++) {
+      const c = chunks[i];
+      const raw = c.value.split("\n");
+      // diffLines often leaves a trailing empty string when the chunk ends with \n
+      if (raw[raw.length - 1] === "") raw.pop();
+
+      if (c.added) {
+        raw.forEach((t) => lines.push({ kind: "added", marker: "+", text: t }));
+      } else if (c.removed) {
+        raw.forEach((t) => lines.push({ kind: "removed", marker: "-", text: t }));
+      } else {
+        // Context: keep head and tail, collapse long middles.
+        const isFirst = i === 0;
+        const isLast = i === chunks.length - 1;
+        if (raw.length > CONTEXT_LINES * 2 + 1) {
+          const head = isFirst ? raw.slice(-CONTEXT_LINES) : raw.slice(0, CONTEXT_LINES);
+          const tail = isLast ? raw.slice(0, CONTEXT_LINES) : raw.slice(-CONTEXT_LINES);
+          if (!isFirst) head.forEach((t) => lines.push({ kind: "context", marker: " ", text: t }));
+          lines.push({
+            kind: "ellipsis",
+            marker: " ",
+            text: `… ${raw.length - (isFirst || isLast ? CONTEXT_LINES : CONTEXT_LINES * 2)} unchanged lines …`,
+          });
+          if (!isLast) tail.forEach((t) => lines.push({ kind: "context", marker: " ", text: t }));
+        } else {
+          raw.forEach((t) => lines.push({ kind: "context", marker: " ", text: t }));
+        }
+      }
+    }
+
+    return lines;
+  }
+
+  /** Allow this single action only (default click on the primary Allow button). */
+  approveOnce(): void {
     if (!this.request) return;
-    this.decision.emit({ requestId: this.request.requestId, approved: true });
+    this.decision.emit({ requestId: this.request.requestId, approved: true, scope: "once" });
+  }
+
+  /** Allow ALL destructive actions for the rest of the current turn. */
+  approveTurn(): void {
+    if (!this.request) return;
+    this.decision.emit({ requestId: this.request.requestId, approved: true, scope: "turn" });
+  }
+
+  /**
+   * Allow this action AND any future write/edit on the same file until the
+   * proxy restarts. Hidden for bash (no path → no meaningful file trust).
+   */
+  approveFile(): void {
+    if (!this.request) return;
+    this.decision.emit({ requestId: this.request.requestId, approved: true, scope: "file" });
   }
 
   deny(): void {
     if (!this.request) return;
-    this.decision.emit({ requestId: this.request.requestId, approved: false });
+    this.decision.emit({ requestId: this.request.requestId, approved: false, scope: "once" });
   }
 }

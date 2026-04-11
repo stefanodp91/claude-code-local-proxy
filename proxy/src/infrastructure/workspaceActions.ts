@@ -63,119 +63,23 @@ const PRUNE_DIRS = new Set([
 ]);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Action classification
+// Domain re-exports (for backward compatibility with existing imports)
 // ─────────────────────────────────────────────────────────────────────────────
+//
+// The enums, classification map, tool schema, and ActionArgs shape now live
+// in `domain/entities/workspaceAction.ts`. This file re-exports them so that
+// consumers currently importing from `infrastructure/workspaceActions` keep
+// working. New code should import directly from the domain entity.
 
-export type ActionClass = "read-only" | "destructive";
+export {
+  WorkspaceAction,
+  ActionClass,
+  ACTION_CLASSIFICATION,
+  WORKSPACE_TOOL_DEF,
+  type ActionArgs,
+} from "../domain/entities/workspaceAction";
 
-/**
- * Classification of each action for the permission gate.
- * read-only actions are auto-executed.
- * destructive actions require user approval before execution
- * (see proxy/docs/permission-protocol.md).
- */
-export const ACTION_CLASSIFICATION: Record<string, ActionClass> = {
-  list: "read-only",
-  read: "read-only",
-  grep: "read-only",
-  glob: "read-only",
-  write: "destructive",
-  edit: "destructive",
-  bash: "destructive",
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Extended OpenAI tool definition
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * OpenAI tool definition for the workspace tool.
- * A single tool slot with an `action` discriminator keeps the tool count at 1,
- * which is safe even for models with low maxTools limits.
- */
-export const WORKSPACE_TOOL_DEF = {
-  type: "function",
-  function: {
-    name: "workspace",
-    description: [
-      "Access the current workspace. Available actions:",
-      "  list   – list directory contents",
-      "  read   – read a file",
-      "  grep   – search for a regex pattern across files",
-      "  glob   – find files matching a glob-style pattern",
-      "  write  – create or overwrite a file  ⚠ requires user approval",
-      "  edit   – replace exact text in a file ⚠ requires user approval",
-      "  bash   – run a shell command (30s timeout) ⚠ requires user approval",
-    ].join("\n"),
-    parameters: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["list", "read", "grep", "glob", "write", "edit", "bash"],
-          description: "Action to perform.",
-        },
-        path: {
-          type: "string",
-          description:
-            "Path relative to the workspace root " +
-            "(e.g. '.', 'src/components', 'package.json'). " +
-            "Required for list, read, grep, write, and edit.",
-        },
-        pattern: {
-          type: "string",
-          description:
-            "For grep: a regex pattern to search for. " +
-            "For glob: a glob pattern (e.g. '**/*.ts', 'src/**/*.tsx').",
-        },
-        include: {
-          type: "string",
-          description:
-            "For grep: a file name pattern to restrict the search " +
-            "(e.g. '*.ts', '*.{ts,tsx}'). Optional.",
-        },
-        content: {
-          type: "string",
-          description: "For write: the complete text content to write to the file.",
-        },
-        old_string: {
-          type: "string",
-          description:
-            "For edit: the exact string to find in the file " +
-            "(must match character-for-character including whitespace).",
-        },
-        new_string: {
-          type: "string",
-          description: "For edit: the replacement string.",
-        },
-        cmd: {
-          type: "string",
-          description:
-            "For bash: the shell command to execute. " +
-            "Runs in the workspace root with a 30-second timeout. " +
-            "Prefer specific read-only commands (wc, head, git log) over open-ended ones.",
-        },
-      },
-      required: ["action"],
-    },
-  },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Public interface
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface ActionArgs {
-  action: string;
-  path?: string;
-  pattern?: string;
-  include?: string;
-  content?: string;     // for write: full file content
-  old_string?: string;  // for edit: exact text to replace
-  new_string?: string;  // for edit: replacement text
-  cmd?: string;         // for bash
-  [key: string]: string | undefined;
-}
+import { WorkspaceAction, type ActionArgs } from "../domain/entities/workspaceAction";
 
 /**
  * Async callback the agent loops use to request human approval before
@@ -197,22 +101,22 @@ export type ApprovalGate = (action: string, args: ActionArgs) => Promise<boolean
 export function executeAction(args: ActionArgs, workspaceCwd: string): string {
   try {
     switch (args.action) {
-      case "list":
+      case WorkspaceAction.List:
         return actionList(args, workspaceCwd);
-      case "read":
+      case WorkspaceAction.Read:
         return actionRead(args, workspaceCwd);
-      case "grep":
+      case WorkspaceAction.Grep:
         return actionGrep(args, workspaceCwd);
-      case "glob":
+      case WorkspaceAction.Glob:
         return actionGlob(args, workspaceCwd);
-      case "write":
+      case WorkspaceAction.Write:
         return actionWrite(args, workspaceCwd);
-      case "edit":
+      case WorkspaceAction.Edit:
         return actionEdit(args, workspaceCwd);
-      case "bash":
+      case WorkspaceAction.Bash:
         return actionBash(args, workspaceCwd);
       default:
-        return `Error: unknown action '${args.action}'. Valid actions: list, read, grep, glob, write, edit, bash`;
+        return `Error: unknown action '${args.action}'. Valid actions: ${Object.values(WorkspaceAction).join(", ")}`;
     }
   } catch (err) {
     return `Error executing action '${args.action}': ${String(err)}`;

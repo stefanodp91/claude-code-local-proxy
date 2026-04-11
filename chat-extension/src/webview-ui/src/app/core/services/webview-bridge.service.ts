@@ -17,6 +17,9 @@ import {
   type HistoryRestorePayload,
   type FilesReadPayload,
   type ToolApprovalRequestPayload,
+  type AgentMode,
+  type PlanExitRequestPayload,
+  type NotificationPayload,
 } from "@shared/message-protocol";
 
 @Injectable({ providedIn: "root" })
@@ -124,6 +127,16 @@ export class WebviewBridgeService implements OnDestroy {
     );
   }
 
+  /** Emits whenever the proxy's agent mode changes (ask | auto | plan). */
+  onAgentMode(): Observable<AgentMode> {
+    return this.messages$.pipe(
+      filter((msg) => msg.type === ToWebviewType.ConfigUpdate),
+      map((msg) => (msg.payload as any)?.agentMode as AgentMode | undefined),
+      filter((v): v is AgentMode => v === "ask" || v === "auto" || v === "plan"),
+      distinctUntilChanged(),
+    );
+  }
+
   /** Emits when the extension host has read files requested via ReadFiles. */
   onFilesRead(): Observable<FilesReadPayload> {
     return this.messages$.pipe(
@@ -137,6 +150,30 @@ export class WebviewBridgeService implements OnDestroy {
     return this.messages$.pipe(
       filter((msg) => msg.type === ToWebviewType.ToolApprovalRequest),
       map((msg) => msg.payload as ToolApprovalRequestPayload),
+    );
+  }
+
+  /** Emits when the model signals it wants to exit Plan mode (via `exit_plan_mode`). */
+  onPlanExitRequest(): Observable<PlanExitRequestPayload> {
+    return this.messages$.pipe(
+      filter((msg) => msg.type === ToWebviewType.PlanExitRequest),
+      map((msg) => msg.payload as PlanExitRequestPayload),
+    );
+  }
+
+  /** Emits when the extension host pushes a new notification banner. */
+  onNotificationShow(): Observable<NotificationPayload> {
+    return this.messages$.pipe(
+      filter((msg) => msg.type === ToWebviewType.NotificationShow),
+      map((msg) => msg.payload as NotificationPayload),
+    );
+  }
+
+  /** Emits the id of a notification that should be removed (extension-initiated). */
+  onNotificationDismiss(): Observable<string> {
+    return this.messages$.pipe(
+      filter((msg) => msg.type === ToWebviewType.NotificationDismiss),
+      map((msg) => (msg.payload as { id: string }).id),
     );
   }
 }

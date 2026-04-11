@@ -1,0 +1,23 @@
+// Only what Bootstrap utilities cannot express: z-index, rgba backdrop,
+// theme-aware colors via CSS vars, animation, box-shadow, dimension caps.
+
+.modal-overlay {
+  z-index: 9000;
+  background: rgba(0, 0, 0, 0.55);
+  animation: modal-fade-in 0.12s ease;
+}
+
+.modal-card {
+  background: var(--c-bg);
+  border-color: var(--c-border-2) !important;
+  min-width: 360px;
+  max-width: min(640px, 92vw);
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}

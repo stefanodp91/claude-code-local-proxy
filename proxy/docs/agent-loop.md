@@ -1,10 +1,10 @@
 # Agent Loop
 
-> Workspace-aware agentic execution: how the proxy lets local LLMs explore the codebase, and the planned model-agnostic dual-path architecture.
+> Workspace-aware agentic execution: how the proxy lets local LLMs read and write the codebase, regardless of whether the model supports native tool calling.
 
 ## Overview
 
-The **agent loop** is the proxy's mechanism for letting an LLM take iterative actions inside the user's workspace (read files, list directories, and — in the planned extension — search, write, and execute shell commands), instead of only answering with the static context it received in the system prompt.
+The **agent loop** is the proxy's mechanism for letting an LLM take iterative actions inside the user's workspace (read files, list directories, search, write, edit, and run shell commands), instead of only answering with the static context it received in the system prompt.
 
 It exists because local LLMs differ from frontier models in two ways:
 
@@ -15,142 +15,21 @@ The agent loop is the layer that hides both differences from the client (Claude 
 
 ---
 
-## Activation
-
-The loop is triggered inside the main request handler in [server.ts:272](../src/infrastructure/server.ts#L272):
+## Model-Agnostic Dual-Path Architecture
 
 ```
-if (this.maxTools > 0 && workspaceCwd) {
-  const handled = await this.runAgentLoop(res, openaiReq, workspaceCwd);
-  if (handled) return;
-}
-// fall through to normal streaming
-```
-
-Two conditions must hold:
-
-| Condition | Source |
-|---|---|
-| `this.maxTools > 0` | Result of `ToolProbe.detect()` (or cache hit) at startup. See [tool-management.md](tool-management.md). |
-| `workspaceCwd` | Value of the `X-Workspace-Root` HTTP header sent by the client. |
-
-When `maxTools == 0` (e.g. Qwen 3.5 35B), the loop is **skipped entirely** and the request goes through normal streaming. The model only sees whatever was injected statically into the system prompt by the workspace context summary (see [system-prompt-injection.md](system-prompt-injection.md)).
-
----
-
-## Current Implementation
-
-The whole loop lives in [server.ts:367-444](../src/infrastructure/server.ts#L367-L444) as the `runAgentLoop` private method, plus the `workspace` tool definition and executor in [workspaceTool.ts](../src/application/workspaceTool.ts).
-
-### The `workspace` tool
-
-A single OpenAI tool with a discriminator `action` parameter ([workspaceTool.ts:21-42](../src/application/workspaceTool.ts#L21-L42)):
-
-```typescript
-{
-  type: "function",
-  function: {
-    name: "workspace",
-    description: "Access files in the current workspace. ...",
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["list", "read"] },
-        path:   { type: "string" }
-      },
-      required: ["action", "path"]
-    }
-  }
-}
-```
-
-Only `list` and `read` are supported. Read is hard-capped at `MAX_FILE_BYTES = 50_000` ([workspaceTool.ts:15](../src/application/workspaceTool.ts#L15)) with the rest truncated.
-
-Path safety is enforced by `safeResolve()` ([workspaceTool.ts:144-149](../src/application/workspaceTool.ts#L144-L149)) which resolves the relative path and rejects anything that does not start with `workspaceCwd`.
-
-### Loop body
-
-```
-runAgentLoop(res, openaiReq, workspaceCwd):
-  │
-  ├── Replace any client-provided tools with [workspace] only
-  │   tool_choice = "auto"
-  │
-  └── for i in 0..MAX_ITERATIONS (10):
-        │
-        ├── POST to backend with stream: false
-        │
-        ├── workspaceCalls = response.tool_calls filtered by name === "workspace"
-        │
-        ├── workspaceCalls.length === 0?
-        │     ├── i == 0 && text empty?
-        │     │     YES → return false  ← fall through to normal streaming
-        │     └── otherwise → emit text as synthetic Anthropic SSE, return true
-        │
-        └── For each workspace tool call:
-              ├── parse {action, path} from arguments
-              ├── executeWorkspaceTool() → result string
-              ├── append assistant message + tool result to messages
-              └── continue loop
-```
-
-The loop always replaces the client-supplied `tools` array with **only** `[WORKSPACE_TOOL_DEF]`. This is the "Option A" comment in the code: it prevents the model from calling unhandled tools (which would return `content=null` and break the conversation).
-
-### Synthetic SSE output
-
-When the loop produces a final text response, it emits a complete fake Anthropic SSE stream via `writeSyntheticSse()` ([server.ts:450+](../src/infrastructure/server.ts#L450)):
-
-```
-event: message_start    {message: {id, role: "assistant", content: [], model: "proxy-system", ...}}
-event: content_block_start  {content_block: {type: "text", text: ""}}
-event: content_block_delta  {delta: {type: "text_delta", text: "<final answer>"}}
-event: content_block_stop
-event: message_delta    {delta: {stop_reason: "end_turn"}}
-event: message_stop
-```
-
-The client cannot tell this synthetic stream apart from a real model-streamed response — but it is **not actually streamed**: the entire answer arrives in a single delta, after all tool iterations have completed.
-
-### Fallback to normal streaming
-
-If on iteration 0 the model produces neither tool calls nor text content (rare but possible), `runAgentLoop` returns `false` and the main handler falls through to normal streaming ([server.ts:417](../src/infrastructure/server.ts#L417)). This safety valve ensures that conversations which do not need workspace exploration still work.
-
----
-
-## Known Limitations
-
-The current implementation is functional but has several gaps that limit its usefulness:
-
-1. **Read-only**: only `list` and `read`. No `write`, `edit`, `bash`, `grep`, or `glob`.
-2. **No streaming during the loop**: each iteration uses `stream: false` ([server.ts:393-398](../src/infrastructure/server.ts#L393-L398)). The user sees nothing until the final synthetic SSE is emitted, even though the model may have been "thinking" or generating partial text for several seconds.
-3. **No permission gate**: every tool call is executed immediately. Acceptable today because all actions are read-only, but blocking before adding any destructive capability.
-4. **Tool_use blocks invisible to client**: the synthetic SSE only contains a single text block. Clients never see `tool_use` content blocks, so they cannot show "📂 reading src/main.ts..." in real time.
-5. **Single-path**: the loop only fires for `maxTools > 0`. Models without tool support get no agentic exploration at all — only the static workspace summary in the system prompt.
-6. **Sequential tool calls only**: even if the model emits multiple tool calls per turn, they are executed sequentially in a single thread ([server.ts:427-437](../src/infrastructure/server.ts#L427-L437)).
-
----
-
-## Planned: Model-Agnostic Dual-Path Architecture
-
-> **Status: planned, not yet implemented.** Tracking work happens in the user's plan file outside this repository.
-
-The goal is to support **both** kinds of local model — those with native OpenAI tool calling (`maxTools > 0`) and those without (`maxTools == 0`) — through a single shared backend, with the client (Claudio or Claude Code) seeing identical Anthropic SSE either way.
-
-### Diagram
-
-```
-                          ┌── Path A: runNativeAgentLoop ──┐
-                          │  (maxTools > 0)                │
-                          │  native OpenAI tool_calls      │
-chat-extension            │                                │
-        │                 ▼                                ▼
-        │         ┌────────────────┐         ┌──────────────────────┐
-   POST /v1/messages──>│ server.ts router│──────>│ workspaceActions.ts│
-        ▲         │                │         │   (shared backend)   │
-        │         └────────────────┘         └──────────────────────┘
-        │                 ▲                                ▲
-        │                 │                                │
-        │                 └── Path B: runTextualAgentLoop ─┘
+                          ┌── Path A: NativeAgentLoopService ──┐
+                          │  (maxTools > 0)                    │
+                          │  native OpenAI tool_calls          │
+chat-extension            │                                    │
+        │                 ▼                                    ▼
+        │         ┌──────────────────────────┐  ┌──────────────────────┐
+   POST /v1/messages──>│ HandleChatMessageUseCase │──>│ workspaceActions.ts │
+        ▲         │                          │  │   (shared backend)   │
+        │         └──────────────────────────┘  └──────────────────────┘
+        │                 ▲                                    ▲
+        │                 │                                    │
+        │                 └── Path B: runTextualAgentLoop ─────┘
         │                    (maxTools == 0)
         │                    XML tags in plain text
         │
@@ -159,54 +38,241 @@ chat-extension            │                                │
             + custom event "tool_request_pending" if approval needed
 ```
 
-### Components
+The client is **fully path-agnostic**: it receives identical Anthropic SSE whether the proxy ran native tool calls or intercepted XML tags from a model that cannot call tools at all.
 
-1. **Shared action backend** — new file `proxy/src/infrastructure/workspaceActions.ts`. Implements `read`, `list`, `grep`, `glob`, `write`, `edit`, `bash` as plain TypeScript functions. Validates path traversal (extending `safeResolve`), enforces timeouts, truncates output. Knows nothing about the agent loop.
+---
 
-2. **Path A — `runNativeAgentLoop`** — refactored from current `runAgentLoop`:
-   - Switches inner calls to `stream: true` so token deltas (text + thinking) are forwarded to the client in real time.
-   - Parses `tool_calls` incrementally from streaming OpenAI deltas (handling JSON-argument splits across chunks).
-   - When a tool call is complete: pauses forwarding, calls the shared backend, injects the result back as a `tool` message, and resumes the loop.
-   - `MAX_ITERATIONS` cap unchanged.
+## Routing
 
-3. **Path B — `runTextualAgentLoop`** (new file `proxy/src/application/textualAgentLoop.ts`):
-   - System prompt is augmented with a **tool manual** — short instructions teaching the model to emit XML tags inline (e.g. `<action name="read" path="src/foo.ts"/>`).
-   - A stateful parser scans the streaming `text_delta` for completed tags. When found, it pauses forwarding, converts the tag into a synthetic Anthropic `tool_use` block, calls the shared backend, formats the result as `<observation>...</observation>` and re-injects it as a new user message, then re-streams the model.
-   - Handles tags split across chunks, escapes, and CDATA sections (for `write` content).
-   - Same `MAX_ITERATIONS` cap.
+The routing lives in `HandleChatMessageUseCase.execute()` ([handleChatMessageUseCase.ts](../src/application/useCases/handleChatMessageUseCase.ts)):
 
-4. **Output normalization** — both paths emit identical Anthropic SSE. The client receives standard `content_block_start` / `input_json_delta` / `content_block_stop` for every action, regardless of which path produced it. This is the cardinal constraint: **clients must not need to know which path is in use.**
-
-5. **Permission gate** — an additional custom SSE event (`event: tool_request_pending`) suspends both paths when the model requests a destructive action. See [permission-protocol.md](permission-protocol.md) for the wire format and resume mechanism.
-
-### Routing change
-
-The existing `if (this.maxTools > 0 && workspaceCwd)` check at [server.ts:272](../src/infrastructure/server.ts#L272) becomes:
-
-```
+```typescript
 if (workspaceCwd) {
-  if (this.maxTools > 0) await this.runNativeAgentLoop(res, openaiReq, workspaceCwd);
-  else                   await this.runTextualAgentLoop(res, openaiReq, workspaceCwd);
-  return;
+  if (maxTools > 0) {
+    const handled = await this.nativeLoop.run(writer, openaiReq, workspaceCwd, thinkingEnabled);
+    if (handled) return { type: "handled", llmReachable: true };
+  } else {
+    await runTextualAgentLoop(
+      writer, openaiReq, workspaceCwd, thinkingEnabled,
+      this.targetUrl, modelId, this.logger,
+      (action, args) => this.approvalGate.request(writer, action, args, workspaceCwd),
+    );
+    return { type: "handled", llmReachable: true };
+  }
 }
-// fall through only when no workspace context at all
+// fall through to normal streaming (no workspace header, or maxTools>0 + nothing produced)
 ```
 
-Both loops handle their own fall-through (e.g. for plain conversational messages that need no tools).
+Two conditions trigger the loop:
+
+| Condition | Source |
+|---|---|
+| `workspaceCwd` | Value of the `X-Workspace-Root` HTTP header sent by the client. |
+| `this.maxTools` | Result of `ToolProbe.detect()` (or cache hit) at startup. See [tool-management.md](tool-management.md). |
+
+When `workspaceCwd` is absent (e.g. Claude Code without a project, or plain API use) neither path runs and the request goes to normal streaming.
+
+---
+
+## Shared Action Backend
+
+Both paths call the same action implementations. The backend lives in [workspaceActions.ts](../src/infrastructure/workspaceActions.ts).
+
+### Available Actions
+
+| Action | Class | Description |
+|---|---|---|
+| `list` | read-only | Directory listing, pruning `node_modules`, `.git`, `dist`, `build`, etc. |
+| `read` | read-only | File read, hard-capped at `MAX_FILE_BYTES = 50 000`. |
+| `grep` | read-only | Regex search across workspace files (up to `MAX_GREP_LINES = 200`). |
+| `glob` | read-only | Find files by glob pattern (up to `MAX_GLOB_RESULTS = 500`). |
+| `write` | destructive | Create or overwrite a file. Creates intermediate directories. Requires user approval. |
+| `edit` | destructive | Replace the first occurrence of `old_string` with `new_string` in a file. Requires user approval. |
+| `bash` | destructive | Run a shell command in `workspaceCwd` with a 30-second timeout. Output capped at `MAX_BASH_OUTPUT = 8 000` chars. Requires user approval. |
+
+### The `workspace` OpenAI Tool Definition
+
+A single OpenAI tool slot with an `action` discriminator keeps the tool count at 1, safe even for models with low `maxTools` limits:
+
+```typescript
+{
+  type: "function",
+  function: {
+    name: "workspace",
+    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash",
+    parameters: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list","read","grep","glob","write","edit","bash"] },
+        path:    { type: "string" },
+        pattern: { type: "string" },
+        include: { type: "string" },
+        content: { type: "string" },
+        old_string: { type: "string" },
+        new_string: { type: "string" },
+        cmd:     { type: "string" }
+      },
+      required: ["action"]
+    }
+  }
+}
+```
+
+### Path Safety
+
+`safeResolvePath(workspaceCwd, relativePath)` resolves the path and rejects anything that does not start with the workspace root. Path traversal attempts (e.g. `../../etc/passwd`, absolute paths, symlink escapes) are rejected with an error string — the loop treats the error as a tool result and forwards it to the model.
+
+---
+
+## Path A — `NativeAgentLoopService`
+
+For models with `maxTools > 0`. Lives in `NativeAgentLoopService.run()` ([nativeAgentLoopService.ts](../src/application/services/nativeAgentLoopService.ts)).
+
+### Flow
+
+```
+NativeAgentLoopService.run(writer, openaiReq, workspaceCwd, thinkingEnabled):
+  │
+  ├── Replace client tools with [WORKSPACE_TOOL_DEF] only
+  │   tool_choice = "auto"
+  │
+  ├── Emit: message_start (lazy, on first content)
+  │
+  └── for i in 0..MAX_ITERATIONS (10):
+        │
+        ├── i == 0: POST to backend with stream: false (guard iteration)
+        │     workspaceCalls.length == 0 && text empty?
+        │       YES → return false  ← fall through to normal streaming
+        │     workspaceCalls.length == 0 && text present?
+        │       YES → emit as synthetic SSE, return true
+        │
+        ├── i >= 1: POST to backend with stream: true
+        │     Forward thinking_delta and text_delta to client in real time
+        │     Accumulate tool_calls from stream deltas
+        │
+        ├── For each workspace tool call:
+        │     ├── Destructive action? → await requestApproval()
+        │     │     Denied → inject denial as tool result, continue loop
+        │     ├── executeAction(args, workspaceCwd) → result string
+        │     ├── Emit tool_use SSE block (content_block_start … stop)
+        │     └── Append assistant turn + tool result to messages
+        │
+        └── No tool calls? → emit remaining text, emit message_stop, return true
+```
+
+**Iteration 0 is a guard**: it uses `stream: false` to cheaply detect whether the model wants to do anything at all. If neither tool calls nor text are produced, the loop returns `false` and normal streaming takes over — essential for simple queries like "explain this error" that have nothing to do with the workspace.
+
+**Iterations 1+ are streamed**: thinking blocks and text tokens arrive at the client in real time; only tool_calls are "consumed" by the proxy.
+
+---
+
+## Path B — `runTextualAgentLoop`
+
+For models with `maxTools == 0` (e.g. Qwen 3.5 35B). Lives in [textualAgentLoop.ts](../src/application/textualAgentLoop.ts).
+
+### System Prompt Augmentation
+
+When `maxTools == 0`, the system prompt injection performed by `SystemPromptBuilder` ([systemPromptBuilder.ts](../src/application/services/systemPromptBuilder.ts)) appends `TEXTUAL_TOOL_MANUAL` — a short protocol description:
+
+```
+You can interact with the workspace by emitting a self-closing XML action tag on its own line:
+
+  <action name="list" path="./src"/>
+  <action name="read" path="README.md"/>
+  <action name="grep" pattern="parseConfig" path="src/" include="*.ts"/>
+  <action name="glob" pattern="**/*.ts"/>
+
+After each action you will receive the result inside an <observation> block.
+Wait for the observation before continuing.
+Emit exactly one action at a time.
+Only emit an action tag when you need to inspect the workspace.
+When you have enough information, respond normally without emitting any action tag.
+```
+
+### Flow
+
+```
+runTextualAgentLoop(res, openaiReq, workspaceCwd, ...):
+  │
+  ├── Strip any tools/tool_choice from the request
+  │   (model doesn't use OpenAI tool_calls)
+  │
+  ├── Emit: message_start (lazy, on first content)
+  │
+  └── for i in 0..MAX_ITERATIONS (10):
+        │
+        ├── POST to backend with stream: true
+        │
+        ├── parseTextualIteration():
+        │     Stream text_delta bytes through a stateful XML parser.
+        │     Keep a TAG_LOOKAHEAD=7 byte buffer to handle tag boundaries
+        │     that fall across two streaming chunks.
+        │
+        │     Forward all text NOT part of an action tag as text_delta
+        │     to the client in real time.
+        │
+        │     On complete <action .../> tag detected:
+        │       ├── Stop forwarding; pause the stream reader
+        │       └── Return {textBeforeAction, actionTag, actionArgs}
+        │
+        ├── No action tag found? → stream is done, emit message_stop, return
+        │
+        ├── Convert action tag to synthetic tool_use SSE block
+        │     (identical to Path A — client sees same format)
+        │
+        ├── Destructive action? → await approvalGate()
+        │     Denied → inject denial as observation, continue loop
+        │
+        ├── executeAction(actionArgs, workspaceCwd) → result
+        │
+        └── Re-inject into messages:
+              messages.push({role:"assistant", content: textBeforeAction + "\n" + actionTag})
+              messages.push({role:"user", content: "<observation>\n"+result+"\n</observation>"})
+              (continues to next iteration)
+```
+
+### XML Tag Format
+
+The model emits self-closing `<action>` tags. Attributes drive `executeAction`:
+
+| Attribute | Used by |
+|---|---|
+| `name` | Always — action name (`list`, `read`, `grep`, `glob`) |
+| `path` | `list`, `read`, `grep`, `write`, `edit` |
+| `pattern` | `grep` (regex), `glob` (glob pattern) |
+| `include` | `grep` (file filter, e.g. `*.ts`) |
+| `cmd` | `bash` |
+| `content` | `write` (file content; CDATA sections supported) |
+| `old_string` | `edit` |
+| `new_string` | `edit` |
+
+### Output Normalization
+
+Both Path A and Path B produce identical Anthropic SSE `tool_use` blocks. Clients that understand Anthropic streaming cannot tell which path was used.
+
+---
+
+## Permission Gate
+
+Read-only actions (`list`, `read`, `grep`, `glob`) execute immediately. Destructive actions (`write`, `edit`, `bash`) emit a `tool_request_pending` SSE event and suspend the loop until the user responds.
+
+Full wire format and implementation details: [permission-protocol.md](permission-protocol.md).
 
 ---
 
 ## System Prompt Injection
 
-The agent loop relies on the proxy already having injected the working directory (and, for non-tool models, the static workspace summary) into the system prompt **before** the loop runs. That logic lives at [server.ts:234-250](../src/infrastructure/server.ts#L234-L250) and is documented separately in [system-prompt-injection.md](system-prompt-injection.md).
-
-In Path B the same injection point will also append the tool manual.
+The agent loop relies on the proxy having already injected the working directory (and for Path B, the tool manual) into the system prompt. That logic is documented in [system-prompt-injection.md](system-prompt-injection.md).
 
 ---
 
-## Permission Protocol
+## Known Limitations
 
-Read-only actions (`read`, `list`, `grep`, `glob`) auto-execute. Destructive actions (`write`, `edit`, `bash`) suspend the loop and emit a custom SSE event waiting for user approval. Wire format and the `POST /v1/messages/:id/approve` endpoint are documented in [permission-protocol.md](permission-protocol.md).
+1. **Path B compliance is model-dependent**: models with `maxTools == 0` may not consistently follow the XML tag protocol. Quality degrades for models below ~15B parameters.
+2. **Iteration 0 is not streamed (Path A)**: the first round always uses `stream: false`. For very simple workspace queries this means a brief delay before the first token.
+3. **Sequential tool calls per iteration**: even if a model emits multiple `tool_calls` in one turn, they are executed sequentially.
+4. **bash blocks the event loop**: `spawnSync` is used for bash — it blocks the Node.js event loop for up to 30 seconds. Acceptable for a single-user local proxy; would need `execAsync` for a multi-tenant deployment.
+5. **Auto-approve allowlist**: per-workspace `.claudio/auto-approve.json` allowlist allows matching actions to execute without a modal. See [permission-protocol.md](permission-protocol.md) for the rule format.
 
 ---
 
@@ -215,4 +281,4 @@ Read-only actions (`read`, `list`, `grep`, `glob`) auto-execute. Destructive act
 - [Architecture](architecture.md) — overall hexagonal layers and where the loop fits
 - [Tool Management](tool-management.md) — `ToolProbe`, `maxTools`, and the persistent cache that drives loop activation
 - [System Prompt Injection](system-prompt-injection.md) — what the loop sees in the system prompt before running
-- [Permission Protocol](permission-protocol.md) — planned approval flow for destructive actions
+- [Permission Protocol](permission-protocol.md) — wire format for approving destructive actions

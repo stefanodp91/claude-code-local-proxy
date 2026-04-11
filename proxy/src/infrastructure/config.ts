@@ -106,6 +106,15 @@ export interface ProxyConfig {
 
   /** When true, send thinking:{type:"enabled"} to the model. */
   enableThinking: boolean;
+
+  // ── Plan mode ──
+
+  /**
+   * Directory (relative to the workspace root) where plan files are written
+   * in Plan mode. The agent writes `<workspaceCwd>/<plansDir>/<slug>.md`.
+   * Configurable via the PLANS_DIR environment variable.
+   */
+  plansDir: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,6 +171,9 @@ const DEFAULT_SYSTEM_PROMPT = "";
 
 /** Default: send thinking:{type:"enabled"} when the model supports it. */
 const DEFAULT_ENABLE_THINKING = true;
+
+/** Default plans directory — relative to the workspace root. */
+const DEFAULT_PLANS_DIR = ".claudio/plans";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -257,5 +269,8 @@ export function loadConfig(): ProxyConfig {
     temperature:             envFloat("TEMPERATURE", DEFAULT_TEMPERATURE),
     systemPrompt:            env("SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
     enableThinking:          envBool("ENABLE_THINKING", DEFAULT_ENABLE_THINKING),
+
+    // Plan mode
+    plansDir:                env("PLANS_DIR", DEFAULT_PLANS_DIR),
   };
 }

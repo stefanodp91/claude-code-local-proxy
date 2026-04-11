@@ -1,0 +1,54 @@
+.modal-header {
+  font-size: 14px;
+  color: var(--c-text);
+}
+
+.modal-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--c-text);
+}
+
+.modal-plan-path {
+  color: var(--c-accent);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12px;
+  word-break: break-all;
+  background: var(--c-code-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.btn-stay,
+.btn-switch {
+  border: 1px solid var(--c-border-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, filter 0.12s;
+}
+
+.btn-stay {
+  background: none;
+  color: var(--c-text-muted);
+}
+.btn-stay:hover {
+  background: var(--c-overlay-subtle);
+  color: var(--c-text);
+}
+
+.btn-switch {
+  background: var(--c-overlay-subtle);
+  color: var(--c-text);
+}
+.btn-switch:hover {
+  background: var(--c-overlay-soft);
+}
+
+.btn-switch--primary {
+  background: var(--c-accent);
+  color: #fff;
+  border-color: transparent;
+}
+.btn-switch--primary:hover {
+  filter: brightness(1.1);
+}

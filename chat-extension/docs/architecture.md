@@ -179,7 +179,8 @@ src/webview-ui/src/app/
 │       ├── toolbar/                    # Actions and settings
 │       ├── connection-indicator/       # Connection status badge
 │       ├── thinking-block/             # Expandable reasoning block
-│       └── message-metadata/          # Token counter
+│       ├── message-metadata/          # Token counter
+│       └── tool-approval-modal/       # Approval modal for write/edit/bash actions
 │
 └── shared/
     ├── directives/                     # Custom Angular directives
@@ -209,6 +210,8 @@ The file `src/shared/message-protocol.ts` defines the contract between extension
 | `codeProgress` | `{ phase }` | Execution phase (creating_env, installing_packages, executing) |
 | `historyRestore` | `{ messages: [...] }` | Conversation history on panel reattach |
 | `filesRead` | `{ attachments: [...] }` | Files read for attachment |
+| `toolApprovalRequest` | `{ requestId, action, params }` | Proxy needs user approval for a destructive action |
+| `configUpdate` | `{ ..., planMode?: bool }` | Config change including plan mode state update |
 
 ### Messages from Webview to Extension Host (`ToExtensionType`)
 
@@ -221,6 +224,8 @@ The file `src/shared/message-protocol.ts` defines the contract between extension
 | `executeSlashCommand` | `{ command }` | Execute a slash command |
 | `executeCode` | `{ code }` | Execute Python snippet |
 | `readFiles` | `{ uris: string[] }` | Load files for attachment |
+| `toolApprovalResponse` | `{ requestId, approved }` | User's approval decision for a destructive action |
+| `togglePlanMode` | `{ enabled: bool }` | Toggle plan mode on the proxy |
 
 ---
 
@@ -397,46 +402,74 @@ The `buildChatConfig()` function in `extension-config.ts` performs the merge in 
 
 ---
 
-## Tool Use & Permission Flow (planned)
+## Tool Use & Permission Flow
 
-> **Status: planned, not yet implemented.** This section describes how Claudio will need to evolve to visualize the proxy's agentic activity and to handle user approvals for destructive actions. The overall picture is in [feature-gap.md](feature-gap.md); the full proxy-side architecture is in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md).
+> **Status: implemented** for the permission gate and approval modal. `tool_use` block visualization in the chat is still absent (see [feature-gap.md](feature-gap.md)).
 
-### Current State
+### Proxy Dual-Path Agent Loop
 
-The proxy can today run an agent loop with the `workspace` tool (actions `list`/`read`) for models with `maxTools > 0`. When it does so, it emits the final result as "synthetic" text — intermediate Anthropic `tool_use` blocks **exist in the SSE stream** but are ignored on the Claudio side:
+The proxy runs a model-agnostic agent loop for workspace-aware requests. It has two paths ([proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md)):
 
-- [chat-session.ts:295-321](../src/extension/chat-session.ts#L295-L321) handles only `text_delta` in the switch over SSE events
-- `content_block_start` blocks with `content_block.type === "tool_use"` are not parsed
-- Result: the user never sees "📂 list .", "📄 read README.md", etc. — only the final response
+- **Path A** (`maxTools > 0`, e.g. Nemotron): native OpenAI `tool_calls`, streamed starting from iteration 1.
+- **Path B** (`maxTools == 0`, e.g. Qwen): XML tag interception from plain-text model output.
 
-### What Needs to Be Added
+**Claudio is path-agnostic**: both paths emit identical Anthropic SSE `tool_use` content blocks. No Claudio-side changes are needed to support either path.
 
-1. **Parsing of `tool_use` blocks** in `chat-session.ts`:
-   - Recognize `content_block_start` with `content_block.type === "tool_use"` and propagate to the webview with a new message type
-   - Buffer `input_json_delta` chunks (the JSON input arrives in multiple pieces)
-   - Recognize `content_block_stop` to finalize the block
+### Permission Gate Flow (implemented)
 
-2. **New types in the message protocol** ([message-protocol.ts](../src/shared/message-protocol.ts)):
-   - `ToolUseBlockPayload` — a complete or partial `tool_use` block to display in chat
-   - `ToolRequestPayload` — the proxy is asking for approval for a destructive action
-   - `ToolApprovalPayload` — the user decides approve/reject
+For destructive actions (`write`, `edit`, `bash`) the proxy suspends the loop and emits a custom SSE event. Claudio handles it as follows:
 
-3. **Angular component for visualization** of `tool_use` blocks in `MessageList`:
-   - Inline rendering of the action: "📂 list `src/`", "📄 read `README.md`", etc.
-   - Show the state (pending → executing → completed)
-   - Optional expansion to see the action result
+```
+proxy SSE: event: tool_request_pending
+data: { request_id, action, params }
+    │
+    ▼
+chat-session.ts: handleToolApproval()
+    ├── parses payload
+    └── WebviewBridge.send({ type: "toolApprovalRequest", payload })
+          │
+          ▼
+    Angular: WebviewBridgeService.onToolApprovalRequest()
+          └── ChatContainerComponent.pendingApproval.set(req)
+                │
+                ▼
+    ToolApprovalModalComponent shown
+    (action icon, path/cmd/content preview, Deny | Allow)
+          │
+          ├── user clicks Allow → decision.approved = true
+          └── user clicks Deny  → decision.approved = false
+                │
+                ▼
+    ChatContainerComponent.onApprovalDecision(decision)
+    WebviewBridge.send({ type: "toolApprovalResponse", payload })
+          │
+          ▼
+    chat-session.ts: ToolApprovalResponse handler
+    → pendingApprovals.get(requestId)?.(approved)
+    → ProxyClient.approve(requestId, approved)
+          │
+          ▼
+    POST /v1/messages/:requestId/approve  { "approved": bool }
+          │
+          ▼
+    proxy resumes agent loop (or injects denial)
+```
 
-4. **Angular approval modal component** for destructive actions (write/edit/bash):
-   - Triggered by a new custom SSE event `tool_request_pending` (see [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md))
-   - Shows file/command preview
-   - Approve / Reject buttons
-   - On click → POST `/v1/messages/:request_id/approve` to the proxy via `proxy-client.ts`
+The SSE stream stays open throughout — the `for await` loop in `chat-session.ts` naturally suspends at `await handleToolApproval()` while the proxy parks the Promise.
 
-### Cardinal Constraint: Agnostic to the Agentic Path
+**5-minute auto-deny**: if the user ignores the modal, both the proxy (server-side timer) and the extension host (client-side timer in `handleToolApproval`) auto-deny after 5 minutes.
 
-The proxy will implement two agentic paths (native for tool-capable models, textual for models without tools). Claudio **must not know which path is in use**: in both cases it receives standard Anthropic `tool_use` blocks in the SSE stream. All the complexity of textual emulation or OpenAI tool_calls decoding lives in the proxy.
+### Tool Use Visualization (implemented)
 
-This means the Claudio-side changes listed above need to be implemented **once** — no separate parser is needed for each path.
+The full rendering pipeline is in place:
+
+- `StreamingService` parses `content_block_start` with `type === "tool_use"` → calls `store.startToolUseBlock(id, name)`.
+- `input_json_delta` chunks → `store.appendToolUseInputDelta()` (accumulates raw JSON).
+- `content_block_stop` → `store.completeContentBlock()` (parses JSON into `parsedInput`).
+- `MessageBubbleComponent` renders `<app-tool-use-block [block]="...">` for every `ToolUse` content block.
+- `ToolUseBlockComponent` shows action icon (📂 list, 📄 read, 🔍 grep, ✏️ write, ⚡ bash) + label, with a pulsing accent dot while the block is in-flight.
+
+See [feature-gap.md § 5](feature-gap.md#5-whats-still-missing-for-a-stable-junior-agent) for what is still missing.
 
 ---
 
@@ -448,4 +481,4 @@ This means the Claudio-side changes listed above need to be implemented **once**
 - [Feature Gap](feature-gap.md) — Claudio vs Claude Code, what is present and what is missing
 - [Proxy Architecture](../../proxy/docs/architecture.md) — internal proxy structure
 - [Proxy Agent Loop](../../proxy/docs/agent-loop.md) — current agent loop and dual-path roadmap
-- [Proxy Permission Protocol](../../proxy/docs/permission-protocol.md) — planned approval wire format
+- [Proxy Permission Protocol](../../proxy/docs/permission-protocol.md) — approval wire format (implemented)

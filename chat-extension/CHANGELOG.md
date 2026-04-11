@@ -5,6 +5,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.2.0] — 2026-04-11
+
+### Added
+
+- **`ToolApprovalModalComponent`** — visualizza le richieste di approvazione tool in attesa (action, path, diff preview per write). Approvazione singola o globale per il turno.
+- **`PlanExitModalComponent`** — dialog di conferma per l'uscita da Plan mode suggerita dal proxy.
+- **`ModalShellComponent`** (`shared/components/`) — shell modale riutilizzabile: backdrop, slot header/body/footer, animazione fade-in.
+- **`NotificationBannerComponent`** (`shared/components/`) — banner non bloccante per eventi in-stream (`plan_file_created`, `plan_mode_exit_suggestion`).
+
+### Changed
+
+- **Mode selector** — rimpiazzato `MatMenu` di Angular Material con dropdown custom dark:
+  - Dot colorati per modalità: arancione (Ask), verde (Auto), viola (Plan)
+  - Bottone trigger compatto con label breve + chevron animato
+  - Panel nativo al design system: background `--c-surface-2`, border `--c-border-2`, shadow profondo
+  - Ogni opzione mostra nome + descrizione breve su due righe
+  - Checkmark `--c-accent` sull'opzione attiva
+
+---
+
 ## [1.1.0] — 2026-04-10
 
 ### Added — Proxy lifecycle management

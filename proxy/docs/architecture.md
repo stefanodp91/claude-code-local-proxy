@@ -1,6 +1,6 @@
 # Proxy Architecture
 
-> Anthropic-to-OpenAI translation proxy — v1.0.0
+> Anthropic-to-OpenAI translation proxy — v1.2.0
 
 ## Overview
 
@@ -29,7 +29,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 │                        INFRASTRUCTURE                               │
 │                                                                     │
 │  main.ts             Bootstrap (composition root)                   │
-│  server.ts           HTTP server, routing, agentic loop, wiring     │
+│  server.ts           Composition root + HTTP router (280 lines)     │
 │  config.ts           Environment variable parsing → ProxyConfig     │
 │  logger.ts           Logger implements ILogger port                 │
 │  modelInfo.ts        LM Studio /api/v0/models fetcher               │
@@ -46,7 +46,8 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 │  │  streamTranslator.ts       OpenAI SSE → Anthropic SSE         │  │
 │  │  toolManager.ts            Scoring, selection, UseTool        │  │
 │  │  slashCommandInterceptor.ts  Registry + pre-LLM interception  │  │
-│  │  workspaceTool.ts          Workspace list/read + summary      │  │
+│  │  workspaceTool.ts          Static workspace summary (context) │  │
+│  │  textualAgentLoop.ts       Path B agent loop (XML tags)       │  │
 │  │                                                               │  │
 │  │  +─────────────────────────────────────────────────────────+  │  │
 │  │  │                      DOMAIN                             │  │  │
@@ -70,7 +71,8 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 |---|---|---|
 | **Entry** | `src/main.ts` | Composition root: loadConfig → ProxyServer → initialize → start → initializeTools |
 | **Domain** | `src/domain/types.ts` | All enums (LogLevel, StopReason, FinishReason, ContentBlockType, SseEventType, ToolChoiceType, DeltaType, MessageRole, OpenAIToolType, Locale) and interfaces (LoadedModelInfo, AnthropicRequest, OpenAIRequest, OpenAITool, ToolSelection) |
-| **Domain** | `src/domain/ports.ts` | `ILogger` interface — DIP contract for logging |
+| **Domain** | `src/domain/entities/workspaceAction.ts` | `WorkspaceAction` enum, `ActionClass`, `ActionArgs`, `WORKSPACE_TOOL_DEF` — workspace tool definition moved to pure domain |
+| **Domain** | `src/domain/ports/` | Barrel re-export of all port interfaces: `LlmClientPort`, `SseWriterPort`, `PlanFileRepositoryPort`, `PromptRepositoryPort`, `ApprovalInteractorPort`, `LoggerPort`, `ClockPort` |
 | **Domain** | `src/domain/utils.ts` | `msgId()` — Anthropic-style ID generation; `sseEvent()` — SSE wire format |
 | **Domain** | `src/domain/i18n.ts` | `setMessages()` — inbound port; `t(key, params)` — pure `{{param}}` interpolation |
 | **Application** | `src/application/requestTranslator.ts` | Anthropic → OpenAI: messages, tools, tool_choice, max_tokens capping |
@@ -78,8 +80,23 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Application** | `src/application/streamTranslator.ts` | OpenAI SSE → Anthropic SSE: state machine with UseTool deferred emission |
 | **Application** | `src/application/toolManager.ts` | Additive scoring, selection, UseTool meta-tool, promotion/decay |
 | **Application** | `src/application/slashCommandInterceptor.ts` | Slash command registry + interceptor (synthetic / enrich / passthrough) |
-| **Application** | `src/application/workspaceTool.ts` | Workspace list/read tool definition, path validation, static summary fallback |
-| **Infrastructure** | `src/infrastructure/server.ts` | ProxyServer class: routing, agentic loop, handler orchestration, dependency wiring |
+| **Application** | `src/application/workspaceTool.ts` | `buildWorkspaceContextSummary()` — static dir/package/README snapshot for system prompt |
+| **Application** | `src/application/textualAgentLoop.ts` | Path B agent loop: XML tag interception, synthetic tool_use SSE, observation re-injection |
+| **Application** | `src/application/services/nativeAgentLoopService.ts` | Path A agent loop (native tool_calls); shared `processToolCall()` used by both iteration 0 and 1+ |
+| **Application** | `src/application/services/approvalGateService.ts` | Approval state machine: ask / auto / plan modes, trusted-file tracking, auto-approve allowlist |
+| **Application** | `src/application/services/systemPromptBuilder.ts` | System prompt construction via `PromptRepositoryPort` + `PlanFileRepositoryPort` |
+| **Application** | `src/application/useCases/handleChatMessageUseCase.ts` | Full `POST /v1/messages` orchestration: slash intercept → system prompt → compaction → translate → route → stream |
+| **Application** | `src/application/useCases/resolveApprovalUseCase.ts` | `POST /v1/messages/:id/approve` — parse scope, delegate to `ApprovalInteractorPort` |
+| **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash, path safety, bash timeout |
+| **Infrastructure** | `src/infrastructure/server.ts` | Composition root + HTTP router (280 lines); zero business logic — all decisions live in the application layer |
+| **Infrastructure** | `src/infrastructure/toolLimitDetector.ts` | Three-tier strategy for `maxTools`: config override → persistent cache → live probe |
+| **Infrastructure** | `src/infrastructure/adapters/fetchLlmClient.ts` | `LlmClientPort` implementation via global `fetch()` |
+| **Infrastructure** | `src/infrastructure/adapters/nodeSseWriter.ts` | `SseWriterPort` implementation via Node.js `ServerResponse` |
+| **Infrastructure** | `src/infrastructure/adapters/fsPlanFileRepository.ts` | `PlanFileRepositoryPort` implementation via `node:fs` |
+| **Infrastructure** | `src/infrastructure/adapters/fsPromptRepository.ts` | `PromptRepositoryPort` implementation via `node:fs` |
+| **Infrastructure** | `src/infrastructure/adapters/sseApprovalInteractor.ts` | `ApprovalInteractorPort` implementation: emits `tool_request_pending` SSE + parks Promise |
+| **Infrastructure** | `src/infrastructure/adapters/systemClock.ts` | `ClockPort` implementation via `Date.now()` |
+| **Infrastructure** | `src/infrastructure/adapters/autoApproveConfig.ts` | `loadOldContent()` + `checkAutoApprove()` for `.claudio/auto-approve.json` allowlist |
 | **Infrastructure** | `src/infrastructure/config.ts` | `loadConfig()` → `ProxyConfig` from environment variables |
 | **Infrastructure** | `src/infrastructure/logger.ts` | `Logger` implements `ILogger`, stderr output with timestamps |
 | **Infrastructure** | `src/infrastructure/modelInfo.ts` | `ModelInfoService.fetch()` — queries LM Studio `/api/v0/models` |
@@ -99,6 +116,9 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | `GET` | `/config` | Runtime config: proxyPort, targetUrl, temperature, systemPrompt, enableThinking, locale, maxTokensFallback, model info. Used by Claudio to auto-configure. |
 | `GET` | `/commands` | Slash command registry (`SLASH_COMMAND_REGISTRY`). Used by Claudio for command autocomplete. |
 | `POST` | `/v1/messages` | Main translation endpoint. Returns `503` while `initializeTools()` is still running. |
+| `POST` | `/v1/messages/:requestId/approve` | Resolve a pending destructive-action approval. Body: `{"approved": bool}`. Returns `200 {"ok":true}`. |
+| `GET` | `/plan-mode` | Current plan mode state: `{"enabled": bool}`. |
+| `POST` | `/plan-mode` | Toggle plan mode. Body: `{"enabled": bool}`. Returns `{"enabled": bool}`. |
 
 ---
 
@@ -169,26 +189,25 @@ Claude Code (or Claudio)          Proxy                          LM Studio
     │                      ├── max_tokens capping                  │
     │                      └── ToolManager.selectTools()           │
     │                             │                                │
-    │               Has workspace + maxTools > 0?                  │
-    │               ┌─────────────┤                                │
-    │               │ YES         │ NO                             │
-    │               │             │                                │
-    │        AGENTIC LOOP     Normal path                          │
-    │        (non-streaming)  (streaming or JSON)                  │
-    │        up to 10 rounds       │                               │
-    │             │                │                               │
-    │        Each round:           │  POST /v1/chat/completions    │
-    │          POST (no stream)    │ ──────────────────────────>   │
-    │          Execute workspace   │                               │
-    │          tool calls          │<──────────────────────────    │
-    │          if text → break     │  SSE stream or JSON response  │
-    │             │                │                               │
-    │        Final text →     stream=true?                         │
-    │        stream as SSE    ├── YES: StreamTranslator            │
-    │               │         │        OpenAI SSE → Anthropic SSE  │
-    │               │         └── NO:  ResponseTranslator          │
-    │               │                  JSON → JSON                 │
-    │<──────────────┘─────────────┘                                │
+    │               Has workspace header?                           │
+    │               ┌──────────────┤                               │
+    │               │ YES          │ NO                            │
+    │               │              │                               │
+    │       maxTools > 0?      Normal path                         │
+    │       ┌────────┤         (streaming or JSON)                 │
+    │       │YES     │NO            │                              │
+    │       │        │              │  POST /v1/chat/completions   │
+    │  Path A:    Path B:           │ ──────────────────────────>  │
+    │  runNative  runTextual        │<──────────────────────────   │
+    │  AgentLoop  AgentLoop         │  SSE stream or JSON          │
+    │  (stream:   (XML tag          │                              │
+    │  false/true  parser)     stream=true?                        │
+    │  up to 10    up to 10    ├── YES: StreamTranslator           │
+    │  iterations) iterations) │        OpenAI SSE → Anthropic SSE │
+    │       │        │         └── NO:  ResponseTranslator         │
+    │  Both paths emit Anthropic SSE    JSON → JSON                │
+    │  (tool_use blocks + text_delta)                              │
+    │<──────┘────────┘─────────┘                                   │
     │  Anthropic SSE/JSON response                                 │
 ```
 
@@ -245,25 +264,33 @@ The full command registry is served via `GET /commands`. Clients (like Claudio) 
 
 ## Workspace Tool and Agentic Loop
 
-> **Deep-dive docs**: [agent-loop.md](agent-loop.md) covers the loop iteration, known limitations, and the planned model-agnostic dual-path architecture. [system-prompt-injection.md](system-prompt-injection.md) covers what the loop sees in the system prompt before running. [permission-protocol.md](permission-protocol.md) covers the planned approval flow for destructive actions.
+> **Deep-dive docs**: [agent-loop.md](agent-loop.md) covers the full dual-path architecture, action set, and known limitations. [system-prompt-injection.md](system-prompt-injection.md) covers what the loop sees in the system prompt before running. [permission-protocol.md](permission-protocol.md) covers the approval flow for destructive actions.
 
-When a client sends the `X-Workspace-Root` header, the proxy can give the LLM access to the workspace filesystem.
+When a client sends the `X-Workspace-Root` header, the proxy gives the LLM access to the workspace filesystem through one of two paths depending on the loaded model's capabilities.
 
 ### Workspace Tool Definition
+
+A single tool slot with `action` as a discriminator (defined in [workspaceActions.ts:96-160](../src/infrastructure/workspaceActions.ts#L96-L160)):
 
 ```typescript
 {
   type: "function",
   function: {
     name: "workspace",
-    description: "Access files in the current workspace.",
+    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "read"] },
-        path: { type: "string" }   // relative to workspace root
+        action:     { type: "string", enum: ["list","read","grep","glob","write","edit","bash"] },
+        path:       { type: "string" },   // relative to workspace root
+        pattern:    { type: "string" },   // for grep (regex) or glob (pattern)
+        include:    { type: "string" },   // for grep: file filter (e.g. "*.ts")
+        content:    { type: "string" },   // for write
+        old_string: { type: "string" },   // for edit
+        new_string: { type: "string" },   // for edit
+        cmd:        { type: "string" }    // for bash
       },
-      required: ["action", "path"]
+      required: ["action"]
     }
   }
 }
@@ -271,37 +298,66 @@ When a client sends the `X-Workspace-Root` header, the proxy can give the LLM ac
 
 ### Security
 
-`safeResolve(workspaceCwd, relativePath)` resolves the path and checks that it starts with the workspace root. Any attempt to read outside (e.g. `../../etc/passwd`) is rejected with an error.
+`safeResolvePath(workspaceCwd, relativePath)` resolves the path and rejects anything that does not start with the workspace root. Path traversal (`../../etc/passwd`), absolute paths, and symlink escapes are all rejected with an error string.
 
-### Two Modes
+Destructive actions additionally require explicit user approval before executing — see [permission-protocol.md](permission-protocol.md).
 
-**Agentic Loop** (when `maxTools > 0`):
+### Two Paths
+
+**Path A — Native Agent Loop** (`maxTools > 0`, e.g. Nemotron):
 
 ```
-POST /v1/messages received (with X-Workspace-Root)
+POST /v1/messages (with X-Workspace-Root)
   │
-  └── Round 1: POST /v1/chat/completions (non-streaming)
-        Only `workspace` tool available
-        │
-        ├── Model calls workspace(action="list", path=".")
-        │     → proxy executes: lists workspace root
-        │     → tool result injected as next user message
-        │
-        └── Round 2: POST /v1/chat/completions
-              │
-              ├── Model calls workspace(action="read", path="src/main.ts")
-              │     → proxy reads file (max 50KB)
-              │     → tool result injected
-              │
-              └── Round N (up to 10): model produces text response
-                    → exit loop
-                    → stream text response to client as Anthropic SSE
+  ├── Round 0: POST /v1/chat/completions (non-streaming, guard)
+  │     Model calls workspace(action="list", path=".")
+  │     → proxy executes, injects result
+  │
+  └── Round 1+: POST /v1/chat/completions (streaming)
+        thinking + text tokens forwarded to client in real time
+        tool_calls consumed by proxy → execute → inject result
+        ...
+        Round N (up to 10): model produces only text → done
 ```
 
-**Static Summary** (when `maxTools === 0`): the proxy injects a pre-built text block into the system prompt containing:
-- Top-level directory listing
-- `package.json` content (name, description, workspaces)
-- First 2000 characters of `README.md`
+**Path B — Textual Agent Loop** (`maxTools == 0`, e.g. Qwen 3.5):
+
+```
+POST /v1/messages (with X-Workspace-Root)
+  │
+  ├── System prompt augmented with TEXTUAL_TOOL_MANUAL (XML tag protocol)
+  │
+  └── Round 0..N: POST /v1/chat/completions (streaming)
+        text tokens forwarded to client in real time
+        <action .../> tag detected by stateful parser
+        → proxy executes, injects <observation>
+        ...
+        No action tag → stream done → message_stop
+```
+
+Both paths emit identical Anthropic SSE `tool_use` blocks toward the client.
+
+---
+
+## Context Compaction
+
+The proxy automatically trims the conversation history when it approaches the model's context window limit. The logic lives in `compactMessages()` in [handleChatMessageUseCase.ts](../src/application/useCases/handleChatMessageUseCase.ts), called just before `RequestTranslator.translate()`.
+
+**Algorithm:**
+
+| Parameter | Value | Meaning |
+|---|---|---|
+| Trigger threshold | 80% of `loadedContextLength` | Start trimming when estimated tokens exceed this |
+| Target | 65% of `loadedContextLength` | Trim until estimated tokens fall below this |
+| Token estimation | `⌈JSON.stringify(messages).length / 4⌉` | 4 chars ≈ 1 token |
+
+**Strategy:** the first user message (conversation anchor) is always preserved. Messages at index 1 onward are dropped oldest-first until the target is reached. A sentinel message is prepended to inform the model that earlier context was removed:
+
+```
+[N earlier message(s) were removed to fit the context window.]
+```
+
+Compaction only fires when `modelInfo.loadedContextLength > 0` (i.e. the model's context length was successfully fetched from LM Studio). It is a no-op when the model info is unavailable.
 
 ---
 
@@ -496,5 +552,5 @@ domain/i18n.ts                  infrastructure/i18nLoader.ts
 - [Tool Management](tool-management.md) — scoring, selection, UseTool, promotion, persistent cache
 - [Agent Loop](agent-loop.md) — workspace exploration loop, limitations, and the planned dual-path architecture
 - [System Prompt Injection](system-prompt-injection.md) — what the proxy auto-injects into every workspace-aware request
-- [Permission Protocol](permission-protocol.md) — planned wire format for approving destructive actions
+- [Permission Protocol](permission-protocol.md) — wire format for approving destructive actions
 - [Startup Scripts](startup-scripts.md) — start_agent_cli.sh internals

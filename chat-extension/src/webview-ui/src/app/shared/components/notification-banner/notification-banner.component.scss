@@ -1,0 +1,50 @@
+.banner {
+  animation: banner-slide-in 0.18s ease;
+  color: var(--c-text);
+}
+
+.banner--error {
+  background: rgba(248, 81, 73, 0.12);
+  border-color: rgba(248, 81, 73, 0.4) !important;
+}
+.banner--warn {
+  background: rgba(227, 160, 8, 0.12);
+  border-color: rgba(227, 160, 8, 0.4) !important;
+}
+.banner--info {
+  background: rgba(56, 139, 253, 0.12);
+  border-color: rgba(56, 139, 253, 0.4) !important;
+}
+
+.banner--error .banner-icon { color: #f85149; }
+.banner--warn  .banner-icon { color: #e3a008; }
+.banner--info  .banner-icon { color: #388bfd; }
+
+.banner-icon {
+  font-size: 18px;
+  width: 18px;
+  height: 18px;
+}
+
+.banner-msg {
+  word-break: break-word;
+}
+
+.banner-close {
+  background: none;
+  border: none;
+  color: var(--c-text-muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 4px;
+}
+.banner-close:hover {
+  color: var(--c-text);
+  background: var(--c-overlay-soft);
+}
+
+@keyframes banner-slide-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

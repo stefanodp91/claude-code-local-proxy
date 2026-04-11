@@ -10,6 +10,7 @@
  */
 
 import * as vscode from "vscode";
+import type { AgentMode } from "../../shared/message-protocol";
 
 const SECTION = "claudio";
 
@@ -36,6 +37,7 @@ export interface ProxyRemoteConfig {
   temperature: number;
   systemPrompt: string;
   enableThinking: boolean;
+  agentMode: AgentMode;
   model: ProxyModelInfo | null;
 }
 
@@ -50,6 +52,8 @@ export interface ChatConfig {
   /** Effective max_tokens: proxy model cap → proxy fallback → hard default. */
   maxTokens: number;
   locale: string;
+  /** Current agent gating mode. Kept in sync with the proxy state. */
+  agentMode: AgentMode;
   /** Model info fetched from the proxy, null if proxy is unreachable. */
   modelInfo: ProxyModelInfo | null;
 }
@@ -123,6 +127,7 @@ export function buildChatConfig(
     enableThinking: remote?.enableThinking ?? true,
     maxTokens:      remote?.model?.maxTokensCap ?? remote?.maxTokensFallback ?? 4096,
     locale:         remote?.locale         ?? "en",
+    agentMode:      remote?.agentMode      ?? "ask",
     modelInfo:      remote?.model          ?? null,
   };
 }

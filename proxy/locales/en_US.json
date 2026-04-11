@@ -43,5 +43,8 @@
   "useTool.toolNameDesc": "Exact name of the tool to invoke",
   "useTool.parametersDesc": "Parameters to pass to the tool (check tool description for expected fields)",
 
+  "planMode.exitSuggestion.withPlan": "It looks like you want to execute the plan `{{path}}`. A VS Code notification will appear asking you to leave Plan mode.",
+  "planMode.exitSuggestion.noPlan": "It looks like you want to proceed, but no plan file has been written yet. A VS Code notification will appear asking you to leave Plan mode.",
+
   "health.ok": "ok"
 }

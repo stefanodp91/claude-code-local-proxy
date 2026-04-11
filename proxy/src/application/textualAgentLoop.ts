@@ -12,11 +12,10 @@
  * @module application/textualAgentLoop
  */
 
-import type { ServerResponse } from "node:http";
 import { sseEvent, msgId } from "../domain/utils";
 import { SseEventType, StopReason, ContentBlockType, DeltaType } from "../domain/types";
-import { executeAction, ACTION_CLASSIFICATION, type ActionArgs } from "../infrastructure/workspaceActions";
-import type { ILogger } from "../domain/ports";
+import { executeAction, ACTION_CLASSIFICATION, ActionClass, type ActionArgs } from "../infrastructure/workspaceActions";
+import type { ILogger, LlmClientPort, SseWriterPort } from "../domain/ports";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Textual tool manual (injected into the system prompt by server.ts)
@@ -28,18 +27,55 @@ import type { ILogger } from "../domain/ports";
  * will intercept, execute, and respond to with <observation> blocks.
  */
 export const TEXTUAL_TOOL_MANUAL = [
-  "You can interact with the workspace by emitting a self-closing XML action tag on its own line:",
+  "You can interact with the workspace by emitting an XML action tag on its own line:",
   "",
-  "  <action name=\"list\" path=\"./src\"/>",
-  "  <action name=\"read\" path=\"README.md\"/>",
+  "Read-only actions (auto-approved, use freely):",
+  "  <action name=\"list\" path=\".\"/>",
+  "  <action name=\"read\" path=\"src/main.ts\"/>",
   "  <action name=\"grep\" pattern=\"parseConfig\" path=\"src/\" include=\"*.ts\"/>",
-  "  <action name=\"glob\" pattern=\"**/*.ts\"/>",
+  "  <action name=\"glob\" pattern=\"**/*.test.ts\"/>",
+  "",
+  "Destructive actions (require user approval, use only when the user asks for a change):",
+  "  <action name=\"write\" path=\"path/to/file.txt\">",
+  "  file content goes here (can span multiple lines)",
+  "  </action>",
+  "",
+  "  <action name=\"edit\" path=\"src/foo.ts\" old_string=\"const x = 1\" new_string=\"const x = 2\"/>",
+  "",
+  "  <action name=\"bash\" cmd=\"mkdir -p dist && cp package.json dist/\"/>",
   "",
   "After each action you will receive the result inside an <observation> block.",
   "Wait for the observation before continuing.",
   "Emit exactly one action at a time.",
-  "Only emit an action tag when you need to inspect the workspace.",
+  "When the user asks you to make a change, CALL the corresponding destructive action.",
+  "Do NOT just explain the commands in a markdown code block — PERFORM them.",
   "When you have enough information, respond normally without emitting any action tag.",
+  "",
+  "Examples:",
+  "",
+  "User: What does the proxy entry point do?",
+  "Assistant: Let me start by listing the project structure.",
+  "<action name=\"list\" path=\".\"/>",
+  "<observation>",
+  "[dir] proxy",
+  "[dir] chat-extension",
+  "[file] README.md",
+  "</observation>",
+  "Now I'll read the proxy entry point.",
+  "<action name=\"read\" path=\"proxy/src/main.ts\"/>",
+  "<observation>",
+  "// ... file contents ...",
+  "</observation>",
+  "The entry point does X, Y, Z.",
+  "",
+  "User: Create a hello.txt file with the text 'hi'.",
+  "Assistant: <action name=\"write\" path=\"hello.txt\">",
+  "hi",
+  "</action>",
+  "<observation>",
+  "Wrote 3 bytes to hello.txt.",
+  "</observation>",
+  "Done — `hello.txt` has been created.",
 ].join("\n");
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,12 +83,6 @@ export const TEXTUAL_TOOL_MANUAL = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MAX_ITERATIONS = 10;
-
-const SSE_HEADERS = {
-  "Content-Type": "text/event-stream",
-  "Cache-Control": "no-cache",
-  "Connection": "keep-alive",
-} as const;
 
 // Number of trailing characters to keep in the pending text buffer as
 // lookahead for a tag boundary split across two streaming chunks.
@@ -68,11 +98,20 @@ const TAG_LOOKAHEAD = 7;
  * `writeFn` is the loop's `writeSSE` helper — the gate uses it to emit the
  * `tool_request_pending` SSE event to the client before suspending.
  */
+/**
+ * Result returned by the approval gate. `scope` mirrors the extension UI:
+ * "once" | "turn" | "file" — see ApprovalScope in server.ts for semantics.
+ */
+export interface TextualApprovalResult {
+  approved: boolean;
+  scope: "once" | "turn" | "file";
+}
+
 export type TextualApprovalGate = (
   action: string,
   args: ActionArgs,
   writeFn: (text: string) => void,
-) => Promise<boolean>;
+) => Promise<TextualApprovalResult>;
 
 interface TextualIterationResult {
   /** All text forwarded to the client as text_delta events before the action. */
@@ -108,11 +147,11 @@ interface TextualIterationResult {
  * know whether Path A or Path B is active.
  */
 export async function runTextualAgentLoop(
-  res: ServerResponse,
+  writer: SseWriterPort,
   openaiReq: any,
   workspaceCwd: string,
   thinkingEnabled: boolean,
-  targetUrl: string,
+  llm: LlmClientPort,
   modelId: string,
   logger: ILogger,
   approvalGate?: TextualApprovalGate,
@@ -122,17 +161,21 @@ export async function runTextualAgentLoop(
 
   const messages: any[] = [...openaiReq.messages];
   const messageId = msgId();
-  let headersSent = false;
+  let messageStartSent = false;
   let contentIndex = 0;
+
+  // "Allow for this turn" scope: flipped true when the user approves a
+  // destructive action with scope "turn". Resets when this function returns
+  // (next /v1/messages request gets a fresh false).
+  let allowAllThisTurn = false;
 
   // ── SSE helpers ────────────────────────────────────────────────────────────
 
-  /** Lazy write: sends SSE headers + message_start on the first call. */
+  /** Lazy write: emits message_start on the first call, then forwards raw frames. */
   const writeSSE = (text: string): void => {
-    if (!headersSent) {
-      headersSent = true;
-      res.writeHead(200, SSE_HEADERS);
-      res.write(
+    if (!messageStartSent) {
+      messageStartSent = true;
+      writer.writeRaw(
         sseEvent(SseEventType.MessageStart, {
           type: "message_start",
           message: {
@@ -148,7 +191,7 @@ export async function runTextualAgentLoop(
         }),
       );
     }
-    res.write(text);
+    writer.writeRaw(text);
   };
 
   /** Emit message_delta + message_stop, then close the response. */
@@ -161,7 +204,7 @@ export async function runTextualAgentLoop(
       }),
     );
     writeSSE(sseEvent(SseEventType.MessageStop, { type: "message_stop" }));
-    res.end();
+    writer.end();
   };
 
   /** Emit a complete text content block (for errors and simple messages). */
@@ -187,27 +230,16 @@ export async function runTextualAgentLoop(
   // ── Agent loop ─────────────────────────────────────────────────────────────
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    let resp: Response;
-    try {
-      resp = await fetch(targetUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...baseReq, messages, stream: true }),
-      });
-      if (!resp.ok || !resp.body) {
-        const errText = !resp.ok ? await resp.text().catch(() => "") : "";
-        emitTextBlock(`Error from LLM: ${errText || "no response body"}`);
-        endMessage();
-        return;
-      }
-    } catch (err) {
-      emitTextBlock(`Error contacting LLM: ${String(err)}`);
+    const llmResp = await llm.chat({ body: { ...baseReq, messages }, stream: true });
+    if (!llmResp.ok || !llmResp.body) {
+      const errText = llmResp.errorText ?? (!llmResp.ok ? `HTTP ${llmResp.status}` : "no response body");
+      emitTextBlock(`Error from LLM: ${errText}`);
       endMessage();
       return;
     }
 
     const result = await parseTextualIteration(
-      resp.body,
+      llmResp.body,
       writeSSE,
       contentIndex,
       thinkingEnabled,
@@ -243,13 +275,21 @@ export async function runTextualAgentLoop(
 
     const actionArgs = result.actionArgs;
     let actionResult: string;
-    if (ACTION_CLASSIFICATION[actionArgs.action] === "destructive" && approvalGate) {
-      const approved = await approvalGate(actionArgs.action, actionArgs, writeSSE);
-      if (!approved) {
-        logger.dbg(`[workspace/textual] ${actionArgs.action} denied by user`);
-        actionResult = `Action '${actionArgs.action}' was denied by the user.`;
-      } else {
+    if (ACTION_CLASSIFICATION[actionArgs.action] === ActionClass.Destructive && approvalGate) {
+      if (allowAllThisTurn) {
+        logger.dbg(`[workspace/textual] ${actionArgs.action} auto-approved (allowAllThisTurn)`);
         actionResult = executeAction(actionArgs, workspaceCwd);
+      } else {
+        const approval = await approvalGate(actionArgs.action, actionArgs, writeSSE);
+        if (approval.scope === "turn" && approval.approved) {
+          allowAllThisTurn = true;
+        }
+        if (!approval.approved) {
+          logger.dbg(`[workspace/textual] ${actionArgs.action} denied by user`);
+          actionResult = `Action '${actionArgs.action}' was denied by the user.`;
+        } else {
+          actionResult = executeAction(actionArgs, workspaceCwd);
+        }
       }
     } else {
       actionResult = executeAction(actionArgs, workspaceCwd);

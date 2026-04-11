@@ -36,6 +36,12 @@ import {
   type FilesReadPayload,
   type ToolApprovalRequestPayload,
   type ToolApprovalResponsePayload,
+  type ApprovalScope,
+  type SetAgentModePayload,
+  type PlanExitRequestPayload,
+  type PlanExitResponsePayload,
+  type NotificationPayload,
+  type NotificationDismissedPayload,
 } from "../shared/message-protocol";
 import { SseEventType } from "../shared/anthropic-events";
 import {
@@ -129,6 +135,8 @@ async function runProcess(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+const CONV_STATE_KEY = "claudio.conversation";
+
 export class ChatSession implements vscode.Disposable {
   readonly conversation: ConversationMessage[] = [];
   private config: ChatConfig;
@@ -149,14 +157,44 @@ export class ChatSession implements vscode.Disposable {
   /** Workspace root passed as X-Workspace-Root to the proxy. */
   private readonly workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-  /** Pending tool approval promises keyed by request_id. */
-  private readonly pendingApprovals = new Map<string, (approved: boolean) => void>();
+  /**
+   * Pending tool approval promises keyed by request_id. Each resolver takes
+   * the full `{approved, scope}` payload — the scope is forwarded to the
+   * proxy so it can honor "allow for this turn" / "always allow this file".
+   */
+  private readonly pendingApprovals = new Map<string, (result: { approved: boolean; scope: ApprovalScope }) => void>();
+  /**
+   * Set by `runProxyTurn` when the proxy emits a `plan_mode_exit_suggestion`
+   * event. After the stream ends, `handleSendMessage` checks this field and
+   * asks the webview to show the embedded PlanExit modal.
+   */
+  private pendingExitSuggestion: { lastMessage: string; planPath: string | null } | null = null;
+  /**
+   * Resolver for the PlanExit modal response. Set by `handlePlanExitSuggestion`
+   * right before asking the webview for a decision, consumed by the
+   * `PlanExitResponse` handler in `attachView`. Only one exit suggestion
+   * can be in-flight at a time (the chat is sequential).
+   */
+  private pendingPlanExitResolver: ((mode: "auto" | "ask" | null) => void) | null = null;
+  /**
+   * Notifications produced before a webview is attached. Flushed to the
+   * bridge in `attachView()` so early-startup errors (e.g. ProxyManager
+   * failing) still reach the user once the sidebar opens.
+   */
+  private readonly bufferedNotifications: NotificationPayload[] = [];
 
   constructor(
     private readonly extensionUri: vscode.Uri,
     private readonly globalStoragePath: string,
+    private readonly workspaceState?: vscode.Memento,
   ) {
     this.venvPath = join(globalStoragePath, ".claudio-venv");
+
+    // Restore persisted conversation from workspaceState (survives VS Code reloads)
+    const saved = this.workspaceState?.get<ConversationMessage[]>(CONV_STATE_KEY);
+    if (saved?.length) {
+      this.conversation.push(...saved);
+    }
 
     const vsSettings = loadVsCodeSettings();
     this.config = buildChatConfig(vsSettings, null);
@@ -215,13 +253,36 @@ export class ChatSession implements vscode.Disposable {
       void this.handleReadFiles((msg.payload as { uris: string[] }).uris),
     );
     this.bridge.on(ToExtensionType.ToolApprovalResponse, (msg) => {
-      const { requestId, approved } = msg.payload as ToolApprovalResponsePayload;
+      const { requestId, approved, scope } = msg.payload as ToolApprovalResponsePayload;
       const resolve = this.pendingApprovals.get(requestId);
       if (resolve) {
         this.pendingApprovals.delete(requestId);
-        resolve(approved);
+        resolve({ approved, scope });
       }
     });
+    this.bridge.on(ToExtensionType.SetAgentMode, (msg) => {
+      void this.handleSetAgentMode((msg.payload as SetAgentModePayload).mode);
+    });
+    this.bridge.on(ToExtensionType.PlanExitResponse, (msg) => {
+      const { mode } = msg.payload as PlanExitResponsePayload;
+      const resolver = this.pendingPlanExitResolver;
+      if (resolver) {
+        this.pendingPlanExitResolver = null;
+        resolver(mode);
+      }
+    });
+    this.bridge.on(ToExtensionType.NotificationDismissed, (msg) => {
+      // Webview tells us the user dismissed a banner. Nothing to persist
+      // here — the webview removes it locally — but the hook exists so
+      // future features (e.g. deduplication) can subscribe cleanly.
+      void (msg.payload as NotificationDismissedPayload);
+    });
+
+    // Flush any notifications that arrived before the webview was attached.
+    for (const n of this.bufferedNotifications) {
+      this.bridge.send({ type: ToWebviewType.NotificationShow, payload: n });
+    }
+    this.bufferedNotifications.length = 0;
 
     // Send current conversation history to the newly attached view
     const historyPayload: HistoryRestorePayload = {
@@ -260,6 +321,35 @@ export class ChatSession implements vscode.Disposable {
     this.healthChecker.stop();
     this.proxyClient.cancel();
     this.configWatcher.dispose();
+  }
+
+  /**
+   * Surface an embedded notification banner to the user. Called by
+   * `activation.ts` and `ProxyManager` instead of `vscode.window.showErrorMessage`.
+   *
+   * If a webview is attached the notification is sent immediately. Otherwise
+   * it is buffered and flushed when the sidebar opens (see `attachView()`).
+   */
+  notify(level: "error" | "warn" | "info", message: string): void {
+    const payload: NotificationPayload = { id: randomUUID(), level, message };
+    if (this.bridge) {
+      this.bridge.send({ type: ToWebviewType.NotificationShow, payload });
+    } else {
+      this.bufferedNotifications.push(payload);
+    }
+  }
+
+  /**
+   * Re-read VS Code settings (including any `setProxyPortOverride` applied
+   * since construction) and rebuild the proxy client + health checker URLs.
+   * Called from `activation.ts` after `ProxyManager.start()` resolves, so the
+   * session picks up the actual port the proxy bound to.
+   */
+  updateProxyConnection(): void {
+    const vs = loadVsCodeSettings();
+    const newBaseUrl = proxyBaseUrl(vs);
+    this.proxyClient.updateBaseUrl(newBaseUrl);
+    this.healthChecker.updateBaseUrl(newBaseUrl);
   }
 
   // ── Proxy config ────────────────────────────────────────────────────────────
@@ -303,21 +393,55 @@ export class ChatSession implements vscode.Disposable {
     }
 
     this.conversation.push({ role: "user", content: msgContent });
+    this.persistConversation();
 
+    await this.runProxyTurn(payload);
+
+    // If the proxy signalled "user wants to exit plan mode", handle it now
+    // (after the stream has fully ended). The handler may switch mode and
+    // re-run the turn in the new mode.
+    if (this.pendingExitSuggestion) {
+      await this.handlePlanExitSuggestion();
+    }
+  }
+
+  /**
+   * Run a single proxy turn against the current conversation. Used by
+   * `handleSendMessage` for the initial turn and by `handlePlanExitSuggestion`
+   * to re-issue the same conversation after switching out of Plan mode.
+   *
+   * Captures `plan_mode_exit_suggestion` events into `this.pendingExitSuggestion`
+   * for the caller to process after the stream ends.
+   */
+  private async runProxyTurn(payload?: SendMessagePayload): Promise<void> {
+    this.pendingExitSuggestion = null;
     try {
       for await (const sseEvent of this.proxyClient.sendMessage({
         messages: this.conversation,
         config: {
           ...this.config,
-          ...(payload.temperature !== undefined && { temperature: payload.temperature }),
-          ...(payload.maxTokens !== undefined && { maxTokens: payload.maxTokens }),
-          ...(payload.systemPrompt !== undefined && { systemPrompt: payload.systemPrompt }),
+          ...(payload?.temperature !== undefined && { temperature: payload.temperature }),
+          ...(payload?.maxTokens !== undefined && { maxTokens: payload.maxTokens }),
+          ...(payload?.systemPrompt !== undefined && { systemPrompt: payload.systemPrompt }),
         },
         workspaceRoot: this.workspaceRoot,
       })) {
         // Custom event: proxy is requesting human approval for a destructive action.
         if (sseEvent.event === "tool_request_pending") {
           await this.handleToolApproval(sseEvent.data);
+          continue;
+        }
+
+        // Custom event: proxy wrote a plan file — open it as markdown preview.
+        if (sseEvent.event === "plan_file_created") {
+          void this.handlePlanFileCreated(sseEvent.data);
+          continue;
+        }
+
+        // Custom event: model called workspace(action="exit_plan_mode").
+        // Stash the payload — it's processed after the stream ends.
+        if (sseEvent.event === "plan_mode_exit_suggestion") {
+          try { this.pendingExitSuggestion = JSON.parse(sseEvent.data); } catch { /* ignore */ }
           continue;
         }
 
@@ -353,6 +477,78 @@ export class ChatSession implements vscode.Disposable {
   }
 
   /**
+   * Show a VS Code notification asking the user to switch out of Plan mode,
+   * then (on confirmation) switch the agent mode and re-run the turn with the
+   * existing plan content prepended to the user message — so the model in the
+   * new mode has full plan context even though the system prompt no longer
+   * injects it.
+   */
+  private async handlePlanExitSuggestion(): Promise<void> {
+    const sugg = this.pendingExitSuggestion;
+    this.pendingExitSuggestion = null;
+    if (!sugg) return;
+
+    // Ask the webview to show the embedded PlanExit modal.
+    this.bridge?.send({
+      type: ToWebviewType.PlanExitRequest,
+      payload: { planPath: sugg.planPath, lastMessage: sugg.lastMessage } satisfies PlanExitRequestPayload,
+    });
+
+    // Wait for the user's decision (comes back via the PlanExitResponse handler
+    // registered in attachView). 5-minute safety timeout so we don't hang.
+    const chosenMode = await new Promise<"auto" | "ask" | null>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingPlanExitResolver === resolver) {
+          this.pendingPlanExitResolver = null;
+          resolve(null);
+        }
+      }, 5 * 60 * 1000);
+      const resolver = (mode: "auto" | "ask" | null): void => {
+        clearTimeout(timer);
+        resolve(mode);
+      };
+      this.pendingPlanExitResolver = resolver;
+    });
+
+    if (!chosenMode) return; // user chose "Stay in Plan mode" (or timeout)
+
+    // Switch the proxy mode (also broadcasts ConfigUpdate to the webview).
+    await this.handleSetAgentMode(chosenMode);
+
+    // Pop the assistant suggestion message we just got — we don't want the
+    // re-run to see it as already-answered, otherwise the model in the new
+    // mode would think the turn is over.
+    if (
+      this.conversation.length > 0 &&
+      this.conversation[this.conversation.length - 1]?.role === "assistant"
+    ) {
+      this.conversation.pop();
+    }
+
+    // Augment the user's last message with the existing plan content so the
+    // model in auto/ask mode has the full plan in its prompt (the auto/ask
+    // system prompt does NOT inject existing plans the way plan mode does).
+    if (sugg.planPath && this.workspaceRoot) {
+      try {
+        const fullPath = join(this.workspaceRoot, sugg.planPath.replace(/\\/g, "/"));
+        const planContent = await readFile(fullPath, "utf-8");
+        const last = this.conversation[this.conversation.length - 1];
+        if (last?.role === "user" && typeof last.content === "string") {
+          last.content =
+            `[Existing plan from \`${sugg.planPath}\`]:\n\n${planContent}\n\n---\n\n${last.content}`;
+        }
+      } catch {
+        // Plan file unreadable — proceed without augmentation.
+      }
+    }
+
+    this.persistConversation();
+
+    // Re-run the same conversation in the new mode.
+    await this.runProxyTurn();
+  }
+
+  /**
    * Bridge a tool_request_pending event from the proxy to the webview approval modal.
    *
    * Flow: proxy emits SSE → extension parses → webview shows modal →
@@ -360,31 +556,60 @@ export class ChatSession implements vscode.Disposable {
    * The proxy SSE stream is blocked until the POST arrives (or the 5-min timeout fires).
    */
   private async handleToolApproval(dataStr: string): Promise<void> {
-    let payload: { request_id: string; action: string; params: Record<string, unknown> };
+    let payload: {
+      request_id: string;
+      action: string;
+      params: Record<string, unknown>;
+      oldContent?: string | null;
+    };
     try { payload = JSON.parse(dataStr); } catch { return; }
 
     const requestPayload: ToolApprovalRequestPayload = {
       requestId: payload.request_id,
       action: payload.action,
       params: payload.params as ToolApprovalRequestPayload["params"],
+      oldContent: payload.oldContent,
     };
     this.bridge?.send({ type: ToWebviewType.ToolApprovalRequest, payload: requestPayload });
 
-    const approved = await new Promise<boolean>((resolve) => {
+    const result = await new Promise<{ approved: boolean; scope: ApprovalScope }>((resolve) => {
       const timer = setTimeout(() => {
         if (this.pendingApprovals.has(payload.request_id)) {
           this.pendingApprovals.delete(payload.request_id);
-          resolve(false);
+          resolve({ approved: false, scope: "once" });
         }
       }, 5 * 60 * 1000);
 
-      this.pendingApprovals.set(payload.request_id, (result) => {
+      this.pendingApprovals.set(payload.request_id, (res) => {
         clearTimeout(timer);
-        resolve(result);
+        resolve(res);
       });
     });
 
-    await this.proxyClient.approve(payload.request_id, approved);
+    await this.proxyClient.approve(payload.request_id, result.approved, result.scope);
+  }
+
+  /**
+   * Opens a plan file written by the model as a markdown preview in the VS Code
+   * editor area so the user can review and edit it before switching mode.
+   */
+  private async handlePlanFileCreated(dataStr: string): Promise<void> {
+    let payload: { path: string };
+    try { payload = JSON.parse(dataStr); } catch { return; }
+    if (!this.workspaceRoot || !payload.path) return;
+
+    const fullPath = join(this.workspaceRoot, payload.path.replace(/\\/g, "/"));
+    const uri = vscode.Uri.file(fullPath);
+
+    try {
+      // Open rendered preview in the main editor area.
+      await vscode.commands.executeCommand("markdown.showPreview", uri);
+    } catch (err) {
+      this.notify(
+        "warn",
+        `Could not open plan preview for ${payload.path}: ${String(err)}. Open it manually from the file explorer.`,
+      );
+    }
   }
 
   private async handleClientSlashCommand(payload: SlashCommandPayload): Promise<void> {
@@ -596,6 +821,7 @@ export class ChatSession implements vscode.Disposable {
 
   private handleClearHistory(): void {
     this.conversation.length = 0;
+    this.persistConversation();
   }
 
   private finalizeAssistantMessage(): void {
@@ -604,7 +830,26 @@ export class ChatSession implements vscode.Disposable {
         role: "assistant",
         content: this.assistantBuffer || "(assistant response)",
       });
+      this.persistConversation();
     }
     this.assistantBuffer = "";
+  }
+
+  private persistConversation(): void {
+    void this.workspaceState?.update(CONV_STATE_KEY, this.conversation);
+  }
+
+  private async handleSetAgentMode(mode: "ask" | "auto" | "plan"): Promise<void> {
+    const actual = await this.proxyClient.setAgentMode(mode);
+    if (actual !== undefined) {
+      // Keep the local config in sync so subsequent refreshProxyConfig broadcasts
+      // include the current mode and never overwrite it with a stale default.
+      this.config.agentMode = actual;
+      // Broadcast back so the input area reflects the confirmed state immediately.
+      this.bridge?.send({
+        type: ToWebviewType.ConfigUpdate,
+        payload: { agentMode: actual },
+      });
+    }
   }
 }

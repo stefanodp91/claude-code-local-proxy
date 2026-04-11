@@ -10,7 +10,7 @@
 import { SseParser, type SseEvent } from "./sse-parser";
 import type { ConversationMessage } from "../models/chat-message.model";
 import type { ChatConfig } from "../config/extension-config";
-import type { SlashCommand } from "../../shared/message-protocol";
+import type { SlashCommand, ApprovalScope } from "../../shared/message-protocol";
 
 export interface ProxyRequest {
   messages: ConversationMessage[];
@@ -120,16 +120,39 @@ export class ProxyClient {
   /**
    * Respond to a tool_request_pending approval gate at the proxy.
    * Called after the user approves or denies the action in the UI.
+   *
+   * @param scope - `"once"` (default) approves only this action; `"turn"`
+   *                approves all destructive actions until the turn ends;
+   *                `"file"` also remembers the path in the proxy's trustedFiles.
    */
-  async approve(requestId: string, approved: boolean): Promise<void> {
+  async approve(requestId: string, approved: boolean, scope: ApprovalScope = "once"): Promise<void> {
     try {
       await fetch(`${this.baseUrl}/v1/messages/${requestId}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ approved }),
+        body: JSON.stringify({ approved, scope }),
       });
     } catch {
       // If the request fails the proxy will auto-deny on timeout — nothing more to do.
+    }
+  }
+
+  /**
+   * Set agent mode on the proxy (POST /agent-mode).
+   * Returns the confirmed mode from the proxy, or undefined if the request fails.
+   */
+  async setAgentMode(mode: "ask" | "auto" | "plan"): Promise<"ask" | "auto" | "plan" | undefined> {
+    try {
+      const res = await fetch(`${this.baseUrl}/agent-mode`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (!res.ok) return undefined;
+      const data = await res.json() as { mode: "ask" | "auto" | "plan" };
+      return data.mode;
+    } catch {
+      return undefined;
     }
   }
 

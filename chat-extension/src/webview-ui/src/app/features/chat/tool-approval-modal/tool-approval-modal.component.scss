@@ -1,0 +1,122 @@
+// Only what Bootstrap utilities cannot express: theme-aware colors,
+// monospace diff rendering, conditional bg tints for added/removed lines.
+
+.modal-header {
+  font-size: 14px;
+  color: var(--c-text);
+}
+
+.action-icon {
+  font-size: 20px;
+}
+
+.action-target {
+  color: var(--c-accent);
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12.5px;
+  word-break: break-all;
+}
+
+// ─── Diff view ─────────────────────────────────────────────────────────────
+
+.diff-view {
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  background: var(--c-code-bg);
+  border-color: var(--c-border-2) !important;
+  max-height: 340px;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.diff-line {
+  gap: 6px;
+  white-space: pre;
+  min-height: 1.5em;
+}
+
+.diff-line.diff-added   { background: rgba(46, 160, 67, 0.15); }
+.diff-line.diff-removed { background: rgba(248, 81, 73, 0.15); }
+.diff-line.diff-context { color: var(--c-text-muted); }
+.diff-line.diff-ellipsis {
+  color: var(--c-text-muted);
+  font-style: italic;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.diff-marker {
+  width: 12px;
+  color: var(--c-text-muted);
+  text-align: center;
+  user-select: none;
+}
+.diff-line.diff-added .diff-marker   { color: #2ea043; font-weight: 600; }
+.diff-line.diff-removed .diff-marker { color: #f85149; font-weight: 600; }
+
+.diff-text {
+  color: var(--c-code-text);
+}
+
+// ─── Bash command block ───────────────────────────────────────────────────
+
+.cmd-block {
+  background: var(--c-code-bg);
+  border-color: var(--c-border-2) !important;
+}
+
+.cmd-pre {
+  font-family: 'Cascadia Code', 'Fira Code', monospace;
+  font-size: 12px;
+  color: var(--c-code-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+// ─── Secondary scope actions ───────────────────────────────────────────────
+
+.secondary-actions {
+  font-size: 11.5px;
+}
+
+.btn-link-secondary {
+  background: none;
+  border: none;
+  color: var(--c-accent);
+  cursor: pointer;
+  padding: 2px 4px;
+  font-size: inherit;
+  text-decoration: none;
+}
+.btn-link-secondary:hover {
+  text-decoration: underline;
+}
+
+// ─── Action buttons ────────────────────────────────────────────────────────
+
+.btn-deny,
+.btn-approve {
+  border: 1px solid var(--c-border-2);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, filter 0.12s;
+}
+
+.btn-deny {
+  background: none;
+  color: var(--c-text-muted);
+}
+.btn-deny:hover {
+  background: var(--c-overlay-subtle);
+  color: var(--c-text);
+}
+
+.btn-approve {
+  background: var(--c-accent);
+  color: #fff;
+  border-color: transparent;
+}
+.btn-approve:hover {
+  filter: brightness(1.1);
+}

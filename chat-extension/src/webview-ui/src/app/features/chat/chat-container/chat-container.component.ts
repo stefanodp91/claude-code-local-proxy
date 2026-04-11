@@ -5,6 +5,8 @@ import { ToolbarComponent } from "../toolbar/toolbar.component";
 import { MessageListComponent } from "../message-list/message-list.component";
 import { InputAreaComponent, type SendPayload } from "../input-area/input-area.component";
 import { ToolApprovalModalComponent, type ApprovalDecision } from "../tool-approval-modal/tool-approval-modal.component";
+import { PlanExitModalComponent, type PlanExitDecision } from "../plan-exit-modal/plan-exit-modal.component";
+import { NotificationBannerComponent } from "../../../shared/components/notification-banner/notification-banner.component";
 import { MessageStoreService } from "../../../core/services/message-store.service";
 import { WebviewBridgeService } from "../../../core/services/webview-bridge.service";
 import { StreamingService } from "../../../core/services/streaming.service";
@@ -24,17 +26,34 @@ import {
   type ReadFilesPayload,
   type ToolApprovalRequestPayload,
   type ToolApprovalResponsePayload,
+  type SetAgentModePayload,
+  type AgentMode,
+  type PlanExitRequestPayload,
+  type PlanExitResponsePayload,
+  type NotificationPayload,
+  type NotificationDismissedPayload,
 } from "@shared/message-protocol";
 
 @Component({
   selector: "app-chat-container",
   standalone: true,
-  imports: [CommonModule, ToolbarComponent, MessageListComponent, InputAreaComponent, ToolApprovalModalComponent],
+  imports: [
+    CommonModule,
+    ToolbarComponent,
+    MessageListComponent,
+    InputAreaComponent,
+    ToolApprovalModalComponent,
+    PlanExitModalComponent,
+    NotificationBannerComponent,
+  ],
   template: `
     <div class="chat-layout">
       <app-toolbar
         [connectionStatus]="connectionStatus"
         (clearHistory)="onClearHistory()" />
+      <app-notification-banner
+        [notifications]="notifications()"
+        (dismiss)="onNotificationDismiss($event)" />
       <app-message-list [messages]="store.messages()" [isPending]="store.isPending()" (runCode)="onRunCode($event)" />
       @if (store.codeStatus()) {
         <div class="code-execution-status">
@@ -49,13 +68,18 @@ import {
         [isStreaming]="store.isStreaming() || store.isPending()"
         [slashCommands]="availableCommands()"
         [supportsVision]="supportsVision()"
+        [agentMode]="agentMode()"
         (sendMsg)="onSendMessage($event)"
         (cancel)="onCancel()"
-        (requestFileRead)="onRequestFileRead($event)" />
+        (requestFileRead)="onRequestFileRead($event)"
+        (agentModeChange)="onSetAgentMode($event)" />
     </div>
     <app-tool-approval-modal
       [request]="pendingApproval()"
       (decision)="onApprovalDecision($event)" />
+    <app-plan-exit-modal
+      [request]="pendingPlanExit()"
+      (decision)="onPlanExitDecision($event)" />
   `,
   styles: [`
     :host {
@@ -109,6 +133,9 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
   availableCommands  = signal<SlashCommand[]>([]);
   supportsVision     = signal(false);
   pendingApproval    = signal<ToolApprovalRequestPayload | null>(null);
+  pendingPlanExit    = signal<PlanExitRequestPayload | null>(null);
+  notifications      = signal<NotificationPayload[]>([]);
+  agentMode          = signal<AgentMode>("ask");
 
   private readonly subscriptions = new Subscription();
 
@@ -195,6 +222,36 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
       }),
     );
 
+    // Show plan-exit modal when the model calls `workspace(action="exit_plan_mode")`
+    this.subscriptions.add(
+      this.bridge.onPlanExitRequest().subscribe((req) => {
+        this.pendingPlanExit.set(req);
+      }),
+    );
+
+    // Embedded notification banners (replace vscode.window.showErrorMessage)
+    this.subscriptions.add(
+      this.bridge.onNotificationShow().subscribe((n) => {
+        this.notifications.update((list) => [...list, n]);
+        // Auto-dismiss info/warn after 6 seconds; errors stay until manual ×.
+        if (n.level !== "error") {
+          setTimeout(() => {
+            this.notifications.update((list) => list.filter((x) => x.id !== n.id));
+          }, 6000);
+        }
+      }),
+    );
+    this.subscriptions.add(
+      this.bridge.onNotificationDismiss().subscribe((id) => {
+        this.notifications.update((list) => list.filter((n) => n.id !== id));
+      }),
+    );
+
+    // Sync plan mode state from proxy (via ConfigUpdate)
+    this.subscriptions.add(
+      this.bridge.onAgentMode().subscribe((mode) => this.agentMode.set(mode)),
+    );
+
     // Request initial health check
     this.bridge.send({ type: ToExtensionType.CheckHealth });
   }
@@ -203,11 +260,39 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
     this.subscriptions.unsubscribe();
   }
 
+  onSetAgentMode(mode: AgentMode): void {
+    this.agentMode.set(mode); // optimistic: update UI immediately before round-trip
+    this.bridge.send({
+      type: ToExtensionType.SetAgentMode,
+      payload: { mode } satisfies SetAgentModePayload,
+    });
+  }
+
   onApprovalDecision(decision: ApprovalDecision): void {
     this.pendingApproval.set(null);
     this.bridge.send({
       type: ToExtensionType.ToolApprovalResponse,
-      payload: { requestId: decision.requestId, approved: decision.approved } satisfies ToolApprovalResponsePayload,
+      payload: {
+        requestId: decision.requestId,
+        approved: decision.approved,
+        scope: decision.scope,
+      } satisfies ToolApprovalResponsePayload,
+    });
+  }
+
+  onPlanExitDecision(decision: PlanExitDecision): void {
+    this.pendingPlanExit.set(null);
+    this.bridge.send({
+      type: ToExtensionType.PlanExitResponse,
+      payload: { mode: decision.mode } satisfies PlanExitResponsePayload,
+    });
+  }
+
+  onNotificationDismiss(id: string): void {
+    this.notifications.update((list) => list.filter((n) => n.id !== id));
+    this.bridge.send({
+      type: ToExtensionType.NotificationDismissed,
+      payload: { id } satisfies NotificationDismissedPayload,
     });
   }
 

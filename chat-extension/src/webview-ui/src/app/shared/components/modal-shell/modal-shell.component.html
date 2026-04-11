@@ -1,0 +1,15 @@
+@if (open) {
+  <div
+    class="modal-overlay position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center"
+    (click)="onBackdrop()"
+  >
+    <div
+      class="modal-card border rounded-3 p-4 mx-3"
+      (click)="$event.stopPropagation()"
+      role="dialog"
+      aria-modal="true"
+    >
+      <ng-content></ng-content>
+    </div>
+  </div>
+}

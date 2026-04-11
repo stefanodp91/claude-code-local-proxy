@@ -157,6 +157,22 @@ These variables configure defaults for chat clients (like Claudio). They are exp
 | `SYSTEM_PROMPT` | string | (empty) | Optional system prompt prepended to every conversation. Useful for setting a persistent persona or context. |
 | `ENABLE_THINKING` | `0`/`1` | `1` | When `1`, the proxy sends `thinking:{type:"enabled"}` to the model in every request, enabling extended reasoning/thinking mode. Set to `0` to disable. |
 
+### Plan Mode
+
+These variables control where plan files are written when the agent operates in Plan mode.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `PLANS_DIR` | string | `.claudio/plans` | Directory (relative to the workspace root) where the agent writes plan files in Plan mode. The agent resolves `<workspaceCwd>/<PLANS_DIR>/<slug>.md`. Writes inside this directory are auto-approved; writes outside are blocked by Plan mode. |
+
+Example — use a different location:
+
+```bash
+PLANS_DIR=docs/plans npm start
+```
+
+The model's system prompt references this directory at runtime, so changing `PLANS_DIR` fully re-routes plan file creation without any code changes.
+
 Locale files live in `proxy/locales/<locale>.json`. The `t()` function does `{{param}}` interpolation:
 
 ```json

@@ -52,12 +52,85 @@ export enum SseEventType {
   Error = "error",
 }
 
+/**
+ * Custom (non-Anthropic) SSE events emitted by the proxy to its client.
+ * The chat-extension handles these in `chat-session.ts` and the webview.
+ */
+export enum CustomSseEvent {
+  /** Emitted when a destructive action needs user approval. Client responds via POST /approve. */
+  ToolRequestPending     = "tool_request_pending",
+  /** Emitted right after the model writes a plan file. Client opens it as markdown preview. */
+  PlanFileCreated        = "plan_file_created",
+  /** Emitted when the model calls `workspace(action="exit_plan_mode")`. Client shows the embedded PlanExit modal. */
+  PlanModeExitSuggestion = "plan_mode_exit_suggestion",
+}
+
+/** HTTP methods used by the proxy router. */
+export enum HttpMethod {
+  Get  = "GET",
+  Post = "POST",
+}
+
+/** Known proxy HTTP endpoints. `/v1/messages/:id/approve` uses a regex match, not this enum. */
+export enum ProxyEndpoint {
+  Health    = "/health",
+  Config    = "/config",
+  Commands  = "/commands",
+  AgentMode = "/agent-mode",
+  Messages  = "/v1/messages",
+}
+
+/**
+ * Approval scope chosen by the user when confirming a destructive action.
+ * Mirrors the shared type in `chat-extension/src/shared/message-protocol.ts`.
+ *
+ * - Once: approve only this specific action (default)
+ * - Turn: approve all destructive actions until the current turn ends
+ * - File: approve this action AND future write/edit on the same path for the rest of the session
+ */
+export enum ApprovalScope {
+  Once = "once",
+  Turn = "turn",
+  File = "file",
+}
+
+/** Result of an approval request — returned by the `ApprovalInteractorPort` and consumed by the agent loop. */
+export interface ApprovalResult {
+  approved: boolean;
+  scope:    ApprovalScope;
+}
+
 /** Anthropic tool_choice type values sent by Claude Code. */
 export enum ToolChoiceType {
   Auto = "auto",
   Any = "any",
   None = "none",
   Tool = "tool",
+}
+
+/**
+ * OpenAI `tool_choice` values sent to the LLM backend.
+ * Distinct from {@link ToolChoiceType} (Anthropic side): different protocol.
+ */
+export enum OpenAIToolChoice {
+  Auto = "auto",
+  Required = "required",
+  None = "none",
+}
+
+/**
+ * Agent gating mode — controls how destructive workspace actions
+ * (write, edit, bash) are authorized by the proxy.
+ *
+ * - {@link AgentMode.Ask}  (default): show a user-approval modal per action
+ * - {@link AgentMode.Auto}          : auto-approve all actions, no prompts
+ * - {@link AgentMode.Plan}          : block destructive actions; force the
+ *                                     model to produce a plan file instead
+ */
+export enum AgentMode {
+  Ask = "ask",
+  Auto = "auto",
+  Plan = "plan",
 }
 
 /** Supported locales for i18n. Only en_US is currently available. */
