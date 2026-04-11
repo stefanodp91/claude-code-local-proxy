@@ -2,6 +2,14 @@
   <span class="toolbar-title">{{ 'chat.title' | translate }}</span>
   <span class="flex-grow-1"></span>
   <app-connection-indicator [status]="connectionStatus" />
+  @if (connectionStatus === ConnectionStatus.Disconnected) {
+    <button
+      class="icon-btn ms-1"
+      [matTooltip]="'status.reconnect' | translate"
+      (click)="reconnect.emit()">
+      <mat-icon>refresh</mat-icon>
+    </button>
+  }
   <button
     class="icon-btn ms-1"
     [matTooltip]="'chat.clearHistory' | translate"

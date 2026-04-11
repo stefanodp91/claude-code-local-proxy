@@ -115,8 +115,10 @@ activate()
   ├── ProxyManager(proxyDir, globalStoragePath, outputChannel)
   │     │
   │     ├── cleanupOrphan()
-  │     │     └── read globalStoragePath/.claudio-proxy.pid
+  │     │     └── read globalStoragePath/.claudio-proxy-<hash>.pid   ← hash of proxyDir
   │     │           → SIGTERM old process (handles VS Code crash recovery)
+  │     │           Note: each proxyDir has its own PID file; windows with
+  │     │           different proxyDir values never kill each other's proxy.
   │     │
   │     ├── findFreePort(5678)
   │     │     └── net.createServer() probe loop → 5679 (example)
@@ -127,7 +129,7 @@ activate()
   │     │         env: { PROXY_PORT: "5679", TARGET_URL: ..., ... }
   │     │         stdout/stderr → "Claudio Proxy" OutputChannel
   │     │
-  │     ├── write PID → globalStoragePath/.claudio-proxy.pid
+  │     ├── write PID → globalStoragePath/.claudio-proxy-<hash>.pid
   │     │
   │     └── waitForHealth(5679, 30s)
   │           polls http://127.0.0.1:5679/health every 1s
@@ -142,7 +144,7 @@ deactivate() / context.subscriptions.dispose()
   └── ProxyManager.dispose() → stop()
         ├── SIGTERM to proxy process
         ├── setTimeout 5s → SIGKILL if still alive
-        └── delete .claudio-proxy.pid
+        └── delete .claudio-proxy-<hash>.pid
 ```
 
 **ProxyManager VS Code settings:**

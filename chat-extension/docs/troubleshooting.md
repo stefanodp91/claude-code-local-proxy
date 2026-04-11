@@ -96,14 +96,23 @@ If 5678 is occupied (e.g. by another Claudio window or `start_agent_cli.sh`), it
 
 **Most common cause:** the proxy is not running.
 
-**Solution:** if `claudio.proxyDir` is configured, reload VS Code to trigger auto-start.
-Otherwise start the proxy manually:
+**Quick fix:** click the **`↺` (refresh) button** that appears in the Claudio toolbar when
+the indicator is red. This triggers an immediate reconnection attempt. The indicator will
+briefly show `● Checking...` and then turn green if the proxy is reachable.
+
+**If the reconnect button doesn't help:** the proxy itself is not running.
+- If `claudio.proxyDir` is configured, reload VS Code to trigger auto-start.
+- Otherwise start the proxy manually:
 ```bash
 # From repo root
 cd proxy && npm start
 ```
 
 Wait for the panel to show `● Connected` (can take 5–10 seconds on first start).
+
+**Multi-window note:** each VS Code window with a different `proxyDir` manages its own
+independent proxy process. Opening a second project no longer disrupts the first window's
+connection.
 
 ---
 

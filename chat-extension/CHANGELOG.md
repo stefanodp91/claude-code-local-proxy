@@ -5,6 +5,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.4.0] — 2026-04-12
+
+### Fixed — Multi-window proxy isolation
+
+- **PID file per `proxyDir`** (`proxy-manager.ts`): il file PID era condiviso tra tutte le finestre VSCode dello stesso utente (`globalStoragePath/.claudio-proxy.pid`). Aprendo un secondo progetto con `autoStartProxy: true`, `cleanupOrphan()` uccideva il proxy della prima finestra, lasciandola disconnessa a tempo indefinito. Il file PID ora include un hash del `proxyDir` (`.claudio-proxy-<hash>.pid`), rendendo ogni finestra completamente indipendente.
+
+### Fixed — Intervalli duplicati nell'health checker
+
+- **`HealthChecker.start()` idempotente** (`health-checker.ts`): chiamato due volte in rapida successione (da `attachView` e dal `CheckHealth` della webview), creava intervalli di polling paralleli. `start()` chiama ora `stop()` prima di avviare il nuovo ciclo.
+
+### Added — Pulsante di riconnessione manuale
+
+- **Pulsante `refresh`** in `ToolbarComponent`: visibile solo quando lo stato è `Disconnected`. Al click invia `CheckHealth` all'extension host, che esegue immediatamente un nuovo ciclo di health check (lo stato passa a `Checking` poi a `Connected` o `Disconnected`).
+- **i18n**: `status.reconnect` aggiunto a `en.json` ("Reconnect") e `it.json` ("Riconnetti").
+
+---
+
 ## [1.3.0] — 2026-04-12
 
 ### Added — Thinking detection & toggle

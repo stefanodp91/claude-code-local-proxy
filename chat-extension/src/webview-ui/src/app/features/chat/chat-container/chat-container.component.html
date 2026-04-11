@@ -1,7 +1,8 @@
 <div class="chat-layout d-flex flex-column flex-grow-1">
   <app-toolbar
     [connectionStatus]="connectionStatus"
-    (clearHistory)="onClearHistory()" />
+    (clearHistory)="onClearHistory()"
+    (reconnect)="onReconnect()" />
   <app-notification-banner
     [notifications]="notifications()"
     (dismiss)="onNotificationDismiss($event)" />

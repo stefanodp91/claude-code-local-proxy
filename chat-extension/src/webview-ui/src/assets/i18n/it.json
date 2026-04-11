@@ -17,6 +17,7 @@
   "status.connected": "Connesso",
   "status.disconnected": "Disconnesso",
   "status.checking": "Verifica...",
+  "status.reconnect": "Riconnetti",
 
   "metadata.tokens": "token",
 

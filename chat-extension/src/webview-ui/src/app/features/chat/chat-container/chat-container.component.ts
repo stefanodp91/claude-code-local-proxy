@@ -192,6 +192,10 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
     this.subscriptions.unsubscribe();
   }
 
+  onReconnect(): void {
+    this.bridge.send({ type: ToExtensionType.CheckHealth });
+  }
+
   onSetAgentMode(mode: AgentMode): void {
     this.agentMode.set(mode);
     this.bridge.send({

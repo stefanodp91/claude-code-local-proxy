@@ -20,6 +20,7 @@ export class HealthChecker {
   ) {}
 
   start(): void {
+    this.stop();
     this.check();
     this.timer = setInterval(() => this.check(), POLL_INTERVAL_MS);
   }

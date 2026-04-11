@@ -15,4 +15,7 @@ import { ConnectionStatus } from "@shared/message-protocol";
 export class ToolbarComponent {
   @Input() connectionStatus: ConnectionStatus = ConnectionStatus.Disconnected;
   @Output() clearHistory = new EventEmitter<void>();
+  @Output() reconnect = new EventEmitter<void>();
+
+  readonly ConnectionStatus = ConnectionStatus;
 }

@@ -36,7 +36,13 @@ export class ProxyManager implements vscode.Disposable {
      */
     private readonly onError: (message: string) => void,
   ) {
-    this.pidFile = path.join(globalStoragePath, ".claudio-proxy.pid");
+    // Unique PID file per proxyDir to avoid cross-window proxy killing when
+    // multiple VS Code windows have different proxyDir values configured.
+    const dirHash = Buffer.from(proxyDir)
+      .toString("base64")
+      .replace(/[^a-zA-Z0-9]/g, "")
+      .slice(0, 16);
+    this.pidFile = path.join(globalStoragePath, `.claudio-proxy-${dirHash}.pid`);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
