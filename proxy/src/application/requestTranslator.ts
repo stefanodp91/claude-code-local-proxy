@@ -23,6 +23,7 @@ import {
   type ToolSelection,
   OpenAIToolType,
   ContentBlockType,
+  ThinkingType,
   ToolChoiceType,
   MessageRole,
 } from "../domain/types";
@@ -87,6 +88,11 @@ export class RequestTranslator {
     if (body.temperature !== undefined) req.temperature = body.temperature;
     if (body.top_p !== undefined) req.top_p = body.top_p;
     if (body.stop_sequences) req.stop = body.stop_sequences;
+
+    // Forward thinking activation so the backend streams reasoning_content incrementally
+    if (body.thinking?.type === ThinkingType.Enabled || body.thinking?.type === ThinkingType.Adaptive) {
+      req.enable_thinking = true;
+    }
 
     // Tool translation with dynamic selection
     let toolSelection: ToolSelection | null = null;

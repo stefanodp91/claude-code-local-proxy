@@ -209,58 +209,58 @@ export class NativeAgentLoopService {
     };
 
     // ── Iteration loop ────────────────────────────────────────────────────────
+    //
+    // All iterations now use streaming (stream:true) so that thinking/text
+    // deltas are forwarded to the client in real time.
+    //
+    // Iter-0 still acts as a fallback guard: if the model produces no output
+    // at all (empty text, no thinking, no tool calls) — i.e. writeSSE was
+    // never called and messageStartSent is still false — we return
+    // "fallthrough" so the caller can retry with normal streaming and no
+    // workspace-tool constraint.
 
     for (let i = 0; i < MAX_ITERATIONS; i++) {
 
-      // ─────────────────────────────────────────────────────────────────────
-      // Iteration 0: non-streaming fallback guard (stream:false)
-      //
-      // Uses a single JSON response to detect whether the model produced any
-      // output. If not, returns "fallthrough" so the caller can run normal
-      // streaming for simple non-workspace queries.
-      // ─────────────────────────────────────────────────────────────────────
-      if (i === 0) {
-        const llmResp = await this.llm.chat({
-          body: { ...agentReq, tool_choice: currentToolChoice(), messages },
-          stream: false,
+      const llmResp = await this.llm.chat({
+        body: { ...agentReq, tool_choice: currentToolChoice(), messages },
+        stream: true,
+      });
+
+      if (!llmResp.ok) {
+        emitTextBlock(`Error from LLM: ${llmResp.errorText ?? `HTTP ${llmResp.status}`}`);
+        endMessage();
+        return "handled";
+      }
+
+      // ── Streaming path ──────────────────────────────────────────────────
+      if (llmResp.body) {
+        const { toolCalls, nextContentIndex, outputTokens } =
+          await this.parseStreamingIteration(llmResp.body, writeSSE, contentIndex, thinkingEnabled);
+
+        // Iter-0 only: if nothing was emitted (model produced no text, no
+        // thinking, no tool calls), fall through to normal streaming.
+        if (i === 0 && !messageStartSent) return "fallthrough";
+
+        contentIndex = nextContentIndex;
+
+        if (toolCalls.length === 0) {
+          endMessage(outputTokens);
+          return "handled";
+        }
+
+        messages.push({
+          role: "assistant",
+          content: null,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: { name: "workspace", arguments: tc.arguments },
+          })),
         });
-
-        if (!llmResp.ok) {
-          emitTextBlock(`Error from LLM: ${llmResp.errorText ?? `HTTP ${llmResp.status}`}`);
-          endMessage();
-          return "handled";
-        }
-
-        const choice = llmResp.json?.choices?.[0];
-        const workspaceCalls: any[] = (choice?.message?.tool_calls ?? []).filter(
-          (tc: any) => tc.function?.name === "workspace",
-        );
-        const text: string = choice?.message?.content ?? "";
-
-        // Nothing at all → fall through to normal streaming.
-        if (workspaceCalls.length === 0 && !text.trim()) return "fallthrough";
-
-        // Text only → emit and finish.
-        if (workspaceCalls.length === 0) {
-          emitTextBlock(text);
-          endMessage(text.length);
-          return "handled";
-        }
-
-        // Tool calls → emit SSE blocks, execute, then continue loop.
-        messages.push(choice.message);
-        for (const tc of workspaceCalls) {
-          const argsRaw = tc.function.arguments ?? "{}";
-
-          // Iter-0 emits tool_use blocks here; iter-1+ emits them in parseStreamingIteration.
-          writeSSE(sseEvent(SseEventType.ContentBlockStart, { type: "content_block_start", index: contentIndex, content_block: { type: "tool_use", id: tc.id, name: "workspace", input: {} } }));
-          writeSSE(sseEvent(SseEventType.ContentBlockDelta, { type: "content_block_delta", index: contentIndex, delta: { type: "input_json_delta", partial_json: argsRaw } }));
-          writeSSE(sseEvent(SseEventType.ContentBlockStop, { type: "content_block_stop", index: contentIndex }));
-          contentIndex++;
-
+        for (const tc of toolCalls) {
           const { result, exitLoop } = await this.processToolCall(
             writeSSE, emitTextBlock, endMessage,
-            tc.id, argsRaw,
+            tc.id, tc.arguments,
             workspaceCwd, openaiReq.messages, state,
           );
           if (exitLoop) return "handled";
@@ -269,50 +269,51 @@ export class NativeAgentLoopService {
         continue;
       }
 
-      // ─────────────────────────────────────────────────────────────────────
-      // Iterations 1+: streaming (stream:true)
-      //
-      // Forwards thinking/text deltas live and accumulates tool calls.
-      // When [DONE] arrives, tool_use blocks are emitted and the tool calls
-      // are executed, then the loop repeats.
-      // ─────────────────────────────────────────────────────────────────────
-      const llmResp = await this.llm.chat({
-        body: { ...agentReq, tool_choice: currentToolChoice(), messages },
-        stream: true,
-      });
-
-      if (!llmResp.ok || !llmResp.body) {
-        const errText = !llmResp.ok ? (llmResp.errorText ?? `HTTP ${llmResp.status}`) : "no response body";
-        emitTextBlock(`Error from LLM: ${errText}`);
+      // ── Non-streaming fallback (backend returned JSON despite stream:true) ──
+      const choice = llmResp.json?.choices?.[0];
+      if (!choice) {
+        if (i === 0) return "fallthrough";
         endMessage();
         return "handled";
       }
 
-      const { toolCalls, nextContentIndex, outputTokens } =
-        await this.parseStreamingIteration(llmResp.body, writeSSE, contentIndex, thinkingEnabled);
-      contentIndex = nextContentIndex;
+      const text: string = choice.message?.content ?? "";
+      const reasoning: string = choice.message?.reasoning_content ?? "";
+      const rawToolCalls: any[] = (choice.message?.tool_calls ?? [])
+        .filter((tc: any) => tc.function?.name === "workspace");
 
-      // No tool calls → model produced a final text answer; the streaming
-      // already flushed it. Close the message.
-      if (toolCalls.length === 0) {
-        endMessage(outputTokens);
+      if (!text.trim() && !reasoning && rawToolCalls.length === 0) {
+        if (i === 0) return "fallthrough";
+        endMessage();
         return "handled";
       }
 
-      // Tool calls → inject into message history, execute, loop again.
-      messages.push({
-        role: "assistant",
-        content: null,
-        tool_calls: toolCalls.map((tc) => ({
-          id: tc.id,
-          type: "function",
-          function: { name: "workspace", arguments: tc.arguments },
-        })),
-      });
-      for (const tc of toolCalls) {
+      if (thinkingEnabled && reasoning) {
+        writeSSE(sseEvent(SseEventType.ContentBlockStart, {
+          type: "content_block_start", index: contentIndex,
+          content_block: { type: ContentBlockType.Thinking, thinking: "", signature: "" },
+        }));
+        writeSSE(sseEvent(SseEventType.ContentBlockDelta, {
+          type: "content_block_delta", index: contentIndex,
+          delta: { type: DeltaType.ThinkingDelta, thinking: reasoning },
+        }));
+        writeSSE(sseEvent(SseEventType.ContentBlockStop, {
+          type: "content_block_stop", index: contentIndex,
+        }));
+        contentIndex++;
+      }
+
+      if (rawToolCalls.length === 0) {
+        emitTextBlock(text);
+        endMessage(text.length);
+        return "handled";
+      }
+
+      messages.push(choice.message);
+      for (const tc of rawToolCalls) {
         const { result, exitLoop } = await this.processToolCall(
           writeSSE, emitTextBlock, endMessage,
-          tc.id, tc.arguments,
+          tc.id, tc.function?.arguments ?? "{}",
           workspaceCwd, openaiReq.messages, state,
         );
         if (exitLoop) return "handled";
@@ -349,7 +350,7 @@ export class NativeAgentLoopService {
     writeSSE: (frame: string) => void,
     emitTextBlock: (text: string) => void,
     endMessage: () => void,
-    toolCallId: string,
+    _toolCallId: string,
     argsRaw: string,
     workspaceCwd: string,
     originalMessages: any[],

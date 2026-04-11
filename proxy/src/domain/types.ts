@@ -32,6 +32,13 @@ export enum FinishReason {
   Length = "length",
 }
 
+/** Values for the `thinking.type` field in Anthropic requests. */
+export enum ThinkingType {
+  Enabled  = "enabled",
+  Adaptive = "adaptive",
+  Disabled = "disabled",
+}
+
 /** Anthropic content block types in messages. */
 export enum ContentBlockType {
   Text = "text",
@@ -219,7 +226,7 @@ export interface AnthropicRequest {
   stream?: boolean;
   tools?: any[];
   tool_choice?: any;
-  thinking?: { type: string; budget_tokens?: number };
+  thinking?: { type: ThinkingType; budget_tokens?: number };
   stop_sequences?: string[];
   [key: string]: any;
 }
@@ -240,6 +247,7 @@ export interface OpenAIRequest {
   tools?: OpenAITool[];
   tool_choice?: string | { type: string; function: { name: string } };
   stop?: string[];
+  enable_thinking?: boolean;
 }
 
 /** OpenAI function tool definition. */

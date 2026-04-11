@@ -13,5 +13,8 @@
   },
   "nemotron-cascade-2-30b-a3b@4bit": {
     "maxTools": 32
+  },
+  "google/gemma-4-31b": {
+    "maxTools": 32
   }
 }

@@ -9,6 +9,8 @@
   "model.capabilities": "Capabilities: {{list}}",
   "model.maxTokensCap": "max_tokens cap: {{cap}}",
   "model.fetchFailed": "Could not fetch model info — using default max_tokens cap ({{fallback}})",
+  "model.changed": "Model changed: {{from}} → {{to}}. Re-initializing tools…",
+  "model.reloaded": "Model reloaded — maxTools={{max}}",
 
   "probe.start": "Probing tool limit...",
   "probe.noSupport": "Model does not support tool calling",

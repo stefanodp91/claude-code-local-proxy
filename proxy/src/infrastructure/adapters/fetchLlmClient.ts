@@ -29,7 +29,12 @@ export class FetchLlmClient implements LlmClientPort {
         return { ok: false, status: res.status, errorText: await res.text().catch(() => "") };
       }
       if (req.stream) {
-        return { ok: true, status: res.status, body: res.body };
+        const ct = res.headers.get("content-type") ?? "";
+        if (ct.includes("text/event-stream")) {
+          return { ok: true, status: res.status, body: res.body };
+        }
+        // Backend responded with JSON despite stream:true — normalise to non-streaming.
+        return { ok: true, status: res.status, json: await res.json() };
       }
       return { ok: true, status: res.status, json: await res.json() };
     } catch (err) {

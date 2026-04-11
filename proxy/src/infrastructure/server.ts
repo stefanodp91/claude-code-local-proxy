@@ -58,6 +58,8 @@ export class ProxyServer {
   private maxTools = 0;
   /** False → /health returns 503 (LLM unreachable). Updated by probe + request outcomes. */
   private llmReachable = false;
+  /** True while a model-change re-initialization is in progress. POST /messages returns 503. */
+  private reinitializing = false;
 
   private readonly llm: FetchLlmClient;
   private readonly planFiles: PlanFileRepositoryPort;
@@ -150,6 +152,7 @@ export class ProxyServer {
       this.logger.info(t("server.target",    { url:  this.config.targetUrl }));
       this.logger.info(t("server.debug",     { status: this.config.debug ? "ON" : "OFF" }));
       setInterval(() => { void this.probeLlm(); }, 30_000);
+      setInterval(() => { void this.pollModelChange(); }, 15_000);
     });
   }
 
@@ -158,6 +161,23 @@ export class ProxyServer {
     this.llmReachable = await this.llm.ping();
     if (this.llmReachable !== prev) {
       this.logger.info(`[health] LLM backend ${this.llmReachable ? "reachable" : "unreachable"}`);
+    }
+  }
+
+  private async pollModelChange(): Promise<void> {
+    if (this.reinitializing || !this.llmReachable) return;
+    const fresh = await new ModelInfoService(this.config, this.logger).fetch();
+    if (!fresh || fresh.id === this.modelInfo?.id) return;
+
+    this.reinitializing = true;
+    this.logger.info(t("model.changed", { from: this.modelInfo?.id ?? "none", to: fresh.id }));
+    this.modelInfo = fresh;
+    this.logModelInfo();
+    try {
+      await this.initializeTools();
+      this.logger.info(t("model.reloaded", { max: this.maxTools }));
+    } finally {
+      this.reinitializing = false;
     }
   }
 
@@ -199,7 +219,7 @@ export class ProxyServer {
     }
 
     if (req.method === HttpMethod.Post && pathname === ProxyEndpoint.Messages) {
-      if (!this.requestTranslator) {
+      if (!this.requestTranslator || this.reinitializing) {
         return this.sendJson(res, 503, { type: "error", error: { type: "api_error", message: t("server.notReady") } });
       }
       let body: AnthropicRequest;

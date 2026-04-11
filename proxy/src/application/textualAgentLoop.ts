@@ -231,9 +231,33 @@ export async function runTextualAgentLoop(
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const llmResp = await llm.chat({ body: { ...baseReq, messages }, stream: true });
-    if (!llmResp.ok || !llmResp.body) {
-      const errText = llmResp.errorText ?? (!llmResp.ok ? `HTTP ${llmResp.status}` : "no response body");
-      emitTextBlock(`Error from LLM: ${errText}`);
+    if (!llmResp.ok) {
+      emitTextBlock(`Error from LLM: ${llmResp.errorText ?? `HTTP ${llmResp.status}`}`);
+      endMessage();
+      return;
+    }
+
+    // Non-streaming fallback: backend returned JSON despite stream:true.
+    if (!llmResp.body) {
+      const choice = llmResp.json?.choices?.[0];
+      if (!choice) { endMessage(); return; }
+      const reasoning: string = choice.message?.reasoning_content ?? "";
+      const text: string = choice.message?.content ?? "";
+      if (thinkingEnabled && reasoning) {
+        writeSSE(sseEvent(SseEventType.ContentBlockStart, {
+          type: "content_block_start", index: contentIndex,
+          content_block: { type: ContentBlockType.Thinking, thinking: "", signature: "" },
+        }));
+        writeSSE(sseEvent(SseEventType.ContentBlockDelta, {
+          type: "content_block_delta", index: contentIndex,
+          delta: { type: DeltaType.ThinkingDelta, thinking: reasoning },
+        }));
+        writeSSE(sseEvent(SseEventType.ContentBlockStop, {
+          type: "content_block_stop", index: contentIndex,
+        }));
+        contentIndex++;
+      }
+      emitTextBlock(text);
       endMessage();
       return;
     }

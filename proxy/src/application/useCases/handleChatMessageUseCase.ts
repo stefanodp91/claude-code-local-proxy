@@ -21,6 +21,7 @@
 import { t } from "../../domain/i18n";
 import type { LlmClientPort, SseWriterPort, LoggerPort } from "../../domain/ports";
 import type { AnthropicRequest, LoadedModelInfo, ApprovalResult } from "../../domain/types";
+import { ThinkingType } from "../../domain/types";
 import type { ActionArgs } from "../../domain/entities/workspaceAction";
 import { ApprovalGateService } from "../services/approvalGateService";
 import { SystemPromptBuilder } from "../services/systemPromptBuilder";
@@ -138,7 +139,7 @@ export class HandleChatMessageUseCase {
     const maxTools  = this.maxToolsProvider();
 
     const thinkingEnabled =
-      body.thinking?.type === "enabled" || body.thinking?.type === "adaptive";
+      body.thinking?.type === ThinkingType.Enabled || body.thinking?.type === ThinkingType.Adaptive;
 
     this.logRequest(body, thinkingEnabled, modelInfo);
 
@@ -259,8 +260,18 @@ export class HandleChatMessageUseCase {
       return { type: "json", status: 200, body: anthropicResp, llmReachable };
     }
 
-    // Streaming response
+    // Streaming response — but backend may have returned JSON despite stream:true.
     if (!llmResp.body) {
+      if (llmResp.json) {
+        // Backend doesn't support streaming: fall back to responseTranslator.
+        const anthropicResp = this.responseTranslator.translate(
+          llmResp.json,
+          body.model,
+          thinkingEnabled,
+        );
+        this.logger.info(t("response.stopReason", { reason: anthropicResp.stop_reason }));
+        return { type: "json", status: 200, body: anthropicResp, llmReachable };
+      }
       return {
         type:         "json",
         status:       502,
