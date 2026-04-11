@@ -26,7 +26,12 @@ export interface ProxyModelInfo {
   loadedContextLength: number;
   maxContextLength: number;
   maxTokensCap: number;
-  capabilities: string[];
+  /** Probe-derived: true iff the tool-limit probe succeeded (maxTools > 0). */
+  supportsTools: boolean;
+  /** Probe-derived: true iff the model produces reasoning_content on request. */
+  supportsThinking: boolean;
+  /** Probe-derived: true iff `enable_thinking: false` suppresses reasoning. */
+  thinkingCanBeDisabled: boolean;
 }
 
 export interface ProxyRemoteConfig {

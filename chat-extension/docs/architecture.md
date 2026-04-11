@@ -164,7 +164,13 @@ src/webview-ui/src/app/
 │
 ├── core/
 │   ├── models/                         # Data types (ChatMessage, Attachment, etc.)
-│   ├── enums/                          # Enums (MessageRole, ContentType, etc.)
+│   ├── enums/                          # Enums usati in tutta l'app
+│   │   ├── agent-mode.enum.ts          # AgentMode { Ask, Auto, Plan }
+│   │   ├── connection-status.enum.ts   # ConnectionStatus { Connected, Disconnected, Checking }
+│   │   ├── content-block-type.enum.ts  # ContentBlockType { Text, Thinking, ToolUse }
+│   │   ├── message-role.enum.ts        # MessageRole { User, Assistant, System }
+│   │   ├── message-status.enum.ts      # MessageStatus { Pending, Streaming, Done }
+│   │   └── tool-action.enum.ts         # ToolAction { Write, Edit, Bash }
 │   └── services/
 │       ├── message-store.service.ts    # Conversation state (signal-based)
 │       ├── streaming.service.ts        # Handles incoming SSE events
@@ -172,23 +178,31 @@ src/webview-ui/src/app/
 │
 ├── features/
 │   └── chat/
-│       ├── chat-container/             # Main chat layout
+│       ├── chat-container/             # Main chat layout + signal orchestration
 │       ├── message-list/               # Scrollable message list
 │       ├── message-bubble/             # Single message with MD rendering
-│       ├── input-area/                 # Text input + attachments
+│       ├── input-area/                 # Text input + attachments + thinking toggle
+│       ├── mode-selector/              # Dropdown per AgentMode (Ask / Auto / Plan)
 │       ├── toolbar/                    # Actions and settings
 │       ├── connection-indicator/       # Connection status badge
 │       ├── thinking-block/             # Expandable reasoning block
-│       ├── message-metadata/          # Token counter
-│       └── tool-approval-modal/       # Approval modal for write/edit/bash actions
+│       ├── tool-use-block/             # Tool use block with icon + pulsing dot
+│       ├── message-metadata/           # Token counter
+│       ├── tool-approval-modal/        # Approval modal for write/edit/bash actions
+│       └── plan-exit-modal/            # Confirmation dialog for Plan mode exit
 │
 └── shared/
+    ├── components/
+    │   ├── modal-shell/                # Reusable modal backdrop + card chrome
+    │   └── notification-banner/        # Non-blocking in-stream event banner
     ├── directives/                     # Custom Angular directives
     ├── pipes/                          # Custom Angular pipes
     └── services/
         ├── webview-bridge.service.ts   # on()/send() wrapper for postMessage
         └── code-registry.service.ts    # Syntax highlighting support
 ```
+
+**Ogni componente** ha tre file separati: `.ts` (logica), `.html` (template), `.scss` (stili). Nessun template o stile inline.
 
 ---
 
@@ -204,28 +218,34 @@ The file `src/shared/message-protocol.ts` defines the contract between extension
 | `streamEnd` | — | Generation complete |
 | `streamError` | `{ message: string }` | Error during generation |
 | `connectionStatus` | `ConnectionStatus` enum | Health check result |
-| `configUpdate` | `ChatConfig` | Proxy config received/updated |
-| `slashCommandResult` | `{ command, content }` | Response to a slash command |
+| `configUpdate` | `ChatConfig` | Proxy config + model info (supportsThinking, thinkingCanBeDisabled, supportsTools, agentMode) |
+| `slashCommands` | `SlashCommand[]` | Available slash command list (name, desc, handler) |
+| `slashCommandResult` | `{ command, content }` | Response to a client-side slash command |
 | `codeResult` | `{ type: "text" \| "image", data }` | Python execution result |
 | `codeProgress` | `{ phase }` | Execution phase (creating_env, installing_packages, executing) |
 | `historyRestore` | `{ messages: [...] }` | Conversation history on panel reattach |
 | `filesRead` | `{ attachments: [...] }` | Files read for attachment |
-| `toolApprovalRequest` | `{ requestId, action, params }` | Proxy needs user approval for a destructive action |
-| `configUpdate` | `{ ..., planMode?: bool }` | Config change including plan mode state update |
+| `toolApprovalRequest` | `{ requestId, action, params, oldContent? }` | Proxy needs user approval for a destructive action |
+| `planExitRequest` | `{ planPath? }` | Proxy suggests exiting Plan mode (plan written or exit_plan_mode called) |
+| `notificationShow` | `{ id, level, message }` | In-stream notification (info / warning / error) |
+| `notificationDismiss` | `{ id }` | Auto-dismiss a notification by id |
 
 ### Messages from Webview to Extension Host (`ToExtensionType`)
 
 | Type | Payload | Purpose |
 |------|---------|---------|
-| `sendMessage` | `{ content, attachments?, temperature?, maxTokens?, systemPrompt? }` | User message |
+| `sendMessage` | `{ content, attachments? }` | User message |
 | `cancelStream` | — | Cancel ongoing generation |
 | `checkHealth` | — | Manual health check |
 | `clearHistory` | — | Clear conversation history |
-| `executeSlashCommand` | `{ command }` | Execute a slash command |
+| `executeSlashCommand` | `{ command }` | Execute a client-side slash command |
 | `executeCode` | `{ code }` | Execute Python snippet |
 | `readFiles` | `{ uris: string[] }` | Load files for attachment |
-| `toolApprovalResponse` | `{ requestId, approved }` | User's approval decision for a destructive action |
-| `togglePlanMode` | `{ enabled: bool }` | Toggle plan mode on the proxy |
+| `toolApprovalResponse` | `{ requestId, approved, scope }` | User's approval decision; scope: `"once"` / `"turn"` / `"file"` |
+| `planExitResponse` | `{ mode: "ask" \| "auto" \| null }` | User's response to Plan mode exit prompt |
+| `setAgentMode` | `{ mode: AgentMode }` | Switch agent mode (Ask / Auto / Plan) |
+| `setEnableThinking` | `{ enabled: boolean }` | Enable or disable thinking on the current session |
+| `notificationDismissed` | `{ id }` | User manually dismissed a notification |
 
 ---
 

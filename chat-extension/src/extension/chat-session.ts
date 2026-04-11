@@ -38,6 +38,7 @@ import {
   type ToolApprovalResponsePayload,
   type ApprovalScope,
   type SetAgentModePayload,
+  type SetEnableThinkingPayload,
   type PlanExitRequestPayload,
   type PlanExitResponsePayload,
   type NotificationPayload,
@@ -262,6 +263,10 @@ export class ChatSession implements vscode.Disposable {
     });
     this.bridge.on(ToExtensionType.SetAgentMode, (msg) => {
       void this.handleSetAgentMode((msg.payload as SetAgentModePayload).mode);
+    });
+    this.bridge.on(ToExtensionType.SetEnableThinking, (msg) => {
+      const { enabled } = msg.payload as SetEnableThinkingPayload;
+      this.config.enableThinking = enabled;
     });
     this.bridge.on(ToExtensionType.PlanExitResponse, (msg) => {
       const { mode } = msg.payload as PlanExitResponsePayload;

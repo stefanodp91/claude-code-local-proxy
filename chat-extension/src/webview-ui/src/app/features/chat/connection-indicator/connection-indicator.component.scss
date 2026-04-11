@@ -1,0 +1,30 @@
+.indicator { font-size: 11px; }
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.label { opacity: 0.75; }
+
+.connected {
+  .dot   { background: var(--c-success); }
+  .label { color: var(--c-success-text); }
+}
+
+.disconnected {
+  .dot   { background: var(--c-error); }
+  .label { color: var(--c-error-text); }
+}
+
+.checking {
+  .dot   { background: var(--c-warning); animation: pulse 1.2s ease-in-out infinite; }
+  .label { color: var(--c-warning-text); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}

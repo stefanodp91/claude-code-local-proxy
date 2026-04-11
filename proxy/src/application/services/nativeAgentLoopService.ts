@@ -303,17 +303,38 @@ export class NativeAgentLoopService {
         contentIndex++;
       }
 
-      if (rawToolCalls.length === 0) {
+      // Emit text block (if any) before tool calls — mirrors streaming order.
+      if (text.trim()) {
         emitTextBlock(text);
+      }
+
+      if (rawToolCalls.length === 0) {
         endMessage(text.length);
         return "handled";
       }
 
       messages.push(choice.message);
       for (const tc of rawToolCalls) {
+        const argsRaw = tc.function?.arguments ?? "{}";
+
+        // Non-streaming path: emit tool_use block here (streaming path emits
+        // them inside parseStreamingIteration at [DONE]).
+        writeSSE(sseEvent(SseEventType.ContentBlockStart, {
+          type: "content_block_start", index: contentIndex,
+          content_block: { type: "tool_use", id: tc.id, name: "workspace", input: {} },
+        }));
+        writeSSE(sseEvent(SseEventType.ContentBlockDelta, {
+          type: "content_block_delta", index: contentIndex,
+          delta: { type: "input_json_delta", partial_json: argsRaw },
+        }));
+        writeSSE(sseEvent(SseEventType.ContentBlockStop, {
+          type: "content_block_stop", index: contentIndex,
+        }));
+        contentIndex++;
+
         const { result, exitLoop } = await this.processToolCall(
           writeSSE, emitTextBlock, endMessage,
-          tc.id, tc.function?.arguments ?? "{}",
+          tc.id, argsRaw,
           workspaceCwd, openaiReq.messages, state,
         );
         if (exitLoop) return "handled";

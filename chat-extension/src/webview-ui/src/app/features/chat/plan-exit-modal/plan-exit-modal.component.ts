@@ -7,7 +7,7 @@
  * interaction lives inside the webview, via the centralized ModalShell.
  */
 import { Component, Input, Output, EventEmitter } from "@angular/core";
-import { CommonModule } from "@angular/common";
+import { TranslateModule } from "@ngx-translate/core";
 import type { PlanExitRequestPayload } from "@shared/message-protocol";
 import { ModalShellComponent } from "../../../shared/components/modal-shell/modal-shell.component";
 
@@ -19,7 +19,7 @@ export interface PlanExitDecision {
 @Component({
   selector: "app-plan-exit-modal",
   standalone: true,
-  imports: [CommonModule, ModalShellComponent],
+  imports: [TranslateModule, ModalShellComponent],
   templateUrl: "./plan-exit-modal.component.html",
   styleUrl: "./plan-exit-modal.component.scss",
 })

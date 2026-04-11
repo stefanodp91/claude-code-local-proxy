@@ -204,11 +204,22 @@ export interface LoadedModelInfo {
   /** Maximum context window supported by the model architecture. */
   maxContextLength: number;
 
-  /** Model capabilities as reported by LM Studio (e.g., ["tool_use"]). */
+  /** Model capabilities as reported by LM Studio (e.g., ["tool_use"]).
+   *  NOTE: this list is unreliable — LM Studio does not expose reasoning
+   *  support even for models that produce `reasoning_content`. Prefer the
+   *  probe-derived flags below (`supportsThinking`, `maxTools`). */
   capabilities: string[];
 
   /** Derived max_tokens cap: loadedContextLength / contextToMaxTokensRatio. */
   maxTokensCap: number;
+
+  /** Populated at model-change time by `ThinkingDetector`. Reflects an actual
+   *  probe of the model, not LM Studio's declared capabilities. */
+  supportsThinking?: boolean;
+
+  /** Populated by the second `ThinkingDetector` probe. True iff the model
+   *  honors `enable_thinking: false` and stops emitting reasoning_content. */
+  thinkingCanBeDisabled?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -275,8 +286,12 @@ export interface ModelCapabilities {
   /** Maximum number of tools the model accepts in a single request. */
   maxTools?: number;
 
-  // Future fields, e.g.:
-  // supportsThinking?: boolean;
+  /** Whether the model produces `reasoning_content` (thinking) when asked. */
+  supportsThinking?: boolean;
+
+  /** Whether `enable_thinking: false` actually suppresses reasoning on this
+   *  model. False for models that always think (e.g. QwQ, DeepSeek-R1). */
+  thinkingCanBeDisabled?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

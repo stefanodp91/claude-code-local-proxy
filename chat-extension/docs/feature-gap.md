@@ -4,7 +4,7 @@
 
 > **Scope note**: Claudio is not a one-to-one port of Claude Code. It is a VS Code client for the Anthropic↔OpenAI proxy running on top of local LLM models. However, many Claude Code features are feasible even with local models, and this document tracks which ones are already present, which are missing, and where the logic lives (Claudio itself or the shared proxy).
 
-> **Update this document** whenever a feature is implemented or its status changes. It reflects the code as of 2026-04-11.
+> **Update this document** whenever a feature is implemented or its status changes. It reflects the code as of 2026-04-12.
 
 ---
 
@@ -38,7 +38,9 @@ This means that some features "missing from the chat-extension" are actually **a
 | **Permission gate for destructive actions** | Proxy + Claudio | Proxy emits `event: tool_request_pending` SSE ([server.ts:432-434](../../proxy/src/infrastructure/server.ts#L432-L434)); Claudio intercepts in `chat-session.ts`, forwards to Angular modal; user clicks Allow/Deny; extension POSTs `/approve`. Documented in [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md). |
 | **Tool approval modal** | Claudio webview | [`tool-approval-modal/tool-approval-modal.component.ts`](../src/webview-ui/src/app/features/chat/tool-approval-modal/tool-approval-modal.component.ts) — standalone Angular component showing action icon, path/command/content preview, Deny/Allow buttons. |
 | **Auto-loaded project context** | Proxy | [server.ts:234-253](../../proxy/src/infrastructure/server.ts#L234-L253) — for `maxTools > 0`: injects `Working directory: <cwd>`; for `maxTools == 0`: adds full `buildWorkspaceContextSummary()` + `TEXTUAL_TOOL_MANUAL`. Documented in [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md). |
-| **Thinking blocks in streaming** | Proxy + Claudio | [server.ts:209-210](../../proxy/src/infrastructure/server.ts#L209-L210) enables the flag, [streamTranslator.ts:307-354](../../proxy/src/application/streamTranslator.ts#L307-L354) converts `reasoning_content` to Anthropic `thinking` blocks, [proxy-client.ts:54-56](../src/extension/proxy/proxy-client.ts#L54-L56) enables it on the client. Visible as an expandable panel in the chat. |
+| **Thinking blocks in streaming** | Proxy + Claudio | [streamTranslator.ts](../../proxy/src/application/streamTranslator.ts) converts `reasoning_content` to Anthropic `thinking` blocks. [proxy-client.ts:54-56](../src/extension/proxy/proxy-client.ts#L54-L56) enables it on the client. Visible as expandable panel in the chat. |
+| **Thinking detection per model** | Proxy | `ThinkingDetector` (dual probe): probe #1 verifica `supportsThinking`, probe #2 verifica `thinkingCanBeDisabled`. Cache in `model-cache.json`. `enable_thinking` è sempre esplicito (`true`/`false`) sul backend quando supportato — il disable è effettivo. |
+| **Thinking toggle UI** | Claudio webview | Icona `psychology` in `InputAreaComponent`: visibile se `supportsThinking`, disabilitata se `thinkingCanBeDisabled === false`, interattiva altrimenti. Tooltip contestuale. Sync via `SetEnableThinking` message. |
 | **Tool probe & dynamic management** | Proxy | `toolProbe.ts` binary search for `maxTools`; `toolManager.ts` dynamic selection + `UseTool` meta-tool for overflow; cache in `proxy/model-cache.json`. Documented in [proxy/docs/tool-management.md](../../proxy/docs/tool-management.md). |
 | **Rich slash commands** | Proxy + Claudio | [slashCommandInterceptor.ts](../../proxy/src/application/slashCommandInterceptor.ts) handles 13 proxy-side commands (`/status`, `/version`, `/commit`, `/diff`, `/review`, `/compact`, `/brief`, `/plan`, etc.); [chat-session.ts:347-403](../src/extension/chat-session.ts#L347-L403) handles client-side commands (`/files`, `/copy`, `/branch`, `/commit-push-pr`, etc.). Documented in [slash-commands.md](slash-commands.md). |
 | **Session persistence (partial)** | Claudio webview | [message-store.service.ts:223-232](../src/webview-ui/src/app/core/services/message-store.service.ts#L223-L232) uses `vscodeApi.setState`. **Works only within the webview lifecycle**: collapsing the sidebar or reloading VS Code resets the history. See the "ABSENT" section below. |
@@ -52,7 +54,7 @@ This means that some features "missing from the chat-extension" are actually **a
 | **Streaming during native agent loop iterations 1+** | FIXED in Path A | [server.ts:465+](../../proxy/src/infrastructure/server.ts#L465) — `runNativeAgentLoop` uses `stream: false` only for iteration 0 (guard); iterations 1+ use `stream: true` and forward text/thinking deltas in real time. |
 | **Automatic context compaction** | ABSENT | No token counting in Claudio or the proxy. The `conversation[]` ([chat-session.ts:131](../src/extension/chat-session.ts#L131)) grows unbounded. The proxy-side `/compact` is only a manual prompt enrich, not automatic. |
 | **Cross-session memory** | ABSENT | No `MEMORY.md` or persistent equivalent. The only cross-request state on the proxy side is the `promoted` map in ToolManager, in-memory and reset on restart. |
-| **Plan mode** | ABSENT | No mode toggle. The proxy-side `/plan` is only a prompt enrich ("think step by step"), not a real mode with tool gating. |
+| **Plan mode** | PRESENT | `PlanExitModalComponent` gestisce l'uscita da Plan mode; `SetAgentMode` message sincronizza lo stato Ask/Auto/Plan tra webview ed extension host; `ModeSelectorComponent` mostra un dropdown con dot colorati per ogni modalità. |
 | **Visualization of `tool_use` blocks in streaming** | PRESENT | Full pipeline in place: `StreamingService` parses `content_block_start/delta/stop` for `tool_use` blocks → `MessageStoreService` accumulates `rawInput` and parses JSON at completion → `MessageBubbleComponent` renders `<app-tool-use-block>` → `ToolUseBlockComponent` shows icon + label with pulsing animation while pending. |
 | **Hooks** | ABSENT | No event-driven hook system (`pre-tool-use`, `post-tool-use`, etc.). |
 | **Skills** | ABSENT | Slash commands are hardcoded in the two files above, not markdown-defined loaded at runtime. |
@@ -74,7 +76,8 @@ This means that some features "missing from the chat-extension" are actually **a
 | Write / edit / bash with approval | ✅ | ✅ (path B, model compliance required) |
 | Streaming of text tokens during loop | ✅ (iter 1+ streamed) | ✅ (all iterations streamed) |
 | Streaming of thinking blocks | ✅ (iter 1+ only) | ✅ (streamed, model-dependent) |
-| Visible `tool_use` blocks in chat UI | ❌ visualization not yet implemented | ❌ visualization not yet implemented |
+| Thinking toggle (enable/disable) | ✅ (se `thinkingCanBeDisabled=true`) | ✅ (se `thinkingCanBeDisabled=true`) |
+| Visible `tool_use` blocks in chat UI | ✅ (icona + label + pulsing dot) | ✅ (icona + label + pulsing dot) |
 | User approval modal for write/bash | ✅ | ✅ |
 
 The main remaining UI gap is the absence of real-time `tool_use` block rendering in the chat (the user sees the final answer but not the exploration steps).
@@ -94,13 +97,15 @@ All minimum-gap items are now implemented. The following secondary features are 
 
 The remaining gaps are full Claude Code parity items (lower priority):
 
-Everything else (skills, MCP, hooks, plan mode, sub-agents, todo, web tools, cross-session memory) is important for full parity with Claude Code, but lower priority.
+Everything else (skills, MCP, hooks, sub-agents, todo, web tools, cross-session memory) is important for full parity with Claude Code, but lower priority.
 
 ---
 
 ## 6. High-Level Roadmap (Remaining)
 
 **Full Claude Code parity** (lower priority): cross-session memory, hooks, skills, MCP, sub-agents, TodoWrite, web tools, worktree isolation.
+
+The main remaining UI gap (in the capability matrix above) is automatic context compaction — the conversation grows unbounded until the model's context is saturated.
 
 The full target architecture is in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md).
 

@@ -1,22 +1,28 @@
 {
   "chat.title": "Claudio",
-  "chat.placeholder": "Type a message...",
+  "chat.placeholder": "Message Claudio…",
   "chat.send": "Send",
   "chat.cancel": "Cancel",
   "chat.clearHistory": "Clear history",
   "chat.emptyState": "Start a conversation",
-  "chat.generating": "Generating...",
+  "chat.generating": "Generating",
   "chat.thinking": "Thinking...",
   "chat.thoughtFor": "Thought for {{seconds}}s",
   "chat.thought": "Thought",
   "chat.you": "You",
   "chat.assistant": "Assistant",
+  "chat.copy": "Copy",
+  "chat.copied": "✓ Copied",
+
   "status.connected": "Connected",
   "status.disconnected": "Disconnected",
   "status.checking": "Checking...",
+
   "metadata.tokens": "tokens",
+
   "error.proxyUnreachable": "Cannot reach proxy server",
   "error.streamFailed": "Stream failed",
+
   "slash.header": "Slash Commands",
   "slash.tooltip": "Slash commands",
   "slash.commands.branch": "Run git checkout -b in integrated terminal",
@@ -35,5 +41,45 @@
   "slash.commands.rewind": "Remove last exchange from history",
   "slash.commands.simplify": "Ask LLM to simplify the active editor file",
   "slash.commands.status": "Show proxy connection status and config",
-  "slash.commands.version": "Show extension version"
+  "slash.commands.version": "Show extension version",
+
+  "input.hint": "Enter to send · Shift+Enter for new line · Drag or paste files",
+  "input.attachFile": "Attach file",
+  "input.visionWarning": "Current model does not support images",
+  "input.thinking.alwaysOn": "Thinking always on for this model",
+  "input.thinking.enabled": "Thinking enabled — click to disable",
+  "input.thinking.disabled": "Thinking disabled — click to enable",
+
+  "mode.header": "Agent mode",
+  "mode.ask.name": "Ask before edits",
+  "mode.ask.desc": "Approves each change",
+  "mode.ask.short": "Ask",
+  "mode.auto.name": "Edit automatically",
+  "mode.auto.desc": "No approval required",
+  "mode.auto.short": "Auto",
+  "mode.plan.name": "Plan mode",
+  "mode.plan.desc": "Writes plan, no edits",
+  "mode.plan.short": "Plan",
+
+  "code.progress.creatingEnv": "Creating Python virtual environment…",
+  "code.progress.installingPackages": "Installing packages (matplotlib, numpy, pandas…)",
+  "code.progress.executing": "Executing Python code…",
+  "code.progress.running": "Running…",
+
+  "approval.header.create": "Create",
+  "approval.header.modify": "Modify",
+  "approval.header.edit": "Edit",
+  "approval.header.runCommand": "Run command",
+  "approval.header.allow": "Allow",
+  "approval.action.allowTurn": "Allow for this turn",
+  "approval.action.allowFile": "Always allow this file",
+  "approval.action.deny": "Deny",
+  "approval.action.allow": "Allow",
+
+  "planExit.title": "Exit <strong>Plan mode</strong>?",
+  "planExit.withPlan": "It looks like you want to execute the plan {{path}}. Which mode do you want to switch to?",
+  "planExit.noPlan": "You haven't written a plan file yet. Which mode do you want to switch to?",
+  "planExit.stay": "Stay in Plan mode",
+  "planExit.chooseAsk": "Ask before edits",
+  "planExit.chooseAuto": "Edit automatically"
 }

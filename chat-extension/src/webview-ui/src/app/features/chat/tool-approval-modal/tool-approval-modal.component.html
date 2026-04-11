@@ -3,11 +3,11 @@
     <div class="d-flex align-items-center gap-2 mb-3 modal-header">
       <span class="action-icon">{{ headerIcon }}</span>
       <span class="flex-grow-1 action-label">
-        {{ headerLabel }} <strong class="action-target">{{ headerTarget }}</strong>?
+        {{ headerLabelKey | translate }} <strong class="action-target">{{ headerTarget }}</strong>?
       </span>
     </div>
 
-    @if (request.action === 'bash') {
+    @if (request.action === ToolAction.Bash) {
       <div class="cmd-block p-2 rounded-2 border">
         <pre class="cmd-pre m-0">{{ request.params.cmd }}</pre>
       </div>
@@ -33,22 +33,26 @@
         type="button"
         class="btn-link-secondary"
         (click)="approveTurn()"
-        title="Auto-approve destructive actions for the rest of this turn"
-      >Allow for this turn</button>
-      @if (request.action !== 'bash') {
+        [title]="'approval.action.allowTurn' | translate"
+      >{{ "approval.action.allowTurn" | translate }}</button>
+      @if (request.action !== ToolAction.Bash) {
         <span class="text-muted">·</span>
         <button
           type="button"
           class="btn-link-secondary"
           (click)="approveFile()"
-          title="Always allow write/edit on this file for the rest of this session"
-        >Always allow this file</button>
+          [title]="'approval.action.allowFile' | translate"
+        >{{ "approval.action.allowFile" | translate }}</button>
       }
     </div>
 
     <div class="d-flex justify-content-end gap-2 mt-2">
-      <button class="btn-deny px-3 py-1 rounded-2" (click)="deny()">Deny</button>
-      <button class="btn-approve px-3 py-1 rounded-2 fw-semibold" (click)="approveOnce()">Allow</button>
+      <button class="btn-deny px-3 py-1 rounded-2" (click)="deny()">
+        {{ "approval.action.deny" | translate }}
+      </button>
+      <button class="btn-approve px-3 py-1 rounded-2 fw-semibold" (click)="approveOnce()">
+        {{ "approval.action.allow" | translate }}
+      </button>
     </div>
   }
 </app-modal-shell>

@@ -10,7 +10,7 @@
   "model.maxTokensCap": "max_tokens cap: {{cap}}",
   "model.fetchFailed": "Could not fetch model info — using default max_tokens cap ({{fallback}})",
   "model.changed": "Model changed: {{from}} → {{to}}. Re-initializing tools…",
-  "model.reloaded": "Model reloaded — maxTools={{max}}",
+  "model.reloaded": "Model reloaded — maxTools={{max}} supportsThinking={{thinking}}",
 
   "probe.start": "Probing tool limit...",
   "probe.noSupport": "Model does not support tool calling",
@@ -19,6 +19,9 @@
   "probe.detected": "Max tools detected: {{max}}",
   "probe.override": "Max tools: {{max}} (from MAX_TOOLS env)",
   "probe.cached": "Max tools: {{max}} (from model cache)",
+
+  "thinkingProbe.detected": "Thinking probe: supported={{supported}}, canBeDisabled={{canBeDisabled}}",
+  "thinkingProbe.cached": "Thinking: supported={{supported}}, canBeDisabled={{canBeDisabled}} (from model cache)",
 
   "tools.filtered": "Tools: {{from}}→{{to}} (core: {{coreList}} + UseTool)",
   "tools.noFiltering": "Tools: {{count}} (no filtering needed)",

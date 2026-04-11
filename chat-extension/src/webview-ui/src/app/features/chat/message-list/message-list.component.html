@@ -1,0 +1,16 @@
+<div class="message-list" [appAutoScroll]="true">
+  @if (messages.length === 0) {
+    <div class="d-flex flex-column align-items-center justify-content-center h-100 empty-state">
+      <span class="empty-icon">✦</span>
+      <p class="mt-2 small">{{ 'chat.emptyState' | translate }}</p>
+    </div>
+  }
+  @for (msg of messages; track msg.id) {
+    <app-message-bubble [message]="msg" (runCode)="runCode.emit($event)" />
+  }
+  @if (isPending) {
+    <div class="typing-indicator">
+      <span></span><span></span><span></span>
+    </div>
+  }
+</div>

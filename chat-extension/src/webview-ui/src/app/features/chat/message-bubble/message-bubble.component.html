@@ -1,0 +1,44 @@
+<div class="msg-row" [class.msg-row--user]="isUser">
+  <div class="bubble" [class.bubble--user]="isUser" [class.bubble--assistant]="!isUser">
+    <div class="bubble-content">
+      @for (block of message.contentBlocks; track $index) {
+        @if (block.type === thinkingType) {
+          <app-thinking-block [block]="asThinking(block)" />
+        } @else if (block.type === toolUseType) {
+          <app-tool-use-block [block]="asToolUse(block)" />
+        } @else if (block.type === imageType) {
+          <img
+            class="attachment-image"
+            [src]="'data:' + asImage(block).mimeType + ';base64,' + asImage(block).data"
+            [alt]="asImage(block).name"
+            loading="lazy"
+            (click)="openLightbox(asImage(block))" />
+        } @else {
+          <div class="md-content" [innerHTML]="asText(block).text | markdown"></div>
+        }
+      }
+    </div>
+    @if (!isUser) {
+      <div class="bubble-footer d-flex align-items-center justify-content-between gap-2 mt-1">
+        <app-message-metadata [message]="message" />
+        <button
+          class="copy-bubble-btn"
+          [class.copy-bubble-btn--copied]="bubbleCopied"
+          (click)="copyBubble()">
+          {{ (bubbleCopied ? 'chat.copied' : 'chat.copy') | translate }}
+        </button>
+      </div>
+    }
+  </div>
+</div>
+
+@if (lightboxSrc) {
+  <div class="lightbox-overlay" (click)="closeLightbox()">
+    <button class="lightbox-close d-flex align-items-center justify-content-center" (click)="closeLightbox()">×</button>
+    <img
+      class="lightbox-img"
+      [src]="lightboxSrc"
+      [alt]="lightboxAlt"
+      (click)="$event.stopPropagation()" />
+  </div>
+}

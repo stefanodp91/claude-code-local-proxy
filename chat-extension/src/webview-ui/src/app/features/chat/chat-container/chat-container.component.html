@@ -1,0 +1,37 @@
+<div class="chat-layout d-flex flex-column flex-grow-1">
+  <app-toolbar
+    [connectionStatus]="connectionStatus"
+    (clearHistory)="onClearHistory()" />
+  <app-notification-banner
+    [notifications]="notifications()"
+    (dismiss)="onNotificationDismiss($event)" />
+  <app-message-list [messages]="store.messages()" [isPending]="store.isPending()" (runCode)="onRunCode($event)" />
+  @if (store.codeStatus()) {
+    <div class="code-execution-status d-flex align-items-center gap-2 border-top">
+      <div class="exec-dots d-flex gap-1">
+        <span></span><span></span><span></span>
+      </div>
+      <span class="exec-text">{{ store.codeStatus() }}</span>
+    </div>
+  }
+  <app-input-area
+    #inputArea
+    [isStreaming]="store.isStreaming() || store.isPending()"
+    [slashCommands]="availableCommands()"
+    [supportsVision]="supportsVision()"
+    [thinkingSupported]="thinkingSupported()"
+    [thinkingCanBeToggled]="thinkingCanBeToggled()"
+    [enableThinking]="enableThinking()"
+    [agentMode]="agentMode()"
+    (sendMsg)="onSendMessage($event)"
+    (cancel)="onCancel()"
+    (requestFileRead)="onRequestFileRead($event)"
+    (agentModeChange)="onSetAgentMode($event)"
+    (enableThinkingChange)="onSetEnableThinking($event)" />
+</div>
+<app-tool-approval-modal
+  [request]="pendingApproval()"
+  (decision)="onApprovalDecision($event)" />
+<app-plan-exit-modal
+  [request]="pendingPlanExit()"
+  (decision)="onPlanExitDecision($event)" />

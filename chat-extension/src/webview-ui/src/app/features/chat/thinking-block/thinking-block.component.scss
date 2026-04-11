@@ -1,0 +1,48 @@
+.thinking-wrap {
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.thinking-toggle {
+  padding: 8px 12px;
+  background: var(--c-overlay-subtle);
+  border: none;
+  color: var(--c-text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  transition: background 0.15s;
+
+  &:hover { background: var(--c-overlay-soft); }
+}
+
+.think-icon {
+  font-size: 15px;
+  width: 15px;
+  height: 15px;
+  color: var(--c-thinking);
+
+  &.spin { animation: spin 1.8s linear infinite; }
+}
+
+.chevron {
+  font-size: 16px;
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s;
+
+  &.open { transform: rotate(180deg); }
+}
+
+.thinking-body {
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--c-text-dim);
+  max-height: 360px;
+  overflow-y: auto;
+  border-top: 1px solid var(--c-border);
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }

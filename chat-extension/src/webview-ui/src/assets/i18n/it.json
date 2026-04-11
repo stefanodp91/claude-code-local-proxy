@@ -1,22 +1,28 @@
 {
   "chat.title": "Claudio",
-  "chat.placeholder": "Scrivi un messaggio...",
+  "chat.placeholder": "Scrivi a Claudio…",
   "chat.send": "Invia",
   "chat.cancel": "Annulla",
   "chat.clearHistory": "Cancella cronologia",
   "chat.emptyState": "Inizia una conversazione",
-  "chat.generating": "Generando...",
+  "chat.generating": "Generando",
   "chat.thinking": "Pensando...",
   "chat.thoughtFor": "Ha pensato per {{seconds}}s",
   "chat.thought": "Pensato",
   "chat.you": "Tu",
   "chat.assistant": "Assistente",
+  "chat.copy": "Copia",
+  "chat.copied": "✓ Copiato",
+
   "status.connected": "Connesso",
   "status.disconnected": "Disconnesso",
   "status.checking": "Verifica...",
+
   "metadata.tokens": "token",
+
   "error.proxyUnreachable": "Impossibile raggiungere il proxy",
   "error.streamFailed": "Streaming fallito",
+
   "slash.header": "Comandi slash",
   "slash.tooltip": "Comandi slash",
   "slash.commands.branch": "Esegui git checkout -b nel terminale integrato",
@@ -35,5 +41,45 @@
   "slash.commands.rewind": "Rimuove l'ultimo scambio dalla cronologia",
   "slash.commands.simplify": "Chiedi all'LLM di semplificare il file attivo",
   "slash.commands.status": "Mostra stato connessione e config del proxy",
-  "slash.commands.version": "Mostra la versione dell'estensione"
+  "slash.commands.version": "Mostra la versione dell'estensione",
+
+  "input.hint": "Invio per inviare · Shift+Invio per nuova riga · Trascina o incolla file",
+  "input.attachFile": "Allega file",
+  "input.visionWarning": "Il modello corrente non supporta le immagini",
+  "input.thinking.alwaysOn": "Thinking sempre attivo per questo modello",
+  "input.thinking.enabled": "Thinking attivo — clicca per disabilitare",
+  "input.thinking.disabled": "Thinking disattivato — clicca per abilitare",
+
+  "mode.header": "Modalità agente",
+  "mode.ask.name": "Chiedi prima di modificare",
+  "mode.ask.desc": "Approva ogni modifica",
+  "mode.ask.short": "Ask",
+  "mode.auto.name": "Modifica automaticamente",
+  "mode.auto.desc": "Nessuna approvazione richiesta",
+  "mode.auto.short": "Auto",
+  "mode.plan.name": "Modalità piano",
+  "mode.plan.desc": "Scrive il piano, nessuna modifica",
+  "mode.plan.short": "Plan",
+
+  "code.progress.creatingEnv": "Creazione ambiente virtuale Python…",
+  "code.progress.installingPackages": "Installazione pacchetti (matplotlib, numpy, pandas…)",
+  "code.progress.executing": "Esecuzione codice Python…",
+  "code.progress.running": "Esecuzione in corso…",
+
+  "approval.header.create": "Crea",
+  "approval.header.modify": "Modifica",
+  "approval.header.edit": "Modifica",
+  "approval.header.runCommand": "Esegui comando",
+  "approval.header.allow": "Consenti",
+  "approval.action.allowTurn": "Consenti per questo turno",
+  "approval.action.allowFile": "Consenti sempre questo file",
+  "approval.action.deny": "Rifiuta",
+  "approval.action.allow": "Consenti",
+
+  "planExit.title": "Uscire dalla <strong>modalità Piano</strong>?",
+  "planExit.withPlan": "Sembra che tu voglia eseguire il piano {{path}}. A quale modalità vuoi passare?",
+  "planExit.noPlan": "Non hai ancora scritto un file di piano. A quale modalità vuoi passare?",
+  "planExit.stay": "Rimani in modalità Piano",
+  "planExit.chooseAsk": "Chiedi prima di modificare",
+  "planExit.chooseAuto": "Modifica automaticamente"
 }

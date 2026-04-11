@@ -1,0 +1,43 @@
+<div class="mode-selector" (click)="$event.stopPropagation()">
+  @if (showPanel) {
+    <div class="mode-panel border rounded-3">
+      <div class="mode-panel-header">{{ 'mode.header' | translate }}</div>
+
+      <button class="mode-item" [class.mode-item--active]="agentMode === modeAsk" (click)="select(modeAsk)">
+        <span class="mode-dot mode-dot--ask"></span>
+        <span class="mode-item-body">
+          <span class="mode-item-name">{{ 'mode.ask.name' | translate }}</span>
+          <span class="mode-item-desc">{{ 'mode.ask.desc' | translate }}</span>
+        </span>
+        @if (agentMode === modeAsk) { <mat-icon class="mode-item-check">check</mat-icon> }
+      </button>
+
+      <button class="mode-item" [class.mode-item--active]="agentMode === modeAuto" (click)="select(modeAuto)">
+        <span class="mode-dot mode-dot--auto"></span>
+        <span class="mode-item-body">
+          <span class="mode-item-name">{{ 'mode.auto.name' | translate }}</span>
+          <span class="mode-item-desc">{{ 'mode.auto.desc' | translate }}</span>
+        </span>
+        @if (agentMode === modeAuto) { <mat-icon class="mode-item-check">check</mat-icon> }
+      </button>
+
+      <button class="mode-item" [class.mode-item--active]="agentMode === modePlan" (click)="select(modePlan)">
+        <span class="mode-dot mode-dot--plan"></span>
+        <span class="mode-item-body">
+          <span class="mode-item-name">{{ 'mode.plan.name' | translate }}</span>
+          <span class="mode-item-desc">{{ 'mode.plan.desc' | translate }}</span>
+        </span>
+        @if (agentMode === modePlan) { <mat-icon class="mode-item-check">check</mat-icon> }
+      </button>
+    </div>
+  }
+
+  <button
+    class="mode-btn"
+    [class.mode-btn--open]="showPanel"
+    (click)="toggle()">
+    <span class="mode-dot mode-dot--{{ agentMode }}"></span>
+    <span class="mode-label">{{ modeShortKey | translate }}</span>
+    <mat-icon class="mode-chevron" [class.mode-chevron--open]="showPanel">expand_less</mat-icon>
+  </button>
+</div>

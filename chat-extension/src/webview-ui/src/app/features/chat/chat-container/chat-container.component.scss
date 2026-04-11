@@ -1,0 +1,40 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.chat-layout {
+  min-height: 0;
+  background: var(--c-bg);
+}
+
+// ── Code execution status bar ─────────────────────────────────────────────────
+
+.code-execution-status {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--c-text-muted);
+  background: var(--c-bg);
+  border-color: var(--c-border) !important;
+  flex-shrink: 0;
+}
+
+.exec-dots span {
+  display: block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-text-muted);
+  animation: exec-bounce 1.2s ease-in-out infinite;
+
+  &:nth-child(2) { animation-delay: 0.2s; }
+  &:nth-child(3) { animation-delay: 0.4s; }
+}
+
+@keyframes exec-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%            { transform: translateY(-4px); opacity: 1; }
+}

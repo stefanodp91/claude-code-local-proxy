@@ -41,6 +41,7 @@ import { SystemClock } from "./adapters/systemClock";
 import { SseApprovalInteractor } from "./adapters/sseApprovalInteractor";
 import { loadOldContent, checkAutoApprove } from "./adapters/autoApproveConfig";
 import { ToolLimitDetector } from "./toolLimitDetector";
+import { ThinkingDetector } from "./thinkingDetector";
 import type { PlanFileRepositoryPort } from "../domain/ports";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -114,6 +115,25 @@ export class ProxyServer {
       this.logger,
     );
     this.maxTools    = await detector.detect(this.modelInfo);
+
+    // Probe thinking/reasoning support (cache-first). Populates
+    // modelInfo.supportsThinking so downstream code can gate enable_thinking
+    // and the extension can show/hide the thinking toggle.
+    const thinkingDetector = new ThinkingDetector(
+      {
+        targetUrl:      this.config.targetUrl,
+        probeMaxTokens: this.config.probeMaxTokens,
+        probeTimeout:   this.config.probeTimeout,
+      },
+      this.modelCache,
+      this.logger,
+    );
+    const thinkingCaps = await thinkingDetector.detect(this.modelInfo);
+    if (this.modelInfo) {
+      this.modelInfo.supportsThinking      = thinkingCaps.supportsThinking;
+      this.modelInfo.thinkingCanBeDisabled = thinkingCaps.thinkingCanBeDisabled;
+    }
+
     this.toolManager = new ToolManager(this.maxTools, {
       coreTools:            this.config.coreTools,
       scoreCoreTools:       this.config.scoreCoreTools,
@@ -175,7 +195,10 @@ export class ProxyServer {
     this.logModelInfo();
     try {
       await this.initializeTools();
-      this.logger.info(t("model.reloaded", { max: this.maxTools }));
+      this.logger.info(t("model.reloaded", {
+        max:      this.maxTools,
+        thinking: String(this.modelInfo?.supportsThinking ?? false),
+      }));
     } finally {
       this.reinitializing = false;
     }
@@ -267,7 +290,18 @@ export class ProxyServer {
         compatibilityType: this.modelInfo.compatibilityType,
         loadedContextLength: this.modelInfo.loadedContextLength,
         maxContextLength: this.modelInfo.maxContextLength,
-        maxTokensCap: this.modelInfo.maxTokensCap, capabilities: this.modelInfo.capabilities,
+        maxTokensCap: this.modelInfo.maxTokensCap,
+        // Probe-derived capabilities (not LM Studio's unreliable declared list).
+        // supportsTools          — tool-limit probe succeeded (maxTools > 0)
+        // supportsThinking       — first thinking probe saw reasoning_content
+        // thinkingCanBeDisabled  — second thinking probe confirmed that
+        //                          `enable_thinking: false` suppresses reasoning.
+        //                          The extension only shows the thinking toggle
+        //                          when both supportsThinking AND
+        //                          thinkingCanBeDisabled are true.
+        supportsTools:         this.maxTools > 0,
+        supportsThinking:      this.modelInfo.supportsThinking ?? false,
+        thinkingCanBeDisabled: this.modelInfo.thinkingCanBeDisabled ?? false,
       } : null,
     };
   }

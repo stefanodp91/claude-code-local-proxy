@@ -43,6 +43,7 @@ export enum ToExtensionType {
   ReadFiles = "readFiles",
   ToolApprovalResponse = "toolApprovalResponse",
   SetAgentMode = "setAgentMode",
+  SetEnableThinking = "setEnableThinking",
   PlanExitResponse = "planExitResponse",
   NotificationDismissed = "notificationDismissed",
 }
@@ -219,6 +220,13 @@ export interface SetAgentModePayload {
   mode: AgentMode;
 }
 
+/** Sent from webview → extension to toggle thinking for subsequent messages.
+ *  Session-scoped — the extension updates `config.enableThinking` in memory,
+ *  and the next call to `sendMessage` will (or won't) include `thinking.type`. */
+export interface SetEnableThinkingPayload {
+  enabled: boolean;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Plan-Mode Exit Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -285,6 +293,7 @@ export interface ToExtensionMessage {
     | SlashCommandPayload
     | ToolApprovalResponsePayload
     | SetAgentModePayload
+    | SetEnableThinkingPayload
     | PlanExitResponsePayload
     | NotificationDismissedPayload
     | Record<string, any>;

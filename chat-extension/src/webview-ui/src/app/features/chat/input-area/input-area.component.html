@@ -1,0 +1,116 @@
+<div class="input-shell">
+  @if (showMenu) {
+    <div class="command-menu border rounded-3">
+      <div class="command-menu-header">{{ 'slash.header' | translate }}</div>
+      @for (cmd of slashCommands; track cmd.name) {
+        <button class="command-item" (click)="selectCommand(cmd.name)">
+          <span class="command-item-name">{{ cmd.name }}</span>
+          <span class="command-item-desc">{{ cmd.descriptionKey | translate }}</span>
+        </button>
+      }
+    </div>
+  }
+
+  <div
+    class="input-box rounded-3"
+    [class.input-box--focused]="focused"
+    [class.input-box--dragover]="isDragOver"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave($event)"
+    (drop)="onDrop($event)">
+
+    @if (attachments.length > 0) {
+      <div class="attachment-chips d-flex flex-wrap gap-2 py-1">
+        @for (att of attachments; track att.name + att.size) {
+          <div class="attachment-chip d-inline-flex align-items-center gap-1 border rounded-2">
+            @if (isImage(att)) {
+              <img
+                [src]="'data:' + att.mimeType + ';base64,' + att.data"
+                class="chip-thumb rounded-1"
+                [alt]="att.name" />
+            } @else {
+              <mat-icon class="chip-icon">insert_drive_file</mat-icon>
+            }
+            <span class="chip-name" [title]="att.name">{{ att.name }}</span>
+            <button class="chip-remove" (click)="removeAttachment(att)">×</button>
+          </div>
+        }
+      </div>
+    }
+
+    <textarea
+      #textarea
+      class="input-textarea"
+      [(ngModel)]="inputText"
+      [placeholder]="'chat.placeholder' | translate"
+      [disabled]="isStreaming"
+      rows="1"
+      (keydown)="onKeydown($event)"
+      (focus)="focused = true"
+      (blur)="focused = false"
+      (input)="autoResize()"
+      (paste)="onPaste($event)"
+    ></textarea>
+
+    <div class="input-bottom-bar d-flex align-items-center gap-1 pt-1">
+      <!-- Attach file -->
+      <button
+        class="bottom-btn attach-btn"
+        [matTooltip]="'input.attachFile' | translate"
+        (click)="attachInput.click()">
+        <mat-icon>add</mat-icon>
+      </button>
+      <input #attachInput type="file" multiple class="d-none" (change)="onFileInputChange($event)" />
+
+      <!-- Slash commands -->
+      <button
+        class="bottom-btn slash-btn"
+        [class.slash-btn--active]="showMenu"
+        [matTooltip]="'slash.tooltip' | translate"
+        (click)="toggleMenu(); $event.stopPropagation()">
+        <span class="slash-icon">/</span>
+      </button>
+
+      <span class="flex-grow-1"></span>
+
+      <!-- Thinking toggle -->
+      @if (thinkingSupported) {
+        <button
+          class="bottom-btn thinking-btn"
+          [class.thinking-btn--active]="enableThinking"
+          [disabled]="!thinkingCanBeToggled"
+          [matTooltip]="!thinkingCanBeToggled
+            ? ('input.thinking.alwaysOn' | translate)
+            : ((enableThinking ? 'input.thinking.enabled' : 'input.thinking.disabled') | translate)"
+          (click)="toggleThinking(); $event.stopPropagation()">
+          <mat-icon>psychology</mat-icon>
+        </button>
+      }
+
+      <!-- Mode selector -->
+      <app-mode-selector
+        [agentMode]="agentMode"
+        (agentModeChange)="agentModeChange.emit($event)" />
+
+      <!-- Send / Stop -->
+      @if (isStreaming) {
+        <button class="bottom-btn send-btn stop-btn" [matTooltip]="'chat.cancel' | translate" (click)="cancel.emit()">
+          <mat-icon>stop</mat-icon>
+        </button>
+      } @else {
+        <button
+          class="bottom-btn send-btn"
+          [matTooltip]="'chat.send' | translate"
+          [disabled]="!inputText.trim() && attachments.length === 0"
+          (click)="sendMessage()">
+          <mat-icon>arrow_upward</mat-icon>
+        </button>
+      }
+    </div>
+  </div>
+
+  <p class="input-hint small">{{ 'input.hint' | translate }}</p>
+  @if (visionWarning) {
+    <p class="vision-warning small">{{ 'input.visionWarning' | translate }}</p>
+  }
+</div>

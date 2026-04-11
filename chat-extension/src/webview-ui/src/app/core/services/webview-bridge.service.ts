@@ -127,6 +127,32 @@ export class WebviewBridgeService implements OnDestroy {
     );
   }
 
+  /** Emits true when the current model produces reasoning_content at all.
+   *  Used to decide whether thinking should be active (sent to proxy).
+   *  Distinct from onThinkingToggleAvailable: a model can support thinking
+   *  but not honor the disable flag — in that case thinking is always on. */
+  onSupportsThinking(): Observable<boolean> {
+    return this.messages$.pipe(
+      filter((msg) => msg.type === ToWebviewType.ConfigUpdate),
+      map((msg) => Boolean((msg.payload as any)?.modelInfo?.supportsThinking)),
+      distinctUntilChanged(),
+    );
+  }
+
+  /** Emits true when the current model has thinking AND honors the disable
+   *  flag — i.e. the UI toggle should be shown and actually has an effect
+   *  when clicked. Models that always think (e.g. QwQ) return false here. */
+  onThinkingToggleAvailable(): Observable<boolean> {
+    return this.messages$.pipe(
+      filter((msg) => msg.type === ToWebviewType.ConfigUpdate),
+      map((msg) => {
+        const m = (msg.payload as any)?.modelInfo;
+        return Boolean(m?.supportsThinking && m?.thinkingCanBeDisabled);
+      }),
+      distinctUntilChanged(),
+    );
+  }
+
   /** Emits whenever the proxy's agent mode changes (ask | auto | plan). */
   onAgentMode(): Observable<AgentMode> {
     return this.messages$.pipe(

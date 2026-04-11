@@ -1,0 +1,11 @@
+<header class="toolbar d-flex align-items-center px-3">
+  <span class="toolbar-title">{{ 'chat.title' | translate }}</span>
+  <span class="flex-grow-1"></span>
+  <app-connection-indicator [status]="connectionStatus" />
+  <button
+    class="icon-btn ms-1"
+    [matTooltip]="'chat.clearHistory' | translate"
+    (click)="clearHistory.emit()">
+    <mat-icon>delete_outline</mat-icon>
+  </button>
+</header>

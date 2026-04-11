@@ -1,0 +1,7 @@
+<div class="tool-use-wrap" [class.tool-use-wrap--pending]="!block.isComplete">
+  <span class="tool-use-icon" aria-hidden="true">{{ icon }}</span>
+  <code class="tool-use-label">{{ label }}</code>
+  @if (!block.isComplete) {
+    <span class="tool-use-dot" aria-hidden="true"></span>
+  }
+</div>

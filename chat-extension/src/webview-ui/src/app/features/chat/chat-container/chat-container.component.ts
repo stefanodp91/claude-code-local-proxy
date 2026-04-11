@@ -1,6 +1,6 @@
-import { Component, OnInit, OnDestroy, signal, ViewChild } from "@angular/core";
-import { CommonModule } from "@angular/common";
+import { Component, OnInit, OnDestroy, signal, ViewChild, inject } from "@angular/core";
 import { Subscription } from "rxjs";
+import { TranslateService } from "@ngx-translate/core";
 import { ToolbarComponent } from "../toolbar/toolbar.component";
 import { MessageListComponent } from "../message-list/message-list.component";
 import { InputAreaComponent, type SendPayload } from "../input-area/input-area.component";
@@ -12,6 +12,7 @@ import { WebviewBridgeService } from "../../../core/services/webview-bridge.serv
 import { StreamingService } from "../../../core/services/streaming.service";
 import { MessageRole } from "../../../core/enums/message-role.enum";
 import { ContentBlockType } from "../../../core/enums/content-block-type.enum";
+import { AgentMode } from "../../../core/enums/agent-mode.enum";
 import type { TextBlock } from "../../../core/models/content-block.model";
 import {
   ToExtensionType,
@@ -22,23 +23,28 @@ import {
   type CodeResultPayload,
   type CodeProgressPayload,
   type CodeProgressPhase,
-  type Attachment,
   type ReadFilesPayload,
   type ToolApprovalRequestPayload,
   type ToolApprovalResponsePayload,
   type SetAgentModePayload,
-  type AgentMode,
+  type SetEnableThinkingPayload,
   type PlanExitRequestPayload,
   type PlanExitResponsePayload,
   type NotificationPayload,
   type NotificationDismissedPayload,
 } from "@shared/message-protocol";
 
+/** i18n key per ogni fase di esecuzione del codice Python. */
+const CODE_PROGRESS_KEYS: Record<CodeProgressPhase, string> = {
+  creating_env:       "code.progress.creatingEnv",
+  installing_packages: "code.progress.installingPackages",
+  executing:          "code.progress.executing",
+};
+
 @Component({
   selector: "app-chat-container",
   standalone: true,
   imports: [
-    CommonModule,
     ToolbarComponent,
     MessageListComponent,
     InputAreaComponent,
@@ -46,104 +52,32 @@ import {
     PlanExitModalComponent,
     NotificationBannerComponent,
   ],
-  template: `
-    <div class="chat-layout">
-      <app-toolbar
-        [connectionStatus]="connectionStatus"
-        (clearHistory)="onClearHistory()" />
-      <app-notification-banner
-        [notifications]="notifications()"
-        (dismiss)="onNotificationDismiss($event)" />
-      <app-message-list [messages]="store.messages()" [isPending]="store.isPending()" (runCode)="onRunCode($event)" />
-      @if (store.codeStatus()) {
-        <div class="code-execution-status">
-          <div class="exec-dots">
-            <span></span><span></span><span></span>
-          </div>
-          <span class="exec-text">{{ store.codeStatus() }}</span>
-        </div>
-      }
-      <app-input-area
-        #inputArea
-        [isStreaming]="store.isStreaming() || store.isPending()"
-        [slashCommands]="availableCommands()"
-        [supportsVision]="supportsVision()"
-        [agentMode]="agentMode()"
-        (sendMsg)="onSendMessage($event)"
-        (cancel)="onCancel()"
-        (requestFileRead)="onRequestFileRead($event)"
-        (agentModeChange)="onSetAgentMode($event)" />
-    </div>
-    <app-tool-approval-modal
-      [request]="pendingApproval()"
-      (decision)="onApprovalDecision($event)" />
-    <app-plan-exit-modal
-      [request]="pendingPlanExit()"
-      (decision)="onPlanExitDecision($event)" />
-  `,
-  styles: [`
-    :host {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      min-height: 0;
-      overflow: hidden;
-    }
-    .chat-layout {
-      display: flex;
-      flex-direction: column;
-      flex: 1;
-      min-height: 0;
-      background: var(--c-bg);
-    }
-    .code-execution-status {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 6px 16px;
-      font-size: 12px;
-      color: var(--c-text-muted);
-      background: var(--c-bg);
-      border-top: 1px solid var(--c-border);
-      flex-shrink: 0;
-    }
-    .exec-dots {
-      display: flex;
-      gap: 4px;
-    }
-    .exec-dots span {
-      width: 5px;
-      height: 5px;
-      border-radius: 50%;
-      background: var(--c-text-muted);
-      animation: exec-bounce 1.2s ease-in-out infinite;
-    }
-    .exec-dots span:nth-child(2) { animation-delay: 0.2s; }
-    .exec-dots span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes exec-bounce {
-      0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-      30%            { transform: translateY(-4px); opacity: 1; }
-    }
-  `],
+  templateUrl: "./chat-container.component.html",
+  styleUrl: "./chat-container.component.scss",
 })
 export class ChatContainerComponent implements OnInit, OnDestroy {
   @ViewChild("inputArea") inputAreaRef!: InputAreaComponent;
 
-  connectionStatus = ConnectionStatus.Checking;
-  availableCommands  = signal<SlashCommand[]>([]);
-  supportsVision     = signal(false);
-  pendingApproval    = signal<ToolApprovalRequestPayload | null>(null);
-  pendingPlanExit    = signal<PlanExitRequestPayload | null>(null);
-  notifications      = signal<NotificationPayload[]>([]);
-  agentMode          = signal<AgentMode>("ask");
+  connectionStatus     = ConnectionStatus.Checking;
+  availableCommands    = signal<SlashCommand[]>([]);
+  supportsVision       = signal(false);
+  thinkingSupported    = signal(false);
+  thinkingCanBeToggled = signal(false);
+  enableThinking       = signal(true);
+  pendingApproval      = signal<ToolApprovalRequestPayload | null>(null);
+  pendingPlanExit      = signal<PlanExitRequestPayload | null>(null);
+  notifications        = signal<NotificationPayload[]>([]);
+  agentMode            = signal<AgentMode>(AgentMode.Ask);
 
   private readonly subscriptions = new Subscription();
 
   constructor(
     readonly store: MessageStoreService,
     private readonly bridge: WebviewBridgeService,
-    private readonly streaming: StreamingService,
-  ) {}
+    private readonly translate: TranslateService,
+  ) {
+    inject(StreamingService); // activate streaming subscriptions (side-effect only)
+  }
 
   ngOnInit(): void {
     this.subscriptions.add(
@@ -152,42 +86,32 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
       }),
     );
 
-    // Update slash command menu when the proxy sends the registry
     this.subscriptions.add(
       this.bridge.onSlashCommands().subscribe((cmds) => {
         this.availableCommands.set(cmds);
       }),
     );
 
-    // Handle results from client-side slash commands (extension host response)
     this.subscriptions.add(
       this.bridge.onSlashCommandResult().subscribe((result) => {
         this.store.addSystemMessage(result.content);
       }),
     );
 
-    // Restore conversation history when switching views (HistoryRestore from extension)
     this.subscriptions.add(
       this.bridge.onHistoryRestore().subscribe((payload) => {
-        if (payload.messages.length > 0) {
-          this.store.restoreHistory(payload.messages);
-        }
+        if (payload.messages.length > 0) this.store.restoreHistory(payload.messages);
       }),
     );
 
-    // Handle Python code execution progress phases
-    const progressLabels: Record<CodeProgressPhase, string> = {
-      creating_env: "Creazione ambiente virtuale Python…",
-      installing_packages: "Installazione pacchetti (matplotlib, numpy, pandas…)",
-      executing: "Esecuzione codice Python…",
-    };
+    // Code execution progress: translate the phase key via TranslateService.
     this.subscriptions.add(
       this.bridge.onCodeProgress().subscribe((p: CodeProgressPayload) => {
-        this.store.setCodeStatus(progressLabels[p.phase] ?? "Esecuzione in corso…");
+        const key = CODE_PROGRESS_KEYS[p.phase] ?? "code.progress.running";
+        this.store.setCodeStatus(this.translate.instant(key));
       }),
     );
 
-    // Handle Python code execution results
     this.subscriptions.add(
       this.bridge.onCodeResult().subscribe((result: CodeResultPayload) => {
         this.store.setCodeStatus(null);
@@ -198,42 +122,51 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
         } else if (result.type === "text") {
           this.store.addSystemMessage("```\n" + result.data + "\n```");
         } else {
-          this.store.addSystemMessage(`> ⚠ **Errore:** \`${result.data}\``);
+          this.store.addSystemMessage(`> ⚠ **Error:** \`${result.data}\``);
         }
       }),
     );
 
-    // Track vision support from model capabilities
     this.subscriptions.add(
       this.bridge.onSupportsVision().subscribe((v) => this.supportsVision.set(v)),
     );
 
-    // Handle files read by extension host (VS Code Explorer drag)
+    // Toggle visibility: shown when model supports thinking (even if not toggleable).
+    this.subscriptions.add(
+      this.bridge.onSupportsThinking().subscribe((v) => {
+        this.thinkingSupported.set(v);
+        this.enableThinking.set(v);
+      }),
+    );
+
+    // Toggle clickability: only interactive when the model honors enable_thinking:false.
+    this.subscriptions.add(
+      this.bridge.onThinkingToggleAvailable().subscribe((v) => {
+        this.thinkingCanBeToggled.set(v);
+      }),
+    );
+
     this.subscriptions.add(
       this.bridge.onFilesRead().subscribe((payload) => {
         this.inputAreaRef?.addAttachments(payload.attachments);
       }),
     );
 
-    // Show approval modal when the proxy needs user confirmation for a destructive action
     this.subscriptions.add(
       this.bridge.onToolApprovalRequest().subscribe((req) => {
         this.pendingApproval.set(req);
       }),
     );
 
-    // Show plan-exit modal when the model calls `workspace(action="exit_plan_mode")`
     this.subscriptions.add(
       this.bridge.onPlanExitRequest().subscribe((req) => {
         this.pendingPlanExit.set(req);
       }),
     );
 
-    // Embedded notification banners (replace vscode.window.showErrorMessage)
     this.subscriptions.add(
       this.bridge.onNotificationShow().subscribe((n) => {
         this.notifications.update((list) => [...list, n]);
-        // Auto-dismiss info/warn after 6 seconds; errors stay until manual ×.
         if (n.level !== "error") {
           setTimeout(() => {
             this.notifications.update((list) => list.filter((x) => x.id !== n.id));
@@ -241,18 +174,17 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
         }
       }),
     );
+
     this.subscriptions.add(
       this.bridge.onNotificationDismiss().subscribe((id) => {
         this.notifications.update((list) => list.filter((n) => n.id !== id));
       }),
     );
 
-    // Sync plan mode state from proxy (via ConfigUpdate)
     this.subscriptions.add(
-      this.bridge.onAgentMode().subscribe((mode) => this.agentMode.set(mode)),
+      this.bridge.onAgentMode().subscribe((mode) => this.agentMode.set(mode as AgentMode)),
     );
 
-    // Request initial health check
     this.bridge.send({ type: ToExtensionType.CheckHealth });
   }
 
@@ -261,10 +193,18 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
   }
 
   onSetAgentMode(mode: AgentMode): void {
-    this.agentMode.set(mode); // optimistic: update UI immediately before round-trip
+    this.agentMode.set(mode);
     this.bridge.send({
       type: ToExtensionType.SetAgentMode,
       payload: { mode } satisfies SetAgentModePayload,
+    });
+  }
+
+  onSetEnableThinking(enabled: boolean): void {
+    this.enableThinking.set(enabled);
+    this.bridge.send({
+      type: ToExtensionType.SetEnableThinking,
+      payload: { enabled } satisfies SetEnableThinkingPayload,
     });
   }
 
@@ -300,13 +240,11 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
     const { text, attachments } = payload;
     const trimmed = text.trim();
 
-    // /clear — handled entirely in webview (no attachments meaningful here)
     if (trimmed === "/clear") {
       this.onClearHistory();
       return;
     }
 
-    // /copy — clipboard access in webview
     if (trimmed === "/copy") {
       const last = this.store.messages()
         .filter(m => m.role === MessageRole.Assistant)
@@ -322,11 +260,9 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
       return;
     }
 
-    // Other client-side commands (handler: 'client') → extension host
     if (trimmed.startsWith("/")) {
       const cmd = trimmed.split(" ")[0];
       const known = this.availableCommands().find(c => c.name === cmd);
-
       if (known?.handler === "client") {
         this.store.addUserMessage(trimmed);
         this.bridge.send({
@@ -335,18 +271,12 @@ export class ChatContainerComponent implements OnInit, OnDestroy {
         });
         return;
       }
-
-      // Proxy-handled commands: send as-is
       this.store.addUserMessage(trimmed);
       this.store.setWaiting(true);
-      this.bridge.send({
-        type: ToExtensionType.SendMessage,
-        payload: { content: trimmed },
-      });
+      this.bridge.send({ type: ToExtensionType.SendMessage, payload: { content: trimmed } });
       return;
     }
 
-    // Normal message (with optional attachments)
     this.store.addUserMessage(trimmed, attachments);
     this.store.setWaiting(true);
     this.bridge.send({

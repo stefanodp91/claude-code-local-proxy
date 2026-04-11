@@ -2,28 +2,26 @@
   @if (request) {
     <div class="d-flex align-items-center gap-2 mb-3 modal-header">
       <span class="fs-4">🗒</span>
-      <span class="flex-grow-1">Exit <strong>Plan mode</strong>?</span>
+      <span class="flex-grow-1" [innerHTML]="'planExit.title' | translate"></span>
     </div>
 
     <p class="modal-body mb-3">
       @if (request.planPath) {
-        It looks like you want to execute the plan
-        <code class="modal-plan-path">{{ request.planPath }}</code>.
-        Which mode do you want to switch to?
+        {{ "planExit.withPlan" | translate : { path: request.planPath } }}
       } @else {
-        You haven't written a plan file yet. Which mode do you want to switch to?
+        {{ "planExit.noPlan" | translate }}
       }
     </p>
 
     <div class="d-flex flex-wrap justify-content-end gap-2">
       <button class="btn-stay px-3 py-1 rounded-2" (click)="stay()">
-        Stay in Plan mode
+        {{ "planExit.stay" | translate }}
       </button>
       <button class="btn-switch px-3 py-1 rounded-2" (click)="chooseAsk()">
-        Ask before edits
+        {{ "planExit.chooseAsk" | translate }}
       </button>
       <button class="btn-switch btn-switch--primary px-3 py-1 rounded-2 fw-semibold" (click)="chooseAuto()">
-        Edit automatically
+        {{ "planExit.chooseAuto" | translate }}
       </button>
     </div>
   }

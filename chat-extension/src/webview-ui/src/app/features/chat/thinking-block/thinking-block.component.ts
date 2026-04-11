@@ -1,70 +1,15 @@
 import { Component, Input, signal } from "@angular/core";
-import { CommonModule } from "@angular/common";
 import { MatIconModule } from "@angular/material/icon";
+import { TranslateModule } from "@ngx-translate/core";
 import { MarkdownPipe } from "../../../shared/pipes/markdown.pipe";
 import type { ThinkingBlock } from "../../../core/models/content-block.model";
 
 @Component({
   selector: "app-thinking-block",
   standalone: true,
-  imports: [CommonModule, MatIconModule, MarkdownPipe],
-  template: `
-    <div class="thinking-wrap my-2">
-      <button class="thinking-toggle d-flex align-items-center gap-2" (click)="toggle()">
-        <mat-icon class="think-icon" [class.spin]="!block.isComplete">psychology</mat-icon>
-        <span>{{ headerText }}</span>
-        <mat-icon class="chevron" [class.open]="expanded()">expand_more</mat-icon>
-      </button>
-      @if (expanded()) {
-        <div class="thinking-body md-content" [innerHTML]="block.thinking | markdown"></div>
-      }
-    </div>
-  `,
-  styles: [`
-    .thinking-wrap {
-      border: 1px solid var(--c-border);
-      border-radius: var(--radius-md);
-      overflow: hidden;
-    }
-
-    .thinking-toggle {
-      width: 100%;
-      padding: 8px 12px;
-      background: var(--c-overlay-subtle);
-      border: none;
-      color: var(--c-text-dim);
-      cursor: pointer;
-      font-size: 12px;
-      text-align: left;
-      transition: background 0.15s;
-    }
-    .thinking-toggle:hover { background: var(--c-overlay-soft); }
-
-    .think-icon {
-      font-size: 15px; width: 15px; height: 15px;
-      color: var(--c-thinking);
-    }
-    .think-icon.spin { animation: spin 1.8s linear infinite; }
-
-    .chevron {
-      font-size: 16px; width: 16px; height: 16px;
-      margin-left: auto;
-      transition: transform 0.2s;
-    }
-    .chevron.open { transform: rotate(180deg); }
-
-    .thinking-body {
-      padding: 10px 14px;
-      font-size: 12.5px;
-      line-height: 1.55;
-      color: var(--c-text-dim);
-      max-height: 360px;
-      overflow-y: auto;
-      border-top: 1px solid var(--c-border);
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-  `],
+  imports: [MatIconModule, TranslateModule, MarkdownPipe],
+  templateUrl: "./thinking-block.component.html",
+  styleUrl: "./thinking-block.component.scss",
 })
 export class ThinkingBlockComponent {
   @Input({ required: true }) block!: ThinkingBlock;
@@ -75,12 +20,18 @@ export class ThinkingBlockComponent {
     this.expanded.update((v) => !v);
   }
 
-  get headerText(): string {
-    if (!this.block.isComplete) return "Thinking...";
+  /** i18n key used in the template (supports interpolation params). */
+  get headerKey(): string {
+    if (!this.block.isComplete) return "chat.thinking";
+    if (this.block.startedAt && this.block.completedAt) return "chat.thoughtFor";
+    return "chat.thought";
+  }
+
+  /** Interpolation params for the header translation. */
+  get headerParams(): Record<string, number> | undefined {
     if (this.block.startedAt && this.block.completedAt) {
-      const s = Math.round((this.block.completedAt - this.block.startedAt) / 1000);
-      return `Thought for ${s}s`;
+      return { seconds: Math.round((this.block.completedAt - this.block.startedAt) / 1000) };
     }
-    return "Thought";
+    return undefined;
   }
 }

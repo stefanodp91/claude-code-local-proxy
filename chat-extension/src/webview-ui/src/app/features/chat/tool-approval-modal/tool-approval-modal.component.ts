@@ -1,7 +1,8 @@
 import { Component, Input, Output, EventEmitter } from "@angular/core";
-import { CommonModule } from "@angular/common";
 import { diffLines } from "diff";
+import { TranslateModule } from "@ngx-translate/core";
 import type { ToolApprovalRequestPayload, ApprovalScope } from "@shared/message-protocol";
+import { ToolAction } from "../../../core/enums/tool-action.enum";
 import { ModalShellComponent } from "../../../shared/components/modal-shell/modal-shell.component";
 
 /** Emitted when the user makes a decision. */
@@ -38,7 +39,7 @@ const CONTEXT_LINES = 3;
 @Component({
   selector: "app-tool-approval-modal",
   standalone: true,
-  imports: [CommonModule, ModalShellComponent],
+  imports: [TranslateModule, ModalShellComponent],
   templateUrl: "./tool-approval-modal.component.html",
   styleUrl: "./tool-approval-modal.component.scss",
 })
@@ -46,23 +47,27 @@ export class ToolApprovalModalComponent {
   @Input() request: ToolApprovalRequestPayload | null = null;
   @Output() decision = new EventEmitter<ApprovalDecision>();
 
+  /** Expose enum for template comparisons. */
+  readonly ToolAction = ToolAction;
+
   get headerIcon(): string {
     switch (this.request?.action) {
-      case "write":
-        return this.request.oldContent == null ? "📄" : "✏️";
-      case "edit":  return "📝";
-      case "bash":  return "⚡";
-      default:      return "⚠️";
+      case ToolAction.Write: return this.request.oldContent == null ? "📄" : "✏️";
+      case ToolAction.Edit:  return "📝";
+      case ToolAction.Bash:  return "⚡";
+      default:               return "⚠️";
     }
   }
 
-  get headerLabel(): string {
+  /** Returns the i18n key for the modal header verb. */
+  get headerLabelKey(): string {
     switch (this.request?.action) {
-      case "write":
-        return this.request.oldContent == null ? "Create" : "Modify";
-      case "edit":  return "Edit";
-      case "bash":  return "Run command";
-      default:      return "Allow";
+      case ToolAction.Write: return this.request.oldContent == null
+        ? "approval.header.create"
+        : "approval.header.modify";
+      case ToolAction.Edit:  return "approval.header.edit";
+      case ToolAction.Bash:  return "approval.header.runCommand";
+      default:               return "approval.header.allow";
     }
   }
 

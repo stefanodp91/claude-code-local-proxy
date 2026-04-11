@@ -5,6 +5,49 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.0] — 2026-04-12
+
+### Added — Thinking detection & toggle
+
+- **`ThinkingProbe`** (`proxy/src/infrastructure/thinkingProbe.ts`) — single HTTP probe that checks whether a model produces `reasoning_content`. Sends a fixed arithmetic prompt with `enable_thinking: true`; result is `true` iff `reasoning_content` is a non-empty string.
+
+- **`ThinkingDetector`** (`proxy/src/infrastructure/thinkingDetector.ts`) — dual-probe orchestrator:
+  - Probe #1: `enable_thinking: true` → verifica `supportsThinking`
+  - Probe #2 (solo se probe #1 è `true`): `enable_thinking: false` → verifica `thinkingCanBeDisabled`
+  - Risultati salvati in `model-cache.json` (merge con `maxTools` esistente). Zero costo per modelli già probati.
+
+- **`supportsThinking` + `thinkingCanBeDisabled`** esposti in `GET /config` → `model` object; propagati via `ProxyModelInfo` in `extension-config.ts` fino alla webview.
+
+- **Thinking toggle** in `InputAreaComponent`:
+  - Icona `psychology` (Material Icons) visibile quando `supportsThinking === true`
+  - Disabilitato (non cliccabile, `cursor: not-allowed`) quando `thinkingCanBeDisabled === false` (es. Gemma 4 31B)
+  - Cliccabile e funzionale quando entrambi i flag sono `true` (es. Qwen3)
+  - Tooltip contestuale: "Thinking always on for this model" / "Thinking enabled — click to disable" / "Thinking disabled — click to enable"
+
+- **`SetEnableThinking`** message type (`ToExtensionType`): il webview notifica l'extension host al click del toggle. `ChatSession` aggiorna `config.enableThinking` in-session; applicato alla successiva richiesta via `proxy-client.ts`.
+
+- **`SetAgentMode`** message type (`ToExtensionType`): sincronizza la modalità agente (Ask / Auto / Plan) dal webview all'extension host.
+
+### Changed — Proxy
+
+- **`requestTranslator`**: quando `supportsThinking === true`, il parametro `enable_thinking` è sempre esplicito (`true` o `false`). Senza questo, alcuni backend (es. LM Studio con Qwen3) ignorano `enable_thinking: false` e continuano a generare reasoning. Ora il disable è effettivo.
+
+- **`nativeAgentLoopService`**: iter-0 convertito a streaming — i token del primo turno appaiono in real-time invece di arrivare tutti alla fine.
+
+- **Fallback non-streaming** in `fetchLlmClient`: se il backend risponde con `Content-Type: application/json` nonostante `stream: true`, la risposta viene normalizzata e processata senza errore.
+
+### Changed — Webview Refactoring (breaking-free)
+
+- **Tutti i componenti** ora hanno file separati `.ts` / `.html` / `.scss` (nessun template o stile inline).
+- **`AgentMode`** e **`ToolAction`** — nuovi enum in `core/enums/`; tutti i componenti li usano al posto di stringhe hardcoded.
+- **`ModeSelectorComponent`** (`features/chat/mode-selector/`) — estratto da `InputAreaComponent` come componente standalone con template e stili propri.
+- **i18n completa** — nessuna stringa hardcoded nei template o nei getter TypeScript: tutte le label usano il pipe `translate` o `TranslateService.instant()`.
+- **Bootstrap utilities** — le classi di layout (`d-flex`, `flex-grow-1`, `gap-*`, `align-items-center`, ecc.) sono ora espresse direttamente nell'HTML; il CSS custom è limitato a colori del design system e animazioni.
+- **`tool-approval-modal`** + **`plan-exit-modal`**: `CommonModule` rimosso, `TranslateModule` aggiunto; header e bottoni usano chiavi i18n e `ToolAction` enum.
+- **`chat-container`**: `StreamingService` inizializzato con `inject()` nel costruttore (side-effect only, nessuna proprietà dichiarata inutilizzata).
+
+---
+
 ## [1.2.0] — 2026-04-11
 
 ### Added

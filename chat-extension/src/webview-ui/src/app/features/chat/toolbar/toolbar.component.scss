@@ -1,0 +1,40 @@
+:host { display: block; flex-shrink: 0; }
+
+.toolbar {
+  height: 44px;
+  background: var(--c-surface);
+  border-bottom: 1px solid var(--c-border);
+}
+
+.toolbar-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--c-text);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--btn-size-md);
+  height: var(--btn-size-md);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--c-text-muted);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+
+  mat-icon { font-size: 18px; width: 18px; height: 18px; }
+
+  &:hover {
+    background: var(--c-overlay-soft);
+    color: var(--c-text);
+  }
+
+  &--active {
+    color: var(--c-accent) !important;
+    background: var(--c-overlay-subtle);
+  }
+}

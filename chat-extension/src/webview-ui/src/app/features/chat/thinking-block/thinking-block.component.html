@@ -1,0 +1,10 @@
+<div class="thinking-wrap my-2">
+  <button class="thinking-toggle d-flex align-items-center gap-2 w-100" (click)="toggle()">
+    <mat-icon class="think-icon" [class.spin]="!block.isComplete">psychology</mat-icon>
+    <span>{{ headerKey | translate: headerParams }}</span>
+    <mat-icon class="chevron ms-auto" [class.open]="expanded()">expand_more</mat-icon>
+  </button>
+  @if (expanded()) {
+    <div class="thinking-body md-content" [innerHTML]="block.thinking | markdown"></div>
+  }
+</div>

@@ -89,9 +89,15 @@ export class RequestTranslator {
     if (body.top_p !== undefined) req.top_p = body.top_p;
     if (body.stop_sequences) req.stop = body.stop_sequences;
 
-    // Forward thinking activation so the backend streams reasoning_content incrementally
-    if (body.thinking?.type === ThinkingType.Enabled || body.thinking?.type === ThinkingType.Adaptive) {
-      req.enable_thinking = true;
+    // Forward thinking activation to the backend. For models that the probe
+    // confirmed support thinking, ALWAYS pass an explicit true/false — not
+    // just "omit when off". This lets the client actually suppress reasoning
+    // on the backend (saving tokens) for models that honor the disable flag.
+    // For models without thinking support, the parameter is skipped entirely.
+    if (this.modelInfo?.supportsThinking) {
+      const wantsThinking =
+        body.thinking?.type === ThinkingType.Enabled || body.thinking?.type === ThinkingType.Adaptive;
+      req.enable_thinking = wantsThinking;
     }
 
     // Tool translation with dynamic selection

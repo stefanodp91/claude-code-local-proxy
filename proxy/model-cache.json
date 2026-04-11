@@ -1,20 +1,17 @@
 {
-  "google/gemma-4-26b-a4b": {
-    "maxTools": 32
+  "google/gemma-4-31b": {
+    "maxTools": 27,
+    "supportsThinking": true,
+    "thinkingCanBeDisabled": false
   },
-  "nemotron-cascade-2-30b-a3b": {
-    "maxTools": 32
-  },
-  "qwen_qwen3.5-35b-a3b": {
-    "maxTools": 1
+  "qwen3.5-9b": {
+    "maxTools": 32,
+    "supportsThinking": true,
+    "thinkingCanBeDisabled": false
   },
   "qwen/qwen3.5-35b-a3b": {
-    "maxTools": 0
-  },
-  "nemotron-cascade-2-30b-a3b@4bit": {
-    "maxTools": 32
-  },
-  "google/gemma-4-31b": {
-    "maxTools": 32
+    "maxTools": 0,
+    "supportsThinking": true,
+    "thinkingCanBeDisabled": false
   }
 }

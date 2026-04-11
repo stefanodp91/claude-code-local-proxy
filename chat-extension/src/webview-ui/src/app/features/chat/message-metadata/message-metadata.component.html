@@ -1,0 +1,28 @@
+<div class="meta d-flex align-items-center gap-2 flex-wrap mt-2">
+  @if (message.status === streaming) {
+    <span class="meta-item generating d-inline-flex align-items-center gap-2">
+      <span class="spinner"></span>
+      {{ 'chat.generating' | translate }}
+      @if (message.tokenUsage?.outputTokens) {
+        <span class="meta-sep">·</span>
+        <span>{{ message.tokenUsage?.outputTokens }} {{ 'metadata.tokens' | translate }}</span>
+      }
+    </span>
+  } @else {
+    <span class="meta-item">{{ message.timestamp | date:'HH:mm' }}</span>
+    @if (message.model) {
+      <span class="meta-sep">·</span>
+      <span class="meta-item meta-model">{{ message.model }}</span>
+    }
+    @if (message.tokenUsage && (message.tokenUsage.inputTokens > 0 || message.tokenUsage.outputTokens > 0)) {
+      <span class="meta-sep">·</span>
+      <span class="meta-item">
+        ↑{{ message.tokenUsage.inputTokens | number }} ↓{{ message.tokenUsage.outputTokens | number }}
+      </span>
+    }
+    @if (message.stopReason) {
+      <span class="meta-sep">·</span>
+      <span class="meta-item" [class.meta-stop]="message.stopReason !== 'end_turn'">{{ message.stopReason }}</span>
+    }
+  }
+</div>
