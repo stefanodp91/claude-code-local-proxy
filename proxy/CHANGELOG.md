@@ -5,6 +5,58 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.3.0] — 2026-04-12
+
+### Added — Advanced agent loop features
+
+- **Configurable iteration limit** (`MAX_AGENT_ITERATIONS`): replaces the hardcoded limit of 10.
+  The value now acts as a **hard cap**; the proxy derives the effective limit from the model's
+  loaded context window automatically (see Adaptive behaviour below). Default cap: `40`.
+
+- **Parallel read-only tool execution**: when the model returns multiple `workspace` tool calls
+  in a single turn, `list`, `read`, `grep`, and `glob` actions are now dispatched in parallel
+  via `Promise.all`. Destructive actions (`write`, `edit`, `bash`) remain sequential — the
+  approval gate is one-at-a-time by design. Tool results are reassembled in the original order
+  before being appended to the conversation (OpenAI requires matching order).
+
+- **Semantic context compression** (`SEMANTIC_COMPACT`, `SUMMARY_MAX_TOKENS`, `SUMMARY_TIMEOUT`):
+  when the conversation exceeds 80% of the model's context window, the proxy now attempts an LLM
+  summarization call instead of naively dropping messages. The summary preserves file names,
+  decisions, code written, and errors encountered. Falls back to naive trimming automatically if
+  the LLM call fails or times out. Enabled by default (`SEMANTIC_COMPACT=true`).
+
+### Added — Adaptive configuration
+
+- **Adaptive iteration limit**: `computeMaxIterations()` in `ProxyServer` derives the effective
+  iteration ceiling from `loadedContextLength`:
+
+  | Context window | Effective limit |
+  |---|---|
+  | unknown | 20 |
+  | ≤ 8 K | 10 |
+  | 8–32 K | 20 |
+  | 32–64 K | 30 |
+  | ≥ 64 K | 40 |
+
+  The value is recomputed on every turn via a resolver function — model changes detected by the
+  15-second poll loop (`pollModelChange`) take effect immediately without a proxy restart.
+  `MAX_AGENT_ITERATIONS` remains available as a hard cap override.
+
+- **Adaptive summary budget**: `computeSummaryMaxTokens()` sets the summarization token budget
+  to `~2%` of the context window (floor 256, cap `SUMMARY_MAX_TOKENS`). Larger models get more
+  verbose summaries; smaller models get concise ones that leave more room for actual content.
+
+### New environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `MAX_AGENT_ITERATIONS` | `40` | Hard cap on agent loop iterations per turn. Proxy derives effective limit from context window; this prevents runaway loops. |
+| `SEMANTIC_COMPACT` | `true` | Use LLM summarization for context compaction instead of naive message trimming. |
+| `SUMMARY_MAX_TOKENS` | `512` | Max tokens for the summarization call (capped further by `~2%` of context window). |
+| `SUMMARY_TIMEOUT` | `15000` | Timeout ms for the summarization call before falling back to naive trimming. |
+
+---
+
 ## [1.1.0] — 2026-04-10
 
 ### Added — Proxy lifecycle management

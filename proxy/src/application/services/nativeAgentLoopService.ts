@@ -136,6 +136,12 @@ export class NativeAgentLoopService {
     private readonly logger: LoggerPort,
     /** Returns the currently-loaded model id (e.g. "nemotron-…"). */
     private readonly modelIdResolver: () => string,
+    /**
+     * Returns the maximum LLM ↔ tool iterations allowed for the current turn.
+     * Called at the start of each `run()` so it automatically reflects model
+     * changes detected by the server's poll loop.
+     */
+    private readonly maxIterationsResolver: () => number,
   ) {}
 
   // ── Public entry point ────────────────────────────────────────────────────
@@ -146,8 +152,7 @@ export class NativeAgentLoopService {
     workspaceCwd: string,
     thinkingEnabled: boolean,
   ): Promise<NativeLoopOutcome> {
-    const MAX_ITERATIONS = 10;
-
+    const maxIterations = this.maxIterationsResolver();
     const planMode = this.approvalGate.agentMode === AgentMode.Plan;
     const state: LoopState = { allowAllThisTurn: false, planFileWritten: false };
 
@@ -219,7 +224,7 @@ export class NativeAgentLoopService {
     // "fallthrough" so the caller can retry with normal streaming and no
     // workspace-tool constraint.
 
-    for (let i = 0; i < MAX_ITERATIONS; i++) {
+    for (let i = 0; i < maxIterations; i++) {
 
       const llmResp = await this.llm.chat({
         body: { ...agentReq, tool_choice: currentToolChoice(), messages },
@@ -257,14 +262,13 @@ export class NativeAgentLoopService {
             function: { name: "workspace", arguments: tc.arguments },
           })),
         });
-        for (const tc of toolCalls) {
-          const { result, exitLoop } = await this.processToolCall(
-            writeSSE, emitTextBlock, endMessage,
-            tc.id, tc.arguments,
-            workspaceCwd, openaiReq.messages, state,
-          );
-          if (exitLoop) return "handled";
-          messages.push({ role: "tool", tool_call_id: tc.id, content: result });
+        const toolResults = await this.executeBatchedToolCalls(
+          toolCalls, writeSSE, emitTextBlock, endMessage,
+          workspaceCwd, openaiReq.messages, state,
+        );
+        if (toolResults === null) return "handled"; // exit_plan_mode or denial
+        for (const { id, result } of toolResults) {
+          messages.push({ role: "tool", tool_call_id: id, content: result });
         }
         continue;
       }
@@ -314,41 +318,136 @@ export class NativeAgentLoopService {
       }
 
       messages.push(choice.message);
-      for (const tc of rawToolCalls) {
-        const argsRaw = tc.function?.arguments ?? "{}";
-
-        // Non-streaming path: emit tool_use block here (streaming path emits
-        // them inside parseStreamingIteration at [DONE]).
+      const nonStreamingToolCalls = rawToolCalls.map((tc: any) => ({
+        id: tc.id as string,
+        name: "workspace",
+        arguments: tc.function?.arguments ?? "{}",
+      }));
+      // Emit tool_use blocks for the non-streaming path
+      // (streaming path emits them inside parseStreamingIteration at [DONE]).
+      for (const tc of nonStreamingToolCalls) {
         writeSSE(sseEvent(SseEventType.ContentBlockStart, {
           type: "content_block_start", index: contentIndex,
           content_block: { type: "tool_use", id: tc.id, name: "workspace", input: {} },
         }));
         writeSSE(sseEvent(SseEventType.ContentBlockDelta, {
           type: "content_block_delta", index: contentIndex,
-          delta: { type: "input_json_delta", partial_json: argsRaw },
+          delta: { type: "input_json_delta", partial_json: tc.arguments },
         }));
         writeSSE(sseEvent(SseEventType.ContentBlockStop, {
           type: "content_block_stop", index: contentIndex,
         }));
         contentIndex++;
-
-        const { result, exitLoop } = await this.processToolCall(
-          writeSSE, emitTextBlock, endMessage,
-          tc.id, argsRaw,
-          workspaceCwd, openaiReq.messages, state,
-        );
-        if (exitLoop) return "handled";
-        messages.push({ role: "tool", tool_call_id: tc.id, content: result });
+      }
+      const nsToolResults = await this.executeBatchedToolCalls(
+        nonStreamingToolCalls, writeSSE, emitTextBlock, endMessage,
+        workspaceCwd, openaiReq.messages, state,
+      );
+      if (nsToolResults === null) return "handled";
+      for (const { id, result } of nsToolResults) {
+        messages.push({ role: "tool", tool_call_id: id, content: result });
       }
     }
 
     // Max iterations reached without a final text response.
-    emitTextBlock("(Max workspace tool iterations reached — response may be incomplete)");
+    emitTextBlock(`(Max workspace tool iterations reached (${maxIterations}) — response may be incomplete)`);
     endMessage();
     return "handled";
   }
 
   // ── Private helpers ───────────────────────────────────────────────────────
+
+  /**
+   * Execute a batch of tool calls with mixed parallelism:
+   *
+   * - `exit_plan_mode` is intercepted first (control action, must exit loop).
+   * - Read-only actions (List, Read, Grep, Glob) run in parallel via Promise.all.
+   * - Destructive actions (Write, Edit, Bash) run sequentially so that the
+   *   approval gate presents one modal at a time and `allowAllThisTurn` state
+   *   propagates correctly.
+   *
+   * Returns the ordered array of `{ id, result }` pairs (same order as input)
+   * ready to be pushed as `role:"tool"` messages, or `null` when the loop
+   * should exit immediately (exit_plan_mode or approval denial with exitLoop).
+   */
+  private async executeBatchedToolCalls(
+    toolCalls: Array<{ id: string; name: string; arguments: string }>,
+    writeSSE: (frame: string) => void,
+    emitTextBlock: (text: string) => void,
+    endMessage: () => void,
+    workspaceCwd: string,
+    originalMessages: any[],
+    state: LoopState,
+  ): Promise<Array<{ id: string; result: string }> | null> {
+    // 1. Check for exit_plan_mode — intercept before any batching
+    for (const tc of toolCalls) {
+      let args: ActionArgs;
+      try { args = JSON.parse(tc.arguments); } catch { continue; }
+      if (args.action === WorkspaceAction.ExitPlanMode) {
+        const { exitLoop } = await this.processToolCall(
+          writeSSE, emitTextBlock, endMessage,
+          tc.id, tc.arguments,
+          workspaceCwd, originalMessages, state,
+        );
+        if (exitLoop) return null;
+      }
+    }
+
+    // 2. Classify remaining calls
+    const readOnlyTcs: typeof toolCalls = [];
+    const destructiveTcs: typeof toolCalls = [];
+    for (const tc of toolCalls) {
+      let action: string;
+      try { action = (JSON.parse(tc.arguments) as ActionArgs).action; }
+      catch { action = WorkspaceAction.List; }
+      if (action === WorkspaceAction.ExitPlanMode) continue; // already handled
+      if (ACTION_CLASSIFICATION[action] === ActionClass.ReadOnly) {
+        readOnlyTcs.push(tc);
+      } else {
+        destructiveTcs.push(tc);
+      }
+    }
+
+    // 3. Execute read-only calls in parallel
+    const readOnlyResults = await Promise.all(
+      readOnlyTcs.map(async (tc) => {
+        const { result } = await this.processToolCall(
+          writeSSE, emitTextBlock, endMessage,
+          tc.id, tc.arguments,
+          workspaceCwd, originalMessages, state,
+        );
+        return { id: tc.id, result };
+      }),
+    );
+
+    // 4. Execute destructive calls sequentially (approval gate is one-at-a-time)
+    const destructiveResults: Array<{ id: string; result: string }> = [];
+    for (const tc of destructiveTcs) {
+      const { result, exitLoop } = await this.processToolCall(
+        writeSSE, emitTextBlock, endMessage,
+        tc.id, tc.arguments,
+        workspaceCwd, originalMessages, state,
+      );
+      if (exitLoop) return null;
+      destructiveResults.push({ id: tc.id, result });
+    }
+
+    // 5. Reassemble in original order (OpenAI requires tool results to match tool_calls order)
+    const resultMap = new Map<string, string>([
+      ...readOnlyResults.map(r => [r.id, r.result] as [string, string]),
+      ...destructiveResults.map(r => [r.id, r.result] as [string, string]),
+    ]);
+    const ordered: Array<{ id: string; result: string }> = [];
+    for (const tc of toolCalls) {
+      let action: string;
+      try { action = (JSON.parse(tc.arguments) as ActionArgs).action; }
+      catch { action = WorkspaceAction.List; }
+      if (action === WorkspaceAction.ExitPlanMode) continue;
+      const result = resultMap.get(tc.id);
+      if (result !== undefined) ordered.push({ id: tc.id, result });
+    }
+    return ordered;
+  }
 
   /**
    * Shared tool-call executor — eliminates the duplication between iter-0 and

@@ -219,14 +219,13 @@ on the model name. You can swap models in LM Studio without touching the proxy.
 
 ### Adaptive
 
-The proxy **auto-detects model capabilities from the response**, not from the request
-or model name:
+The proxy **auto-detects model capabilities and tunes behaviour from runtime data**, not from the request or model name:
 
-- **Reasoning / Thinking**: if the model returns `reasoning_content` (non-empty),
-  the proxy translates it into Anthropic `thinking` blocks. If the field is absent
-  or empty, no thinking blocks are emitted.
+- **Reasoning / Thinking**: if the model returns `reasoning_content` (non-empty), the proxy translates it into Anthropic `thinking` blocks. If the field is absent or empty, no thinking blocks are emitted.
 - **Tool calling**: detected by the presence of `tool_calls` in the response.
 - **Token counts**: uses real values from `usage` when available.
+- **Agent loop iterations**: the iteration ceiling is derived from the model's loaded context window (10 for ≤8 K context, up to 40 for ≥64 K). Recomputed on every turn — model changes via LM Studio take effect immediately.
+- **Summarization budget**: the token budget for context compaction is `~2%` of the context window, capped at `SUMMARY_MAX_TOKENS`.
 
 ### Reactive
 
@@ -525,10 +524,13 @@ LM Studio does not support forcing a specific tool
 (`{type:"function", function:{name:"X"}}`). The proxy falls back to `"required"`
 (forces any tool call, but not a specific one).
 
-### No parallel multi-tool
+### Parallel tool benefit is model-dependent
 
-The local models tested (nemotron, qwen) call one tool at a time. Claude Code's
-parallel tool operations will be serialized automatically.
+Read-only workspace actions (`list`, `read`, `grep`, `glob`) are dispatched in parallel
+at the proxy level via `Promise.all`. The actual speedup depends on whether the model
+emits multiple tool calls in a single turn — most local models (Qwen, Llama) call one
+tool at a time, so parallel dispatch has no effect on them. Frontier models are more
+likely to batch multiple calls per turn.
 
 ### Tool calling quality
 

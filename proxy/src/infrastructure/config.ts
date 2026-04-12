@@ -115,6 +115,31 @@ export interface ProxyConfig {
    * Configurable via the PLANS_DIR environment variable.
    */
   plansDir: string;
+
+  // ── Agent loop ──
+
+  /**
+   * Hard cap on agentic loop iterations per turn. The proxy derives the
+   * actual limit from the model's loaded context window and uses this value
+   * only as an upper bound — set it low (e.g. 5) to force a strict limit
+   * regardless of context size.
+   */
+  maxAgentIterations: number;
+
+  // ── Context compaction ──
+
+  /**
+   * When true, use an LLM summarization call to compress old conversation
+   * history instead of naively dropping messages. Falls back to naive
+   * trimming if the summarization call fails or times out.
+   */
+  semanticCompact: boolean;
+
+  /** max_tokens budget for the summarization call. */
+  summaryMaxTokens: number;
+
+  /** Timeout in milliseconds for the summarization call. */
+  summaryTimeout: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,6 +199,22 @@ const DEFAULT_ENABLE_THINKING = true;
 
 /** Default plans directory — relative to the workspace root. */
 const DEFAULT_PLANS_DIR = ".claudio/plans";
+
+/**
+ * Hard cap on agentic loop iterations. The proxy derives the actual limit
+ * from the model's context window (see computeMaxIterations in server.ts);
+ * this value prevents runaway loops regardless of context size.
+ */
+const DEFAULT_MAX_AGENT_ITERATIONS = 40;
+
+/** Default: use LLM-based semantic summarization for context compaction. */
+const DEFAULT_SEMANTIC_COMPACT = true;
+
+/** Default max_tokens for the summarization call. */
+const DEFAULT_SUMMARY_MAX_TOKENS = 512;
+
+/** Default timeout ms for the summarization call (15 seconds). */
+const DEFAULT_SUMMARY_TIMEOUT = 15_000;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -272,5 +313,13 @@ export function loadConfig(): ProxyConfig {
 
     // Plan mode
     plansDir:                env("PLANS_DIR", DEFAULT_PLANS_DIR),
+
+    // Agent loop
+    maxAgentIterations:      envInt("MAX_AGENT_ITERATIONS", DEFAULT_MAX_AGENT_ITERATIONS),
+
+    // Context compaction
+    semanticCompact:         envBool("SEMANTIC_COMPACT", DEFAULT_SEMANTIC_COMPACT),
+    summaryMaxTokens:        envInt("SUMMARY_MAX_TOKENS", DEFAULT_SUMMARY_MAX_TOKENS),
+    summaryTimeout:          envInt("SUMMARY_TIMEOUT", DEFAULT_SUMMARY_TIMEOUT),
   };
 }

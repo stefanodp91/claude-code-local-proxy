@@ -128,41 +128,70 @@ A single OpenAI tool slot with an `action` discriminator keeps the tool count at
 
 For models with `maxTools > 0`. Lives in `NativeAgentLoopService.run()` ([nativeAgentLoopService.ts](../src/application/services/nativeAgentLoopService.ts)).
 
+### Iteration limit
+
+The iteration ceiling is derived automatically from the model's loaded context window:
+
+| Context window | Effective limit |
+|---|---|
+| unknown | 20 |
+| ≤ 8 K | 10 |
+| 8–32 K | 20 |
+| 32–64 K | 30 |
+| ≥ 64 K | 40 |
+
+The limit is capped by `MAX_AGENT_ITERATIONS` (default `40`) and recomputed on every turn via a resolver, so model changes detected by the 15-second poll loop take effect immediately. See [configuration.md](configuration.md#agent-loop) for details.
+
 ### Flow
 
 ```
 NativeAgentLoopService.run(writer, openaiReq, workspaceCwd, thinkingEnabled):
   │
   ├── Replace client tools with [WORKSPACE_TOOL_DEF] only
-  │   tool_choice = "auto"
+  │   tool_choice = "required" (plan mode) or "auto"
   │
   ├── Emit: message_start (lazy, on first content)
   │
-  └── for i in 0..MAX_ITERATIONS (10):
+  └── for i in 0..maxIterations (adaptive, default up to 40):
         │
-        ├── i == 0: POST to backend with stream: false (guard iteration)
-        │     workspaceCalls.length == 0 && text empty?
-        │       YES → return false  ← fall through to normal streaming
-        │     workspaceCalls.length == 0 && text present?
-        │       YES → emit as synthetic SSE, return true
-        │
-        ├── i >= 1: POST to backend with stream: true
+        ├── POST to backend with stream: true
         │     Forward thinking_delta and text_delta to client in real time
-        │     Accumulate tool_calls from stream deltas
+        │     Accumulate tool_calls silently until [DONE]
         │
-        ├── For each workspace tool call:
-        │     ├── Destructive action? → await requestApproval()
-        │     │     Denied → inject denial as tool result, continue loop
-        │     ├── executeAction(args, workspaceCwd) → result string
-        │     ├── Emit tool_use SSE block (content_block_start … stop)
-        │     └── Append assistant turn + tool result to messages
+        ├── i == 0, nothing emitted (no text, no thinking, no tool calls)?
+        │       YES → return "fallthrough"  ← normal streaming takes over
         │
-        └── No tool calls? → emit remaining text, emit message_stop, return true
+        ├── No tool calls in this iteration?
+        │     → emit message_stop, return "handled"
+        │
+        ├── executeBatchedToolCalls(toolCalls, ...):
+        │     │
+        │     ├── 1. Intercept exit_plan_mode (control action) → return null → exit loop
+        │     │
+        │     ├── 2. Classify remaining calls:
+        │     │     read-only  = [list, read, grep, glob]
+        │     │     destructive = [write, edit, bash]
+        │     │
+        │     ├── 3. Execute read-only calls in PARALLEL (Promise.all)
+        │     │     No SSE emitted during execution — only results collected
+        │     │
+        │     ├── 4. Execute destructive calls SEQUENTIALLY
+        │     │     Each: → await approvalGate() → executeAction() → result
+        │     │     Denied → inject denial string as tool result, continue
+        │     │
+        │     └── 5. Reassemble results in original order
+        │           (OpenAI requires tool results to match tool_calls order)
+        │
+        ├── Append: assistant turn (tool_calls) + tool result messages
+        │
+        └── Continue to next iteration
 ```
 
-**Iteration 0 is a guard**: it uses `stream: false` to cheaply detect whether the model wants to do anything at all. If neither tool calls nor text are produced, the loop returns `false` and normal streaming takes over — essential for simple queries like "explain this error" that have nothing to do with the workspace.
+**Iteration 0 is a streaming guard**: all iterations use `stream: true`. If the first iteration produces no output at all (no text, no thinking, no tool calls), the loop returns `"fallthrough"` and normal streaming takes over — essential for simple queries like "explain this error" that have nothing to do with the workspace.
 
-**Iterations 1+ are streamed**: thinking blocks and text tokens arrive at the client in real time; only tool_calls are "consumed" by the proxy.
+**Parallel read-only execution**: when the model requests multiple reads in a single turn (e.g. "compare these 3 files"), the proxy dispatches `list`/`read`/`grep`/`glob` actions concurrently. Execution time is bounded by the slowest action rather than their sum.
+
+**Destructive actions remain sequential**: the approval gate presents one modal at a time. If the user approves with `scope="turn"`, all remaining destructive actions in that turn are auto-approved via `state.allowAllThisTurn`.
 
 ---
 
@@ -269,10 +298,9 @@ The agent loop relies on the proxy having already injected the working directory
 ## Known Limitations
 
 1. **Path B compliance is model-dependent**: models with `maxTools == 0` may not consistently follow the XML tag protocol. Quality degrades for models below ~15B parameters.
-2. **Iteration 0 is not streamed (Path A)**: the first round always uses `stream: false`. For very simple workspace queries this means a brief delay before the first token.
-3. **Sequential tool calls per iteration**: even if a model emits multiple `tool_calls` in one turn, they are executed sequentially.
-4. **bash blocks the event loop**: `spawnSync` is used for bash — it blocks the Node.js event loop for up to 30 seconds. Acceptable for a single-user local proxy; would need `execAsync` for a multi-tenant deployment.
-5. **Auto-approve allowlist**: per-workspace `.claudio/auto-approve.json` allowlist allows matching actions to execute without a modal. See [permission-protocol.md](permission-protocol.md) for the rule format.
+2. **bash blocks the event loop**: `spawnSync` is used for bash — it blocks the Node.js event loop for up to 30 seconds. Acceptable for a single-user local proxy; would need `execAsync` for a multi-tenant deployment.
+3. **Parallel benefit is model-dependent**: read-only actions run in parallel at the proxy level, but the benefit is only visible if the model actually emits multiple tool calls in a single turn. Most local models (Qwen, Llama) call one tool at a time; frontier models are more likely to batch.
+4. **Auto-approve allowlist**: per-workspace `.claudio/auto-approve.json` allowlist allows matching actions to execute without a modal. See [permission-protocol.md](permission-protocol.md) for the rule format.
 
 ---
 

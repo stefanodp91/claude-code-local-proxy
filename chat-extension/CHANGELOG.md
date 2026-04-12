@@ -5,6 +5,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.4.1] — 2026-04-12
+
+### Fixed — Reconnect button now restarts the proxy
+
+- **`ProxyManager.restart()`** (`proxy-manager.ts`): new method that stops the old process,
+  waits for the port to be released, and spawns a fresh proxy. Remembers the base port from
+  the first `start()` call so callers don't need to track it.
+
+- **`ChatSession.handleReconnect()`** (`chat-session.ts`): the `CheckHealth` handler now
+  calls an optional `reconnectFn` before starting the health polling. If the proxy is dead
+  and managed by `ProxyManager`, the reconnect function restarts it and updates the session's
+  connection URLs (port may change via `findFreePort`).
+
+- **Wiring** (`activation.ts`): `session.setReconnectHandler()` is called after
+  `ProxyManager` creation. The handler checks `proxyManager.isRunning` — if the process is
+  dead, it restarts and re-wires the port override. If the proxy is already running (e.g.
+  temporary network hiccup), only the health check runs.
+
+**Before:** clicking the reconnect button only pinged `/health`. If the proxy had crashed,
+the status stayed `Disconnected` and the button appeared to do nothing.
+
+**After:** clicking reconnect detects the dead process, restarts it, and reconnects.
+
+---
+
 ## [1.4.0] — 2026-04-12
 
 ### Fixed — Multi-window proxy isolation

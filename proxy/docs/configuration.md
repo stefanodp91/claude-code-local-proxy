@@ -173,6 +173,60 @@ PLANS_DIR=docs/plans npm start
 
 The model's system prompt references this directory at runtime, so changing `PLANS_DIR` fully re-routes plan file creation without any code changes.
 
+### Agent Loop
+
+These variables control the agentic loop behaviour. Most values are derived automatically from the loaded model's context window — see **Adaptive behaviour** below.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `MAX_AGENT_ITERATIONS` | int | `40` | Hard cap on LLM ↔ tool iterations per agentic turn. The proxy derives the effective limit from the model's context window; use this to impose a lower ceiling regardless of context size (e.g. `MAX_AGENT_ITERATIONS=5` to prevent runaway loops during debugging). |
+
+**Adaptive iteration limit:**
+
+The proxy automatically adjusts the effective iteration ceiling based on `loadedContextLength` — recomputed on every turn, so model changes take effect immediately:
+
+```
+Context window    Effective limit    Notes
+─────────────     ───────────────    ─────────────────────────────────────
+unknown           20                 Context info unavailable (non-LM Studio backend)
+≤ 8 K             10                 Tiny models — each tool result ~500–1000 tokens
+8–32 K            20                 Small/medium context
+32–64 K           30                 Medium-large context
+≥ 64 K            40                 Large context (capped by MAX_AGENT_ITERATIONS)
+```
+
+`MAX_AGENT_ITERATIONS` is a ceiling: `effective = min(adaptive, MAX_AGENT_ITERATIONS)`.
+
+### Context Compaction
+
+When the conversation history exceeds 80% of the model's context window, the proxy compacts it before forwarding the request to the LLM. By default, it uses an LLM summarization call instead of naively dropping messages.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `SEMANTIC_COMPACT` | bool | `true` | When `true`, the proxy makes an LLM summarization call to compress old messages instead of dropping them. Set to `false` to revert to naive message trimming. |
+| `SUMMARY_MAX_TOKENS` | int | `512` | Max `max_tokens` for the summarization call. Also capped at `~2%` of the model's context window — see adaptive behaviour below. |
+| `SUMMARY_TIMEOUT` | int | `15000` | Timeout in milliseconds for the summarization call. If the LLM does not respond within this window, the proxy falls back to naive trimming (no error surfaced to the client). |
+
+**Adaptive summary budget:**
+
+The effective token budget for the summary is `min(SUMMARY_MAX_TOKENS, max(256, floor(contextLength × 0.02)))`:
+
+```
+Context window    Effective summary budget (default SUMMARY_MAX_TOKENS=512)
+──────────────    ──────────────────────────────────────────────────────────
+8 K               160 tokens   (8000 × 0.02, floored to 256 → 256)
+32 K              512 tokens   (min(512, 640) = 512)
+128 K             512 tokens   (min(512, 2560) = 512 — capped by config)
+```
+
+Setting `SUMMARY_MAX_TOKENS=1024` with a 128 K model would yield a 1024-token budget.
+
+**Compaction window:**
+
+The proxy summarizes `messages[1 .. N-3]` — it always preserves:
+- `messages[0]`: the original user request (anchor)
+- `messages[N-2], messages[N-1]`: the two most recent messages (live context)
+
 Locale files live in `proxy/locales/<locale>.json`. The `t()` function does `{{param}}` interpolation:
 
 ```json

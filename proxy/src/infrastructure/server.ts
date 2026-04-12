@@ -90,6 +90,7 @@ export class ProxyServer {
     this.nativeLoop = new NativeAgentLoopService(
       this.llm, this.approvalGate, this.planFiles, this.logger,
       () => this.modelInfo?.id ?? "unknown",
+      () => this.computeMaxIterations(),
     );
   }
 
@@ -151,6 +152,7 @@ export class ProxyServer {
       this.requestTranslator, this.responseTranslator, this.streamTranslator,
       this.slashInterceptor, this.logger,
       () => this.modelInfo, () => this.maxTools, this.config.targetUrl,
+      this.config.semanticCompact, this.computeSummaryMaxTokens(), this.config.summaryTimeout,
     );
     this.resolveApprovalUseCase = new ResolveApprovalUseCase(this.approvalInteractor);
   }
@@ -310,6 +312,34 @@ export class ProxyServer {
     const body = JSON.stringify(data);
     res.writeHead(status, { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) });
     res.end(body);
+  }
+
+  /**
+   * Derive the max agent-loop iterations from the loaded model's context window.
+   * `config.maxAgentIterations` acts as a hard cap (safety brake for runaway loops).
+   */
+  private computeMaxIterations(): number {
+    const ctx = this.modelInfo?.loadedContextLength ?? 0;
+    let adaptive: number;
+    if      (ctx <= 0)          adaptive = 20;  // context unknown → safe default
+    else if (ctx <   8_000)     adaptive = 10;  // tiny  (≤ 8 K)
+    else if (ctx <  32_000)     adaptive = 20;  // small (8–32 K)
+    else if (ctx <  64_000)     adaptive = 30;  // medium (32–64 K)
+    else                        adaptive = 40;  // large (≥ 64 K)
+    return Math.min(adaptive, this.config.maxAgentIterations);
+  }
+
+  /**
+   * Derive the max tokens for the LLM summarization call from the model's
+   * context window (~2 % of context, floored at 256, capped at the configured max).
+   */
+  private computeSummaryMaxTokens(): number {
+    const ctx = this.modelInfo?.loadedContextLength ?? 0;
+    if (ctx <= 0) return this.config.summaryMaxTokens;
+    return Math.min(
+      this.config.summaryMaxTokens,
+      Math.max(256, Math.floor(ctx * 0.02)),
+    );
   }
 
   private logModelInfo(): void {

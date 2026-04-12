@@ -12,7 +12,7 @@
 - **Esecuzione codice Python** — esegui snippet Python nella chat; il venv viene creato e gestito automaticamente
 - **Allegati file** — allega file di testo e immagini (PNG, JPG, GIF, WebP) alla conversazione
 - **Slash command** — comandi rapidi integrati (vedi tabella sotto)
-- **Health monitoring** — indicatore di connessione al proxy, riconnessione automatica ogni 10s
+- **Health monitoring** — indicatore di connessione al proxy, riconnessione automatica ogni 10s, pulsante di riconnessione manuale con restart automatico del proxy
 - **i18n** — interfaccia in Inglese e Italiano (segue la lingua configurata nel proxy)
 - **Thinking blocks** — visualizza i blocchi di ragionamento esteso del modello in un pannello espandibile
 

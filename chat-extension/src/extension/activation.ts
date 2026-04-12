@@ -51,6 +51,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       );
       // Non-fatal: ChatSession will try the configured port anyway
     }
+
+    // Wire reconnect: when the user presses the reconnect button and the proxy
+    // is dead, restart it and update the session's connection URLs.
+    session.setReconnectHandler(async () => {
+      if (!proxyManager.isRunning) {
+        await proxyManager.restart();
+        setProxyPortOverride(proxyManager.actualPort);
+        session.updateProxyConnection();
+      }
+    });
   }
 
   context.subscriptions.push(registerOpenChatCommand(context, session));

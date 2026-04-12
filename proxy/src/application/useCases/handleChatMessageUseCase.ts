@@ -48,32 +48,97 @@ const COMPACT_THRESHOLD = 0.80; // trigger at 80% of context window
 const COMPACT_TARGET    = 0.65; // trim down to 65% of context window
 
 /**
- * Compact `messages` in-place so their estimated token count stays under
- * `budgetTokens * COMPACT_THRESHOLD`. Returns the number of messages dropped.
+ * Naive fallback: drop old messages in-place until the estimated token count
+ * is below `budgetTokens * COMPACT_TARGET`. Keeps the first user message and
+ * the last 2 messages intact. Returns the number of messages dropped.
  */
-function compactMessages(messages: any[], budgetTokens: number): number {
-  if (budgetTokens <= 0) return 0;
-
-  const trigger = Math.floor(budgetTokens * COMPACT_THRESHOLD);
-  const target  = Math.floor(budgetTokens * COMPACT_TARGET);
-
-  if (estimateTokens(messages) <= trigger) return 0;
-
+function naiveCompact(messages: any[], budgetTokens: number): number {
+  const target = Math.floor(budgetTokens * COMPACT_TARGET);
   let dropped = 0;
-  // Keep index 0 (first user message) — drop from index 1 onward
   while (messages.length > 2 && estimateTokens(messages) > target) {
     messages.splice(1, 1);
     dropped++;
   }
-
   if (dropped > 0) {
     messages.splice(1, 0, {
       role: "user",
       content: `[${dropped} earlier message(s) were removed to fit the context window.]`,
     });
   }
-
   return dropped;
+}
+
+/**
+ * Attempt to summarize old messages via an LLM call and replace them with a
+ * single summary message. Returns the number of messages replaced, or 0 on
+ * failure (caller should fall back to naive compaction).
+ *
+ * The summarization call is wrapped in a timeout promise so a slow or
+ * unresponsive LLM does not block the main request indefinitely.
+ */
+async function semanticCompact(
+  messages: any[],
+  budgetTokens: number,
+  llm: LlmClientPort,
+  maxTokens: number,
+  timeoutMs: number,
+  logger: LoggerPort,
+): Promise<number> {
+  const target = Math.floor(budgetTokens * COMPACT_TARGET);
+  if (estimateTokens(messages) <= target) return 0;
+
+  // Summarize everything except: index 0 (first user msg) and the last 2 msgs
+  // (most recent context). Need at least 4 messages to be worth summarizing.
+  if (messages.length < 4) return 0;
+  const toSummarize = messages.slice(1, messages.length - 2);
+  if (toSummarize.length === 0) return 0;
+
+  const historyJson = JSON.stringify(toSummarize, null, 2);
+  const prompt = [
+    "Summarize this conversation history concisely.",
+    "Preserve: all file names, decisions made, code written, errors encountered, and current task context.",
+    "Output only the summary, no preamble.\n",
+    "<history>",
+    historyJson,
+    "</history>",
+  ].join("\n");
+
+  try {
+    const callPromise = llm.chat({
+      body: {
+        model: "default",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: maxTokens,
+        stream: false,
+      },
+      stream: false,
+    });
+    const timeoutPromise = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), timeoutMs),
+    );
+
+    const resp = await Promise.race([callPromise, timeoutPromise]);
+    if (!resp || !resp.ok || !resp.json) {
+      logger.dbg("[compact] semantic summary failed or timed out — falling back to naive");
+      return 0;
+    }
+
+    const summary: string =
+      resp.json.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!summary) return 0;
+
+    // Replace summarized messages with a single placeholder
+    messages.splice(1, toSummarize.length, {
+      role: "user",
+      content: `[Conversation summary — ${toSummarize.length} message(s) condensed]:\n${summary}`,
+    });
+
+    logger.info(`[compact] summarized ${toSummarize.length} message(s) via LLM`);
+    return toSummarize.length;
+  } catch (err) {
+    logger.dbg(`[compact] semantic summary error: ${String(err)} — falling back to naive`);
+    return 0;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,6 +193,9 @@ export class HandleChatMessageUseCase {
     private readonly modelInfoProvider: () => LoadedModelInfo | null,
     private readonly maxToolsProvider: () => number,
     private readonly targetUrl: string,
+    private readonly semanticCompactEnabled: boolean = true,
+    private readonly summaryMaxTokens: number = 512,
+    private readonly summaryTimeout: number = 15_000,
   ) {}
 
   async execute(
@@ -181,11 +249,24 @@ export class HandleChatMessageUseCase {
     // ── 3. Context compaction ──────────────────────────────────────────────
     const contextBudget = modelInfo?.loadedContextLength ?? 0;
     if (contextBudget > 0) {
-      const dropped = compactMessages(body.messages, contextBudget);
-      if (dropped > 0) {
-        this.logger.info(
-          `[compact] dropped ${dropped} message(s) to fit context window (${contextBudget} tokens)`,
-        );
+      const trigger = Math.floor(contextBudget * COMPACT_THRESHOLD);
+      if (estimateTokens(body.messages) > trigger) {
+        let compacted = 0;
+        if (this.semanticCompactEnabled) {
+          compacted = await semanticCompact(
+            body.messages, contextBudget,
+            this.llm, this.summaryMaxTokens, this.summaryTimeout, this.logger,
+          );
+        }
+        if (compacted === 0) {
+          // Semantic compaction was disabled, skipped, or failed — use naive fallback
+          const dropped = naiveCompact(body.messages, contextBudget);
+          if (dropped > 0) {
+            this.logger.info(
+              `[compact] dropped ${dropped} message(s) to fit context window (${contextBudget} tokens)`,
+            );
+          }
+        }
       }
     }
 

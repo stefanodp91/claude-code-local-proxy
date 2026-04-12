@@ -24,6 +24,8 @@ export class ProxyManager implements vscode.Disposable {
 
   /** The port the proxy is actually listening on. Set after a successful start(). */
   actualPort = 5678;
+  /** The base port passed to the first start() call — used by restart(). */
+  private startPort = 5678;
 
   constructor(
     private readonly proxyDir: string,
@@ -48,6 +50,7 @@ export class ProxyManager implements vscode.Disposable {
   // ── Public API ─────────────────────────────────────────────────────────────
 
   async start(basePort: number): Promise<void> {
+    this.startPort = basePort;
     await this.cleanupOrphan();
 
     const port = await this.findFreePort(basePort);
@@ -125,6 +128,13 @@ export class ProxyManager implements vscode.Disposable {
       );
       // Non-fatal: HealthChecker will continue polling
     }
+  }
+
+  async restart(): Promise<void> {
+    this.stop();
+    // Give the old process time to release the port
+    await new Promise((r) => setTimeout(r, 500));
+    await this.start(this.startPort);
   }
 
   stop(): void {

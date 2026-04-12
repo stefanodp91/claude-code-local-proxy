@@ -154,6 +154,8 @@ export class ChatSession implements vscode.Disposable {
   private readonly venvPath: string;
 
   private assistantBuffer = "";
+  /** Called by the reconnect button — restarts the proxy if managed and dead. */
+  private reconnectFn: (() => Promise<void>) | null = null;
 
   /** Workspace root passed as X-Workspace-Root to the proxy. */
   private readonly workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -243,7 +245,7 @@ export class ChatSession implements vscode.Disposable {
     );
     this.bridge.on(ToExtensionType.CancelStream, () => this.handleCancelStream());
     this.bridge.on(ToExtensionType.ClearHistory, () => this.handleClearHistory());
-    this.bridge.on(ToExtensionType.CheckHealth, () => this.healthChecker.start());
+    this.bridge.on(ToExtensionType.CheckHealth, () => void this.handleReconnect());
     this.bridge.on(ToExtensionType.ExecuteSlashCommand, (msg) =>
       void this.handleClientSlashCommand(msg.payload as SlashCommandPayload),
     );
@@ -357,7 +359,26 @@ export class ChatSession implements vscode.Disposable {
     this.healthChecker.updateBaseUrl(newBaseUrl);
   }
 
-  // ── Proxy config ────────────────────────────────────────────────────────────
+  /**
+   * Register a callback that attempts to restart the proxy before checking
+   * health. Called from `activation.ts` when `ProxyManager` is available.
+   */
+  setReconnectHandler(fn: () => Promise<void>): void {
+    this.reconnectFn = fn;
+  }
+
+  // ── Reconnect & Proxy config ────────────────────────────────────────────────
+
+  private async handleReconnect(): Promise<void> {
+    if (this.reconnectFn) {
+      try {
+        await this.reconnectFn();
+      } catch {
+        // Restart failed — health checker will report Disconnected
+      }
+    }
+    this.healthChecker.start();
+  }
 
   private async refreshProxyConfig(): Promise<void> {
     const vs = loadVsCodeSettings();
