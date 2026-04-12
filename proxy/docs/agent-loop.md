@@ -99,11 +99,11 @@ A single OpenAI tool slot with an `action` discriminator keeps the tool count at
   type: "function",
   function: {
     name: "workspace",
-    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash",
+    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash, python",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list","read","grep","glob","write","edit","bash"] },
+        action: { type: "string", enum: ["list","read","grep","glob","write","edit","bash","python"] },
         path:    { type: "string" },
         pattern: { type: "string" },
         include: { type: "string" },
@@ -170,7 +170,7 @@ NativeAgentLoopService.run(writer, openaiReq, workspaceCwd, thinkingEnabled):
         │     │
         │     ├── 2. Classify remaining calls:
         │     │     read-only  = [list, read, grep, glob]
-        │     │     destructive = [write, edit, bash]
+        │     │     destructive = [write, edit, bash, python]
         │     │
         │     ├── 3. Execute read-only calls in PARALLEL (Promise.all)
         │     │     No SSE emitted during execution — only results collected
@@ -192,6 +192,8 @@ NativeAgentLoopService.run(writer, openaiReq, workspaceCwd, thinkingEnabled):
 **Parallel read-only execution**: when the model requests multiple reads in a single turn (e.g. "compare these 3 files"), the proxy dispatches `list`/`read`/`grep`/`glob` actions concurrently. Execution time is bounded by the slowest action rather than their sum.
 
 **Destructive actions remain sequential**: the approval gate presents one modal at a time. If the user approves with `scope="turn"`, all remaining destructive actions in that turn are auto-approved via `state.allowAllThisTurn`.
+
+**Python execution** (`action="python"`): classified as destructive (approval gate required). The `cmd` parameter contains Python source code. The proxy runs it in a per-workspace venv at `<workspaceCwd>/<PYTHON_VENV_DIR>`. Missing packages are auto-installed; `plt.show()` is intercepted and the plot returned as base64 PNG.
 
 ---
 
@@ -283,7 +285,7 @@ Both Path A and Path B produce identical Anthropic SSE `tool_use` blocks. Client
 
 ## Permission Gate
 
-Read-only actions (`list`, `read`, `grep`, `glob`) execute immediately. Destructive actions (`write`, `edit`, `bash`) emit a `tool_request_pending` SSE event and suspend the loop until the user responds.
+Read-only actions (`list`, `read`, `grep`, `glob`) execute immediately. Destructive actions (`write`, `edit`, `bash`, `python`) emit a `tool_request_pending` SSE event and suspend the loop until the user responds.
 
 Full wire format and implementation details: [permission-protocol.md](permission-protocol.md).
 

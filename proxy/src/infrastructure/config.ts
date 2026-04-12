@@ -126,6 +126,14 @@ export interface ProxyConfig {
    */
   maxAgentIterations: number;
 
+  // ── Python execution ──
+
+  /**
+   * Directory (relative to workspaceCwd) for the Python virtual environment
+   * used by workspace action `python` and the `/v1/exec-python` endpoint.
+   */
+  pythonVenvDir: string;
+
   // ── Context compaction ──
 
   /**
@@ -199,6 +207,9 @@ const DEFAULT_ENABLE_THINKING = true;
 
 /** Default plans directory — relative to the workspace root. */
 const DEFAULT_PLANS_DIR = ".claudio/plans";
+
+/** Default Python venv directory — relative to the workspace root. */
+const DEFAULT_PYTHON_VENV_DIR = ".claudio/python-venv";
 
 /**
  * Hard cap on agentic loop iterations. The proxy derives the actual limit
@@ -316,6 +327,9 @@ export function loadConfig(): ProxyConfig {
 
     // Agent loop
     maxAgentIterations:      envInt("MAX_AGENT_ITERATIONS", DEFAULT_MAX_AGENT_ITERATIONS),
+
+    // Python execution
+    pythonVenvDir:           env("PYTHON_VENV_DIR", DEFAULT_PYTHON_VENV_DIR),
 
     // Context compaction
     semanticCompact:         envBool("SEMANTIC_COMPACT", DEFAULT_SEMANTIC_COMPACT),

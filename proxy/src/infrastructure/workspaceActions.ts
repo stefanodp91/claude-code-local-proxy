@@ -34,6 +34,7 @@ import {
 } from "node:fs";
 import { execSync, spawnSync } from "node:child_process";
 import { resolve, join, relative, dirname } from "node:path";
+import { executePythonCode } from "./pythonExecutor";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -96,9 +97,16 @@ export type ApprovalGate = (action: string, args: ActionArgs) => Promise<boolean
  *
  * @param args         - action name plus action-specific parameters
  * @param workspaceCwd - absolute path to the workspace root
+ * @param venvDir      - relative path (from workspaceCwd) to the Python venv;
+ *                       only used for action='python'. Defaults to the proxy
+ *                       config default `.claudio/python-venv`.
  * @returns            - a string result, never throws
  */
-export function executeAction(args: ActionArgs, workspaceCwd: string): string {
+export async function executeAction(
+  args: ActionArgs,
+  workspaceCwd: string,
+  venvDir = ".claudio/python-venv",
+): Promise<string> {
   try {
     switch (args.action) {
       case WorkspaceAction.List:
@@ -115,6 +123,11 @@ export function executeAction(args: ActionArgs, workspaceCwd: string): string {
         return actionEdit(args, workspaceCwd);
       case WorkspaceAction.Bash:
         return actionBash(args, workspaceCwd);
+      case WorkspaceAction.Python: {
+        if (!args.cmd) return "Error: 'cmd' is required for action='python'";
+        const result = await executePythonCode(args.cmd, workspaceCwd, venvDir, () => {});
+        return result.type === "error" ? `Error: ${result.data}` : result.data;
+      }
       default:
         return `Error: unknown action '${args.action}'. Valid actions: ${Object.values(WorkspaceAction).join(", ")}`;
     }

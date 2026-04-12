@@ -16,6 +16,7 @@ export interface ProxyRequest {
   messages: ConversationMessage[];
   config: ChatConfig;
   workspaceRoot?: string;
+  planExitPath?: string | null;
 }
 
 export class ProxyClient {
@@ -35,7 +36,7 @@ export class ProxyClient {
   async *sendMessage(request: ProxyRequest): AsyncGenerator<SseEvent> {
     this.abortController = new AbortController();
 
-    const { messages, config, workspaceRoot } = request;
+    const { messages, config, workspaceRoot, planExitPath } = request;
 
     const body: Record<string, any> = {
       model: "default",
@@ -58,6 +59,9 @@ export class ProxyClient {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (workspaceRoot) {
       headers["x-workspace-root"] = workspaceRoot;
+    }
+    if (planExitPath) {
+      headers["x-plan-exit-path"] = planExitPath;
     }
 
     const res = await fetch(`${this.baseUrl}/v1/messages`, {
@@ -99,6 +103,55 @@ export class ProxyClient {
     } finally {
       reader.releaseLock();
       this.abortController = null;
+    }
+  }
+
+  /**
+   * Execute a Python code snippet on the proxy and yield SSE events.
+   * The proxy emits `progress` events (phase: string) followed by a
+   * `result` event ({ type: "text"|"image"|"error", data: string }).
+   *
+   * No approval gate — the user explicitly clicked Run.
+   */
+  async *execPython(
+    code: string,
+    workspaceCwd: string,
+  ): AsyncGenerator<SseEvent> {
+    const res = await fetch(`${this.baseUrl}/v1/exec-python`, {
+      method: "POST",
+      headers: {
+        "Content-Type":    "application/json",
+        "x-workspace-root": workspaceCwd,
+      },
+      body: JSON.stringify({ code }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "Unknown error");
+      throw new Error(`Proxy exec-python failed ${res.status}: ${text}`);
+    }
+
+    if (!res.body) {
+      throw new Error("No response body from proxy exec-python");
+    }
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    const parser  = new SseParser();
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          for (const evt of parser.flush()) yield evt;
+          break;
+        }
+        for (const evt of parser.feed(decoder.decode(value, { stream: true }))) {
+          yield evt;
+        }
+      }
+    } finally {
+      reader.releaseLock();
     }
   }
 

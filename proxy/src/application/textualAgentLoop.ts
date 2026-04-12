@@ -155,6 +155,7 @@ export async function runTextualAgentLoop(
   modelId: string,
   logger: ILogger,
   approvalGate?: TextualApprovalGate,
+  venvDir = ".claudio/python-venv",
 ): Promise<void> {
   // Strip any tool-related fields — this model cannot use them.
   const baseReq = { ...openaiReq, tools: undefined, tool_choice: undefined };
@@ -302,7 +303,7 @@ export async function runTextualAgentLoop(
     if (ACTION_CLASSIFICATION[actionArgs.action] === ActionClass.Destructive && approvalGate) {
       if (allowAllThisTurn) {
         logger.dbg(`[workspace/textual] ${actionArgs.action} auto-approved (allowAllThisTurn)`);
-        actionResult = executeAction(actionArgs, workspaceCwd);
+        actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
       } else {
         const approval = await approvalGate(actionArgs.action, actionArgs, writeSSE);
         if (approval.scope === "turn" && approval.approved) {
@@ -312,11 +313,11 @@ export async function runTextualAgentLoop(
           logger.dbg(`[workspace/textual] ${actionArgs.action} denied by user`);
           actionResult = `Action '${actionArgs.action}' was denied by the user.`;
         } else {
-          actionResult = executeAction(actionArgs, workspaceCwd);
+          actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
         }
       }
     } else {
-      actionResult = executeAction(actionArgs, workspaceCwd);
+      actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
     }
     logger.dbg(
       `[workspace/textual] ${actionArgs.action} "${actionArgs.path ?? ""}" → ${actionResult.slice(0, 120)}`,

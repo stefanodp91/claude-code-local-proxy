@@ -173,6 +173,16 @@ PLANS_DIR=docs/plans npm start
 
 The model's system prompt references this directory at runtime, so changing `PLANS_DIR` fully re-routes plan file creation without any code changes.
 
+### Python Execution
+
+These variables control the Python execution engine used by the `python` workspace action and the `POST /v1/exec-python` endpoint.
+
+| Variable | Type | Default | Description |
+|---|---|---|---|
+| `PYTHON_VENV_DIR` | string | `.claudio/python-venv` | Directory (relative to the workspace root) where the proxy creates and manages the Python virtual environment. Each workspace gets its own isolated venv. |
+
+The proxy creates the venv on first use, installs base packages (`matplotlib`, `numpy`, `pandas`, `scipy`), and auto-installs any missing imports before each execution.
+
 ### Agent Loop
 
 These variables control the agentic loop behaviour. Most values are derived automatically from the loaded model's context window — see **Adaptive behaviour** below.

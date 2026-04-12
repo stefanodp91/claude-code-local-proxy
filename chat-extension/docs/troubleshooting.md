@@ -279,9 +279,12 @@ This is normal. Angular has many dependencies to compile. The first build can ta
 
 ## Python issues
 
+> Starting from v1.5.0, Python execution is handled by the **proxy** (not the extension).
+> The venv lives in `<workspace>/.claudio/python-venv` — not in VS Code's global storage.
+
 ### "Python not found" or "No Python interpreter found"
 
-**Cause:** Python 3 is not installed or not in PATH.
+**Cause:** Python 3 is not installed or not in PATH on the machine running the proxy.
 
 **Solution:**
 ```bash
@@ -299,27 +302,26 @@ python --version    # Windows
 
 ### Code execution fails with import errors
 
-**Cause:** the package is not yet installed in Claudio's venv.
+**Cause:** the package is not yet installed in the workspace venv.
 
-**Solution:** Claudio automatically installs common packages (matplotlib, numpy, pandas, scipy). For additional packages, add a `# pip install <package>` comment in the code — Claudio will see it and install the package.
+**Solution:** The proxy automatically installs common packages (`matplotlib`, `numpy`, `pandas`, `scipy`) on venv creation and auto-installs any missing import before each execution. For additional packages, add a `# pip install <package>` comment in the code.
 
-Alternatively, install manually in the venv:
+To install manually in the workspace venv:
 ```bash
-# Find the venv path (shown in the extension logs)
-# Typically: ~/.config/Code/User/globalStorage/local.claudio/.claudio-venv
-~/.config/Code/User/globalStorage/local.claudio/.claudio-venv/bin/pip install <package>
+# From workspace root:
+.claudio/python-venv/bin/pip install <package>
 ```
 
 ---
 
 ### matplotlib plot doesn't appear
 
-**Expected behavior:** `plt.show()` is intercepted by Claudio and replaced with saving the plot as PNG. The plot is shown as an image in the chat.
+**Expected behavior:** `plt.show()` is intercepted by the proxy and replaced with saving the plot as PNG. The plot is shown as an image in the chat.
 
 **If the plot doesn't appear:**
 1. Make sure the code calls `plt.show()` (not just `plt.savefig()`)
-2. Check the extension logs for Python errors
-3. Make sure matplotlib is installed in the venv
+2. Check the **Claudio Proxy** output channel (View → Output → "Claudio Proxy") for Python errors
+3. Make sure matplotlib is installed: `.claudio/python-venv/bin/pip list | grep matplotlib`
 
 ---
 

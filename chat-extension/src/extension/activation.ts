@@ -21,7 +21,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Create the session FIRST so ProxyManager can route errors through
   // `session.notify(...)` (which surfaces them as embedded banners once the
   // webview is attached; otherwise buffers until attachment).
-  const session = new ChatSession(context.extensionUri, context.globalStoragePath, context.workspaceState);
+  const session = new ChatSession(context.extensionUri, context.workspaceState);
   context.subscriptions.push(session);
 
   // ── Optional proxy lifecycle management ──────────────────────────────────

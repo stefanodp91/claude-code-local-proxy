@@ -10,11 +10,6 @@
  */
 
 import * as vscode from "vscode";
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { writeFile, readFile, unlink, mkdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { WebviewBridge } from "./webview/webview-bridge";
 import { ProxyClient } from "./proxy/proxy-client";
@@ -54,86 +49,6 @@ import {
 } from "./config/extension-config";
 import type { ConversationMessage, AnthropicContentBlock } from "./models/chat-message.model";
 
-/** Remove ANSI/VT100 escape codes from a string. */
-const stripAnsi = (s: string): string => s.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "");
-
-// ── Python execution helpers ──────────────────────────────────────────────────
-
-/** Cases where the import name differs from the PyPI package name. */
-const IMPORT_TO_PACKAGE: Record<string, string> = {
-  PIL:      "Pillow",
-  cv2:      "opencv-python",
-  sklearn:  "scikit-learn",
-  bs4:      "beautifulsoup4",
-  yaml:     "PyYAML",
-  dotenv:   "python-dotenv",
-  attr:     "attrs",
-  jwt:      "PyJWT",
-  dateutil: "python-dateutil",
-  Crypto:   "pycryptodome",
-  google:   "google-cloud",
-  wx:       "wxPython",
-};
-
-function extractImports(code: string): string[] {
-  const modules = new Set<string>();
-  for (const m of code.matchAll(/^\s*import\s+([\w.]+)/gm))
-    modules.add(m[1].split(".")[0]);
-  for (const m of code.matchAll(/^\s*from\s+([\w.]+)\s+import/gm))
-    modules.add(m[1].split(".")[0]);
-  return [...modules];
-}
-
-async function findMissingModules(python: string, modules: string[]): Promise<string[]> {
-  if (modules.length === 0) return [];
-  const check = [
-    "import importlib.util",
-    `modules = ${JSON.stringify(modules)}`,
-    "missing = [m for m in modules if importlib.util.find_spec(m) is None]",
-    'print("\\n".join(missing))',
-  ].join("\n");
-  const { stdout } = await runProcess(python, ["-c", check], 10_000);
-  return stdout.trim() ? stdout.trim().split("\n") : [];
-}
-
-const PYTHON_CANDIDATES = [
-  "python3",
-  "python",
-  "/usr/bin/python3",
-  "/opt/homebrew/bin/python3",
-  "/usr/local/bin/python3",
-  "/opt/local/bin/python3",
-];
-
-async function findSystemPython(): Promise<string | null> {
-  for (const cmd of PYTHON_CANDIDATES) {
-    const found = await new Promise<boolean>((resolve) => {
-      const p = spawn(cmd, ["--version"]);
-      p.on("close", (code) => resolve(code === 0));
-      p.on("error", () => resolve(false));
-    });
-    if (found) return cmd;
-  }
-  return null;
-}
-
-async function runProcess(
-  cmd: string,
-  args: string[],
-  timeoutMs = 30_000,
-  cwd?: string,
-): Promise<{ stdout: string; stderr: string }> {
-  return new Promise((resolve) => {
-    let stdout = "";
-    let stderr = "";
-    const proc = spawn(cmd, args, { timeout: timeoutMs, cwd });
-    proc.stdout.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.on("close", () => resolve({ stdout, stderr }));
-    proc.on("error", (e) => resolve({ stdout, stderr: e.message }));
-  });
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CONV_STATE_KEY = "claudio.conversation";
@@ -148,10 +63,6 @@ export class ChatSession implements vscode.Disposable {
 
   private bridge: WebviewBridge | null = null;
   private activeViewDisposeFn: (() => void) | null = null;
-
-  /** Resolved path to the venv Python binary; null until first ensureVenv() call. */
-  private venvPython: string | null = null;
-  private readonly venvPath: string;
 
   private assistantBuffer = "";
   /** Called by the reconnect button — restarts the proxy if managed and dead. */
@@ -188,11 +99,8 @@ export class ChatSession implements vscode.Disposable {
 
   constructor(
     private readonly extensionUri: vscode.Uri,
-    private readonly globalStoragePath: string,
     private readonly workspaceState?: vscode.Memento,
   ) {
-    this.venvPath = join(globalStoragePath, ".claudio-venv");
-
     // Restore persisted conversation from workspaceState (survives VS Code reloads)
     const saved = this.workspaceState?.get<ConversationMessage[]>(CONV_STATE_KEY);
     if (saved?.length) {
@@ -439,7 +347,7 @@ export class ChatSession implements vscode.Disposable {
    * Captures `plan_mode_exit_suggestion` events into `this.pendingExitSuggestion`
    * for the caller to process after the stream ends.
    */
-  private async runProxyTurn(payload?: SendMessagePayload): Promise<void> {
+  private async runProxyTurn(payload?: SendMessagePayload, planExitPath?: string | null): Promise<void> {
     this.pendingExitSuggestion = null;
     try {
       for await (const sseEvent of this.proxyClient.sendMessage({
@@ -451,6 +359,7 @@ export class ChatSession implements vscode.Disposable {
           ...(payload?.systemPrompt !== undefined && { systemPrompt: payload.systemPrompt }),
         },
         workspaceRoot: this.workspaceRoot,
+        planExitPath,
       })) {
         // Custom event: proxy is requesting human approval for a destructive action.
         if (sseEvent.event === "tool_request_pending") {
@@ -541,37 +450,15 @@ export class ChatSession implements vscode.Disposable {
     // Switch the proxy mode (also broadcasts ConfigUpdate to the webview).
     await this.handleSetAgentMode(chosenMode);
 
-    // Pop the assistant suggestion message we just got — we don't want the
-    // re-run to see it as already-answered, otherwise the model in the new
-    // mode would think the turn is over.
-    if (
-      this.conversation.length > 0 &&
-      this.conversation[this.conversation.length - 1]?.role === "assistant"
-    ) {
+    // Pop the assistant suggestion message so the re-run sees a clean user turn.
+    if (this.conversation.at(-1)?.role === "assistant") {
       this.conversation.pop();
     }
-
-    // Augment the user's last message with the existing plan content so the
-    // model in auto/ask mode has the full plan in its prompt (the auto/ask
-    // system prompt does NOT inject existing plans the way plan mode does).
-    if (sugg.planPath && this.workspaceRoot) {
-      try {
-        const fullPath = join(this.workspaceRoot, sugg.planPath.replace(/\\/g, "/"));
-        const planContent = await readFile(fullPath, "utf-8");
-        const last = this.conversation[this.conversation.length - 1];
-        if (last?.role === "user" && typeof last.content === "string") {
-          last.content =
-            `[Existing plan from \`${sugg.planPath}\`]:\n\n${planContent}\n\n---\n\n${last.content}`;
-        }
-      } catch {
-        // Plan file unreadable — proceed without augmentation.
-      }
-    }
-
     this.persistConversation();
 
-    // Re-run the same conversation in the new mode.
-    await this.runProxyTurn();
+    // Proxy reads the plan file and prepends its content via the x-plan-exit-path
+    // header — no file I/O needed here.
+    await this.runProxyTurn(undefined, sugg.planPath);
   }
 
   /**
@@ -624,8 +511,7 @@ export class ChatSession implements vscode.Disposable {
     try { payload = JSON.parse(dataStr); } catch { return; }
     if (!this.workspaceRoot || !payload.path) return;
 
-    const fullPath = join(this.workspaceRoot, payload.path.replace(/\\/g, "/"));
-    const uri = vscode.Uri.file(fullPath);
+    const uri = vscode.Uri.joinPath(vscode.Uri.file(this.workspaceRoot), payload.path.replace(/\\/g, "/"));
 
     try {
       // Open rendered preview in the main editor area.
@@ -719,42 +605,6 @@ export class ChatSession implements vscode.Disposable {
     });
   }
 
-  private async ensureVenv(onProgress?: (phase: CodeProgressPhase) => void): Promise<string | null> {
-    if (this.venvPython) return this.venvPython;
-
-    const isWin = process.platform === "win32";
-    const venvBin = join(
-      this.venvPath,
-      isWin ? "Scripts" : "bin",
-      isWin ? "python.exe" : "python",
-    );
-
-    if (existsSync(venvBin)) {
-      this.venvPython = venvBin;
-      return venvBin;
-    }
-
-    const sysPy = await findSystemPython();
-    if (!sysPy) return null;
-
-    try {
-      await mkdir(this.venvPath, { recursive: true });
-      onProgress?.("creating_env");
-      await runProcess(sysPy, ["-m", "venv", this.venvPath], 60_000);
-      onProgress?.("installing_packages");
-      await runProcess(
-        venvBin,
-        ["-m", "pip", "install", "--quiet", "matplotlib", "numpy", "pandas", "scipy"],
-        120_000,
-      );
-      this.venvPython = venvBin;
-      return venvBin;
-    } catch {
-      this.venvPython = sysPy;
-      return sysPy;
-    }
-  }
-
   private async handleReadFiles(uris: string[]): Promise<void> {
     const attachments: Attachment[] = [];
     for (const uri of uris) {
@@ -782,59 +632,19 @@ export class ChatSession implements vscode.Disposable {
     const sendResult = (payload: CodeResultPayload) =>
       this.bridge?.send({ type: ToWebviewType.CodeResult, payload });
 
+    if (!this.workspaceRoot) {
+      sendResult({ type: "error", data: "No workspace root — open a folder in VS Code first." });
+      return;
+    }
+
     try {
-      const python = await this.ensureVenv((phase) => this.sendProgress(phase));
-      if (!python) {
-        sendResult({ type: "error", data: "Python non trovato. Installa Python 3 e riprova." });
-        return;
-      }
-
-      const missing = await findMissingModules(python, extractImports(code));
-      if (missing.length > 0) {
-        this.sendProgress("installing_packages");
-        await runProcess(
-          python,
-          ["-m", "pip", "install", "--quiet", ...missing.map((m) => IMPORT_TO_PACKAGE[m] ?? m)],
-          120_000,
-        );
-      }
-
-      this.sendProgress("executing");
-
-      const id = randomUUID();
-      const tmp = tmpdir();
-      const pyFile = join(tmp, `claudio_${id}.py`);
-      const imgFile = join(tmp, `claudio_${id}.png`);
-
-      const hasPlot = code.includes("plt.");
-      let modified = code.replace(
-        /plt\.show\(\s*\)/g,
-        `plt.savefig(r'${imgFile}', dpi=100, bbox_inches='tight'); plt.close()`,
-      );
-      if (hasPlot && !code.includes("plt.show()")) {
-        modified +=
-          `\ntry:\n  import matplotlib.pyplot as _plt\n  _plt.savefig(r'${imgFile}', dpi=100, bbox_inches='tight'); _plt.close()\nexcept Exception:\n  pass\n`;
-      }
-
-      try {
-        await writeFile(pyFile, modified, "utf-8");
-        const { stdout, stderr } = await runProcess(python, [pyFile], 30_000, tmp);
-
-        try {
-          const imgData = await readFile(imgFile);
-          sendResult({ type: "image", data: imgData.toString("base64") });
-          await unlink(imgFile).catch(() => undefined);
-        } catch {
-          const cleanOut = stripAnsi(stdout.trim());
-          const cleanErr = stripAnsi(stderr.trim());
-          if (cleanErr && !cleanOut) {
-            sendResult({ type: "error", data: cleanErr });
-          } else {
-            sendResult({ type: "text", data: cleanOut || "(nessun output)" });
-          }
+      for await (const evt of this.proxyClient.execPython(code, this.workspaceRoot)) {
+        if (evt.event === "progress") {
+          const { phase } = JSON.parse(evt.data) as { phase: CodeProgressPhase };
+          this.sendProgress(phase);
+        } else if (evt.event === "result") {
+          sendResult(JSON.parse(evt.data) as CodeResultPayload);
         }
-      } finally {
-        await unlink(pyFile).catch(() => undefined);
       }
     } catch (err: any) {
       sendResult({ type: "error", data: String(err?.message ?? err) });

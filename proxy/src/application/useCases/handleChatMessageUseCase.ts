@@ -196,6 +196,7 @@ export class HandleChatMessageUseCase {
     private readonly semanticCompactEnabled: boolean = true,
     private readonly summaryMaxTokens: number = 512,
     private readonly summaryTimeout: number = 15_000,
+    private readonly venvDir: string = ".claudio/python-venv",
   ) {}
 
   async execute(
@@ -306,6 +307,7 @@ export class HandleChatMessageUseCase {
           modelInfo?.id ?? openaiReq.model ?? "unknown",
           this.logger,
           this.makeTextualApprovalGate(workspaceCwd),
+          this.venvDir,
         );
         return { type: "handled", llmReachable: null };
       }

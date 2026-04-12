@@ -142,6 +142,11 @@ export class NativeAgentLoopService {
      * changes detected by the server's poll loop.
      */
     private readonly maxIterationsResolver: () => number,
+    /**
+     * Relative path (from workspaceCwd) to the Python virtual environment.
+     * Forwarded to executeAction() for action='python'.
+     */
+    private readonly venvDir: string = ".claudio/python-venv",
   ) {}
 
   // ── Public entry point ────────────────────────────────────────────────────
@@ -524,12 +529,12 @@ export class NativeAgentLoopService {
         this.logger.dbg(`[workspace] ${args.action} denied by user`);
         result = `Action '${args.action}' was denied by the user.`;
       } else {
-        result = executeAction(args, workspaceCwd);
+        result = await executeAction(args, workspaceCwd, this.venvDir);
         if (emitPlanFileCreated(args, writeSSE, this.planFiles)) state.planFileWritten = true;
       }
     } else {
       // Read-only action: execute without gating.
-      result = executeAction(args, workspaceCwd);
+      result = await executeAction(args, workspaceCwd, this.venvDir);
     }
 
     this.logger.dbg(`[workspace] ${args.action} "${(args as any).path ?? ""}" → ${result.slice(0, 120)}`);

@@ -5,6 +5,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.5.0] — 2026-04-12
+
+### Changed — Python execution moved to proxy
+
+- **Python execution is now handled by the proxy** (`POST /v1/exec-python`).
+  The extension's `handleExecuteCode()` is now a thin relay: it streams SSE
+  events from the proxy and forwards `progress`/`result` events to the webview.
+  ~150 lines of venv management, pip-install, subprocess, and matplotlib
+  interception code removed from `chat-session.ts`.
+
+- **Per-workspace venv**: the proxy creates the venv at
+  `<workspaceCwd>/.claudio/python-venv` (configurable via `PYTHON_VENV_DIR`),
+  not in VS Code's `globalStoragePath`. Each workspace gets its own isolated
+  environment.
+
+- **`globalStoragePath` removed from `ChatSession` constructor**: no longer
+  needed since the venv is managed by the proxy.
+
+### Changed — Plan exit orchestration moved to proxy
+
+- **`handlePlanExitSuggestion()`** no longer reads the plan file from disk or
+  mutates `last.content`. Instead it passes a `planExitPath` argument to
+  `runProxyTurn()`, which sends the `X-Plan-Exit-Path` header to the proxy.
+  The proxy reads the file and prepends its content server-side.
+
+- **`ProxyRequest.planExitPath`** and **`ProxyClient.execPython()`** added to
+  `proxy-client.ts` for the two new extension→proxy interactions.
+
+---
+
 ## [1.4.1] — 2026-04-12
 
 ### Fixed — Reconnect button now restarts the proxy

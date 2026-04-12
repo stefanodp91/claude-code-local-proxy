@@ -5,6 +5,49 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.4.0] — 2026-04-12
+
+### Added — Python execution engine
+
+- **`pythonExecutor.ts`** (`infrastructure/`): new module that owns the full
+  Python execution lifecycle — venv creation, missing-package detection and
+  auto-install (`pip`), matplotlib `plt.show()` interception (returns base64
+  PNG), and code execution with a 30-second timeout. Per-workspace venv at
+  `<workspaceCwd>/<PYTHON_VENV_DIR>` (default `.claudio/python-venv`).
+
+- **`python` workspace action** (`WorkspaceAction.Python`): the agent loop can
+  now execute Python snippets via `workspace(action="python", cmd="…")`.
+  Classified as `Destructive` — requires user approval before execution, same
+  as `bash`. The `cmd` parameter carries the Python source code.
+
+- **`POST /v1/exec-python`** endpoint: SSE stream for the Run button in the
+  chat UI. Emits `progress` events (`creating_env`, `installing_packages`,
+  `executing`) followed by a single `result` event
+  (`{type:"text"|"image"|"error", data:string}`). No approval gate — the
+  user explicitly clicked Run.
+
+- **`PYTHON_VENV_DIR`** config variable: controls the venv location relative
+  to the workspace root. Default: `.claudio/python-venv`.
+
+- **`X-Plan-Exit-Path` header** (`POST /v1/messages`): when the extension
+  sends this header, the proxy reads the plan file from disk and prepends its
+  content to the last user message. Removes plan-file I/O from the extension;
+  includes a path-traversal guard (resolved path must stay within `workspaceCwd`).
+
+### Changed — Agent loop internals
+
+- `executeAction()` is now `async` — required for the Python case which awaits
+  `executePythonCode()`. All five call sites in `nativeAgentLoopService.ts`
+  and `textualAgentLoop.ts` updated with `await`.
+- `NativeAgentLoopService` constructor gained an optional `venvDir` parameter
+  (default `.claudio/python-venv`); forwarded to `executeAction()`.
+- `runTextualAgentLoop()` gained an optional `venvDir` parameter; forwarded
+  to `executeAction()`.
+- `HandleChatMessageUseCase` constructor gained an optional `venvDir`
+  parameter; forwarded to `runTextualAgentLoop()`.
+
+---
+
 ## [1.3.0] — 2026-04-12
 
 ### Added — Advanced agent loop features

@@ -149,10 +149,11 @@ Claudio può eseguire snippet Python direttamente nella chat:
 2. Clicca il pulsante ▶ che appare sopra il blocco di codice
 3. L'output viene mostrato sotto il blocco
 
-**Gestione automatica dell'ambiente:**
-- Al primo utilizzo, Claudio crea un venv in `.claudio-venv` nella cartella global storage di VS Code
-- I pacchetti mancanti (matplotlib, numpy, pandas, scipy) vengono installati automaticamente
+**Gestione automatica dell'ambiente** (gestita dal proxy, non dall'estensione):
+- Al primo utilizzo, il proxy crea un venv in `.claudio/python-venv` nella root del workspace
+- I pacchetti mancanti vengono rilevati e installati automaticamente prima di ogni esecuzione
 - I grafici matplotlib (`plt.show()`) vengono catturati e mostrati come immagine PNG nella chat
+- L'LLM può eseguire Python direttamente nel loop agente via `workspace(action="python", ...)`
 
 **Fasi di esecuzione** mostrate nella UI:
 - `Creating virtual environment...`
@@ -205,7 +206,7 @@ In VS Code: apri il pannello Claudio → l'indicatore mostra `● Connected` →
 | Icona Claudio non visibile | Estensione non attivata | Controlla Extensions panel → cerca "Claudio" → assicurati che sia abilitata |
 | Indicatore rosso anche col proxy attivo | Host/porta errati nelle impostazioni | Controlla `claudio.proxyHost` e `claudio.proxyPort` in VS Code settings |
 | Risposta `503 Proxy is still initializing` | `initializeTools()` ancora in esecuzione | Attendi 5–30s per il probe in background, poi riprova |
-| "Python not found" nell'esecuzione codice | Python 3 non in PATH | Installa Python 3.8+ da https://python.org |
+| "Python not found" nell'esecuzione codice | Python 3 non in PATH sul server proxy | Installa Python 3.8+ da https://python.org |
 | `npm run build` fallisce sulla webview | Dipendenze Angular mancanti | Esegui `cd src/webview-ui && npm install` prima di `npm run build` |
 | `npm run package` fallisce | `@vscode/vsce` non trovato | Esegui `npm install` nella root di `chat-extension/` |
 | L'estensione si installa ma crasha all'attivazione | `dist/extension.js` mancante | Esegui `npm run build` prima di `npm run package` |

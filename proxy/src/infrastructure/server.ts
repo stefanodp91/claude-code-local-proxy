@@ -6,6 +6,7 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -42,6 +43,7 @@ import { SseApprovalInteractor } from "./adapters/sseApprovalInteractor";
 import { loadOldContent, checkAutoApprove } from "./adapters/autoApproveConfig";
 import { ToolLimitDetector } from "./toolLimitDetector";
 import { ThinkingDetector } from "./thinkingDetector";
+import { executePythonCode } from "./pythonExecutor";
 import type { PlanFileRepositoryPort } from "../domain/ports";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -91,6 +93,7 @@ export class ProxyServer {
       this.llm, this.approvalGate, this.planFiles, this.logger,
       () => this.modelInfo?.id ?? "unknown",
       () => this.computeMaxIterations(),
+      this.config.pythonVenvDir,
     );
   }
 
@@ -153,6 +156,7 @@ export class ProxyServer {
       this.slashInterceptor, this.logger,
       () => this.modelInfo, () => this.maxTools, this.config.targetUrl,
       this.config.semanticCompact, this.computeSummaryMaxTokens(), this.config.summaryTimeout,
+      this.config.pythonVenvDir,
     );
     this.resolveApprovalUseCase = new ResolveApprovalUseCase(this.approvalInteractor);
   }
@@ -243,6 +247,34 @@ export class ProxyServer {
       }
     }
 
+    if (req.method === HttpMethod.Post && pathname === "/v1/exec-python") {
+      const workspaceCwd = req.headers["x-workspace-root"] as string | undefined;
+      let code: string;
+      try {
+        ({ code } = JSON.parse(await readBody(req)) as { code: string });
+      } catch {
+        return this.sendJson(res, 400, { error: "invalid JSON body" });
+      }
+      if (!workspaceCwd || !code) {
+        return this.sendJson(res, 400, { error: "x-workspace-root header and code body are required" });
+      }
+      res.writeHead(200, {
+        "Content-Type":  "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection":    "keep-alive",
+      });
+      const sendEvt = (event: string, data: object): void => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      const result = await executePythonCode(
+        code, workspaceCwd, this.config.pythonVenvDir,
+        (phase) => sendEvt("progress", { phase }),
+      );
+      sendEvt("result", result);
+      res.end();
+      return;
+    }
+
     if (req.method === HttpMethod.Post && pathname === ProxyEndpoint.Messages) {
       if (!this.requestTranslator || this.reinitializing) {
         return this.sendJson(res, 503, { type: "error", error: { type: "api_error", message: t("server.notReady") } });
@@ -254,6 +286,26 @@ export class ProxyServer {
         return this.sendJson(res, 400, { type: "error", error: { type: "api_error", message: t("request.invalidJson") } });
       }
       const workspaceCwd = req.headers["x-workspace-root"] as string | undefined;
+
+      // Plan exit: read the plan file from disk and prepend its content to the
+      // last user message. The extension pops the assistant turn and switches
+      // agent mode before this call; the proxy injects the plan so the model
+      // has the full context for the execution turn.
+      const planExitPath = req.headers["x-plan-exit-path"] as string | undefined;
+      if (planExitPath && workspaceCwd) {
+        try {
+          const resolved = resolve(workspaceCwd, planExitPath.replace(/\\/g, "/"));
+          if (resolved.startsWith(workspaceCwd)) {          // path-traversal guard
+            const planContent = readFileSync(resolved, "utf-8");
+            const lastMsg = body.messages?.at(-1);
+            if (lastMsg?.role === "user" && typeof lastMsg.content === "string") {
+              lastMsg.content =
+                `[Existing plan from \`${planExitPath}\`]:\n\n${planContent}\n\n---\n\n${lastMsg.content}`;
+            }
+          }
+        } catch { /* plan file unreadable — proceed without prepending */ }
+      }
+
       const result = await this.handleChatUseCase.execute({ body, workspaceCwd }, new NodeSseWriter(res));
       if (result.type === "json") this.sendJson(res, result.status, result.body);
       if (result.llmReachable !== null) this.llmReachable = result.llmReachable;

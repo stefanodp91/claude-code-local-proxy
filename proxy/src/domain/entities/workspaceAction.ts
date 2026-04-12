@@ -30,6 +30,7 @@ export enum WorkspaceAction {
   Write        = "write",
   Edit         = "edit",
   Bash         = "bash",
+  Python       = "python",
   ExitPlanMode = "exit_plan_mode",
 }
 
@@ -47,13 +48,14 @@ export enum ActionClass {
 }
 
 export const ACTION_CLASSIFICATION: Record<string, ActionClass> = {
-  [WorkspaceAction.List]:  ActionClass.ReadOnly,
-  [WorkspaceAction.Read]:  ActionClass.ReadOnly,
-  [WorkspaceAction.Grep]:  ActionClass.ReadOnly,
-  [WorkspaceAction.Glob]:  ActionClass.ReadOnly,
-  [WorkspaceAction.Write]: ActionClass.Destructive,
-  [WorkspaceAction.Edit]:  ActionClass.Destructive,
-  [WorkspaceAction.Bash]:  ActionClass.Destructive,
+  [WorkspaceAction.List]:   ActionClass.ReadOnly,
+  [WorkspaceAction.Read]:   ActionClass.ReadOnly,
+  [WorkspaceAction.Grep]:   ActionClass.ReadOnly,
+  [WorkspaceAction.Glob]:   ActionClass.ReadOnly,
+  [WorkspaceAction.Write]:  ActionClass.Destructive,
+  [WorkspaceAction.Edit]:   ActionClass.Destructive,
+  [WorkspaceAction.Bash]:   ActionClass.Destructive,
+  [WorkspaceAction.Python]: ActionClass.Destructive,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,6 +100,7 @@ export const WORKSPACE_TOOL_DEF = {
       "  write            – create or overwrite a file  ⚠ requires user approval",
       "  edit             – replace exact text in a file ⚠ requires user approval",
       "  bash             – run a shell command (30s timeout) ⚠ requires user approval",
+      "  python           – execute Python code in the workspace venv ⚠ requires user approval",
       "  exit_plan_mode   – signal that the user wants to leave Plan mode and",
       "                     start executing the existing plan. The proxy will",
       "                     prompt the user to confirm the mode switch. Only",
@@ -150,7 +153,8 @@ export const WORKSPACE_TOOL_DEF = {
           description:
             "For bash: the shell command to execute. " +
             "Runs in the workspace root with a 30-second timeout. " +
-            "Prefer specific read-only commands (wc, head, git log) over open-ended ones.",
+            "Prefer specific read-only commands (wc, head, git log) over open-ended ones. " +
+            "For python: the Python source code to execute in the workspace venv.",
         },
       },
       required: ["action"],
