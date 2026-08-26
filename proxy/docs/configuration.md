@@ -168,6 +168,7 @@ These variables control where plan files are written when the agent operates in 
 | Variable | Type | Default | Description |
 |---|---|---|---|
 | `PLANS_DIR` | string | `.claudio/plans` | Directory (relative to the workspace root) where the agent writes plan files in Plan mode. The agent resolves `<workspaceCwd>/<PLANS_DIR>/<slug>.md`. Writes inside this directory are auto-approved; writes outside are blocked by Plan mode. |
+| `MEMORY_FILE` | string | `.claudio/MEMORY.md` | Workspace-relative markdown file prepended to the system prompt when it exists — cross-session memory. Empty string disables it. Capped at 8 KB when injected. The model updates it through the ordinary `write` action, so updates pass the approval gate. |
 
 Example — use a different location:
 

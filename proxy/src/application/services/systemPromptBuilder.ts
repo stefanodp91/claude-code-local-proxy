@@ -19,6 +19,7 @@ import {
   PromptKey,
   type PromptRepositoryPort,
   type PlanFileRepositoryPort,
+  type MemoryRepositoryPort,
 } from "../../domain/ports";
 import { buildWorkspaceContextSummary } from "../workspaceTool";
 import { TEXTUAL_TOOL_MANUAL } from "../textualAgentLoop";
@@ -27,6 +28,7 @@ export class SystemPromptBuilder {
   constructor(
     private readonly prompts: PromptRepositoryPort,
     private readonly planFiles: PlanFileRepositoryPort,
+    private readonly memory: MemoryRepositoryPort,
   ) {}
 
   /**
@@ -39,10 +41,14 @@ export class SystemPromptBuilder {
    *                       tool manual and a static workspace summary.
    */
   build(workspaceCwd: string, mode: AgentMode, textualPath: boolean): string {
+    // Only what every template actually uses. A parameter a template never
+    // interpolates is silently dropped, so passing one everywhere just in case
+    // hides which prompt depends on what — `plansDir` went to the base prompt
+    // for exactly that reason and was never read.
     const base = {
-      cwd:      workspaceCwd,
-      cwdBase:  basename(workspaceCwd),
-      plansDir: this.planFiles.plansDirRelative,
+      cwd:           workspaceCwd,
+      cwdBase:       basename(workspaceCwd),
+      memorySection: this.buildMemorySection(workspaceCwd),
     };
 
     if (mode === AgentMode.Plan) {
@@ -78,9 +84,27 @@ export class SystemPromptBuilder {
 
     const prompt = this.prompts.get(PromptKey.PlanMode, {
       ...base,
+      plansDir: this.planFiles.plansDirRelative,
       existingPlanSection,
     });
     return this.appendTextualTail(prompt, workspaceCwd, textualPath);
+  }
+
+  /**
+   * Wrap whatever the workspace remembers from earlier sessions, or return an
+   * empty string.
+   *
+   * Empty rather than a "no memories yet" placeholder: every token spent on an
+   * empty section is taken from the conversation, and on these models the
+   * context window is the scarce resource in the whole project.
+   */
+  private buildMemorySection(workspaceCwd: string): string {
+    const remembered = this.memory.load(workspaceCwd);
+    if (!remembered) return "";
+    return this.prompts.get(PromptKey.MemorySection, {
+      memory:     remembered,
+      memoryPath: this.memory.relativePath,
+    });
   }
 
   /**

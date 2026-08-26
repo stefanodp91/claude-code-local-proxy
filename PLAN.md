@@ -112,12 +112,11 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **238 test** a ogni push.
+gira senza GPU accesa. Oggi sono **257 test** a ogni push.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
-> l'intercettore degli slash command, il prompt builder, il probing di avvio e
-> gli adapter sottili. L'elenco onesto è in
+> l'intercettore degli slash command, il probing di avvio e gli adapter sottili. L'elenco onesto è in
 > [`testing.md`](proxy/docs/testing.md#not-covered-yet). Coperto è *tutto ciò che
 > era nell'ordine d'attacco*, più i due loop, le azioni di workspace e il
 > compattatore.
@@ -276,7 +275,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 238 test / ~410 ms, senza GPU e senza rete.
+`npm test` in 257 test / ~430 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -345,9 +344,21 @@ Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
 
 In ordine di valore su un modello locale, non di parità con Claude Code.
 
-1. **Memoria cross-sessione.** Miglior rapporto valore/costo: un `MEMORY.md`
-   letto dal `SystemPromptBuilder`, che è già l'unico punto di iniezione.
-2. **Verificare il percorso immagini.** Il modello ora è `type: "vlm"` e la
+1. ~~**Memoria cross-sessione.**~~ — **fatta.** `.claudio/MEMORY.md`
+   (configurabile con `MEMORY_FILE`, stringa vuota per disattivarla) viene
+   anteposto al system prompt quando esiste, tramite un `MemoryRepositoryPort`
+   e il `SystemPromptBuilder` — che era già l'unico punto di iniezione.
+
+   **Nessuna azione nuova per scriverlo**, ed è la decisione di progetto che
+   conta: il modello aggiorna il file con il `write` ordinario, quindi ogni
+   aggiornamento passa dal gate di approvazione come qualunque altra scrittura.
+   Una via di scrittura dedicata sarebbe stata una seconda via, non sorvegliata.
+
+   Il prompt riceve la sezione *solo* se c'è del contenuto: niente intestazione
+   vuota, niente "(nessuna memoria)". Ogni token speso su una sezione vuota è
+   tolto alla conversazione, e su questi modelli la finestra è la risorsa scarsa
+   dell'intero progetto.
+2. **Verificare il percorso immagini.**  ← **prossimo** Il modello ora è `type: "vlm"` e la
    traduzione dei blocchi immagine → `image_url` esiste già a
    [`requestTranslator.ts:202`](proxy/src/application/requestTranslator.ts#L202).
    Claudio permette già di allegare immagini. Potrebbe funzionare end-to-end

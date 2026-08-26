@@ -83,6 +83,7 @@ sh start_agent_cli.sh
 - **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
 - **Unsupported-tools guard** — A CLI request carrying tools to a model that failed the probe is refused with a readable HTTP 400, instead of firing 40 tool definitions at a model that could not handle one
 - **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
+- **Cross-session memory** — `.claudio/MEMORY.md` (set by `MEMORY_FILE`) is prepended to the system prompt when present, so a decision made last week survives a restart. The model updates it through the ordinary `write` action, so updates pass the approval gate like any other
 - **i18n** — Externalized log/error messages with `{{param}}` interpolation
 - **Zero runtime dependencies** — `dependencies` is `{}`; only Node built-ins at runtime
 
@@ -190,7 +191,7 @@ from it, and it is never modified.
 ### Tests and CI
 
 ```bash
-cd proxy && npm test        # 238 tests, ~410 ms, no GPU and no model required
+cd proxy && npm test        # 257 tests, ~430 ms, no GPU and no model required
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```

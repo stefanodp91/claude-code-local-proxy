@@ -115,6 +115,8 @@ export interface ProxyConfig {
    * Configurable via the PLANS_DIR environment variable.
    */
   plansDir: string;
+  /** Workspace-relative memory file, or "" to disable cross-session memory. */
+  memoryFile: string;
 
   // ── Agent loop ──
 
@@ -226,6 +228,9 @@ const DEFAULT_ENABLE_THINKING = true;
 
 /** Default plans directory — relative to the workspace root. */
 const DEFAULT_PLANS_DIR = ".claudio/plans";
+
+/** Workspace-relative memory file. Empty disables cross-session memory entirely. */
+const DEFAULT_MEMORY_FILE = ".claudio/MEMORY.md";
 
 /** Default Python venv directory — relative to the workspace root. */
 const DEFAULT_PYTHON_VENV_DIR = ".claudio/python-venv";
@@ -343,6 +348,7 @@ export function loadConfig(): ProxyConfig {
 
     // Plan mode
     plansDir:                env("PLANS_DIR", DEFAULT_PLANS_DIR),
+    memoryFile:              env("MEMORY_FILE", DEFAULT_MEMORY_FILE),
 
     // Agent loop
     maxAgentIterations:      envInt("MAX_AGENT_ITERATIONS", DEFAULT_MAX_AGENT_ITERATIONS),

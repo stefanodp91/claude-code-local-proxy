@@ -635,7 +635,7 @@ model-specific logic.
 cd proxy && npm test
 ```
 
-238 tests, ~410 ms, no GPU, no LM Studio, no model loaded, no network. That is
+257 tests, ~430 ms, no GPU, no LM Studio, no model loaded, no network. That is
 the property that matters: it is why these can gate a pull request while
 `scripts/regression.sh` cannot.
 
@@ -653,6 +653,8 @@ the property that matters: it is why these can gate a pull request while
 | [`test/textualAgentLoop.test.ts`](test/textualAgentLoop.test.ts) | Path B — tag parsing across chunk boundaries, both documented tag forms, approval scopes, the iteration ceiling, and agreement between the tool manual and the parser |
 | [`test/nativeAgentLoop.test.ts`](test/nativeAgentLoop.test.ts) | Path A — the fallthrough contract, batched execution and its ordering, approval scopes, plan mode, the iteration ceiling, and a JSON reply to a streaming request |
 | [`test/contextCompactor.test.ts`](test/contextCompactor.test.ts) | Trimming a conversation to fit the window — both strategies, the timeout, and tool-call pairing surviving the trim in both message shapes |
+| [`test/systemPromptBuilder.test.ts`](test/systemPromptBuilder.test.ts) | What every request is prefixed with — mode selection, the textual tail, cross-session memory, and that every parameter the builder computes has a placeholder in the shipped template |
+| [`test/fsMemoryRepository.test.ts`](test/fsMemoryRepository.test.ts) | Reading the memory file — missing, empty, oversized, and paths that leave the workspace |
 
 Both suites exist because the bug they describe actually happened. `t()` returns
 the key itself when a lookup misses and locale files arrive through `JSON.parse`,
@@ -674,7 +676,7 @@ if it ever becomes a port, that test gets simpler on its own.
 
 Covered: everything on the Phase 1 priority list, both agent loops, the workspace
 actions and the compactor. Not covered: the routing use case, the slash
-interceptor, the prompt builder, startup probing, and the thin adapters —
+interceptor, startup probing, and the thin adapters —
 enumerated in [Testing](docs/testing.md#not-covered-yet), which also records what
 each suite pins and what it found.
 
@@ -930,12 +932,13 @@ was launched by Claudio, in the extension's output channel.
         workspaceActions.ts    Filesystem and shell execution
         persistentCache.ts     model-cache.json
         adapters/              fetchLlmClient, nodeSseWriter, sseApprovalInteractor,
+                               fsMemoryRepository,
                                fsPlanFileRepository, fsPromptRepository, systemClock,
                                autoApproveConfig
     test/                  node:test suites — see [Tests](#tests)
     docs/                  Long-form documentation (see [Documentation](#documentation))
     locales/               en_US.json — flat map, one level, strings only
-    prompts/en_US/         agent-base, plan-mode, existing-plan-section
+    prompts/en_US/         agent-base, plan-mode, existing-plan-section, memory-section
     scripts/regression.sh  Live-backend snapshot; needs a GPU, cannot run on CI
     model-cache.json       Per-model maxTools, written after a successful probe
     .env.proxy             Proxy configuration (git-ignored)

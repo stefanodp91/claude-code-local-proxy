@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 238 tests, ~410 ms
+npm test          # 257 tests, ~430 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -58,6 +58,8 @@ proxy/test/
   textualAgentLoop.test.ts     20 tests — Path B, the XML-tag loop
   nativeAgentLoop.test.ts      22 tests — Path A, the native tool-call loop
   contextCompactor.test.ts     20 tests — trimming a conversation to fit the window
+  systemPromptBuilder.test.ts  11 tests — what every request is prefixed with
+  fsMemoryRepository.test.ts    8 tests — reading the cross-session memory file
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -596,7 +598,6 @@ Counted honestly, these have no suite:
 |---|---|
 | `handleChatMessageUseCase` | The routing decision itself — which surface, which path, slash interception, prompt injection order. The largest genuine gap left |
 | `slashCommandInterceptor` | 8 proxy-side commands, several shelling out to git |
-| `systemPromptBuilder` | What every request is prefixed with |
 | `workspaceTool` | `buildWorkspaceContextSummary`, the static snapshot Path B leans on |
 | `modelInfo`, `thinkingProbe`, `thinkingDetector`, `toolLimitDetector` | Startup probing. `toolProbe` itself is covered; its orchestration is not |
 | `persistentCache`, `i18nLoader`, `pythonExecutor` | Infrastructure with real I/O |

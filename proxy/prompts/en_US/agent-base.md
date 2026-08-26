@@ -19,3 +19,5 @@ If the user asks a general question that does NOT require workspace access,
 answer normally without calling any tool.
 
 Working directory: {{cwd}} ({{cwdBase}})
+
+{{memorySection}}

@@ -37,6 +37,7 @@ import { HandleChatMessageUseCase } from "../application/useCases/handleChatMess
 import { ResolveApprovalUseCase } from "../application/useCases/resolveApprovalUseCase";
 import { FsPromptRepository } from "./adapters/fsPromptRepository";
 import { FsPlanFileRepository } from "./adapters/fsPlanFileRepository";
+import { FsMemoryRepository } from "./adapters/fsMemoryRepository";
 import { FetchLlmClient } from "./adapters/fetchLlmClient";
 import { NodeSseWriter } from "./adapters/nodeSseWriter";
 import { SystemClock } from "./adapters/systemClock";
@@ -56,6 +57,7 @@ export class ProxyServer {
   private modelInfo: LoadedModelInfo | null = null;
   private toolManager!: ToolManager;
   private readonly compactor: ContextCompactor;
+  private readonly memoryFiles: FsMemoryRepository;
   private requestTranslator!: RequestTranslator;
   private responseTranslator!: ResponseTranslator;
   private streamTranslator!: StreamTranslator;
@@ -84,8 +86,9 @@ export class ProxyServer {
     const clock = new SystemClock();
     this.llm               = new FetchLlmClient(config.targetUrl);
     this.planFiles         = new FsPlanFileRepository(config.plansDir, clock);
+    this.memoryFiles       = new FsMemoryRepository(config.memoryFile);
     this.promptRepo        = new FsPromptRepository(config.locale);
-    this.promptBuilder     = new SystemPromptBuilder(this.promptRepo, this.planFiles);
+    this.promptBuilder     = new SystemPromptBuilder(this.promptRepo, this.planFiles, this.memoryFiles);
     this.approvalInteractor = new SseApprovalInteractor(this.logger);
     this.approvalGate       = new ApprovalGateService(
       this.approvalInteractor, this.planFiles, this.logger,

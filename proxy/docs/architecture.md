@@ -73,7 +73,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Entry** | `src/main.ts` | Composition root: `loadConfig` → `ProxyServer` → `initialize()` (locale + model info) → `initializeTools()` (probe or cache hit) → `start()`. Listening comes **last**, deliberately — see [probe-before-listen](../README.md#probe-before-listen) |
 | **Domain** | `src/domain/types.ts` | All enums (LogLevel, StopReason, FinishReason, ContentBlockType, SseEventType, ToolChoiceType, DeltaType, MessageRole, OpenAIToolType, Locale) and interfaces (LoadedModelInfo, AnthropicRequest, OpenAIRequest, OpenAITool, ToolSelection) |
 | **Domain** | `src/domain/entities/workspaceAction.ts` | `WorkspaceAction` enum, `ActionClass`, `ActionArgs`, `WORKSPACE_TOOL_DEF` — workspace tool definition moved to pure domain |
-| **Domain** | `src/domain/ports/` | Barrel re-export of all port interfaces: `LlmClientPort`, `SseWriterPort`, `PlanFileRepositoryPort`, `PromptRepositoryPort`, `ApprovalInteractorPort`, `LoggerPort`, `ClockPort` |
+| **Domain** | `src/domain/ports/` | Barrel re-export of all port interfaces: `LlmClientPort`, `SseWriterPort`, `PlanFileRepositoryPort`, `PromptRepositoryPort`, `ApprovalInteractorPort`, `LoggerPort`, `ClockPort`, `MemoryRepositoryPort` |
 | **Domain** | `src/domain/utils.ts` | `msgId()` — Anthropic-style ID generation; `sseEvent()` — SSE wire format |
 | **Domain** | `src/domain/i18n.ts` | `setMessages()` — inbound port; `t(key, params)` — pure `{{param}}` interpolation |
 | **Application** | `src/application/requestTranslator.ts` | Anthropic → OpenAI: messages, tools, tool_choice, max_tokens capping |
@@ -95,6 +95,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Infrastructure** | `src/infrastructure/adapters/fetchLlmClient.ts` | `LlmClientPort` implementation via global `fetch()` |
 | **Infrastructure** | `src/infrastructure/adapters/nodeSseWriter.ts` | `SseWriterPort` implementation via Node.js `ServerResponse` |
 | **Infrastructure** | `src/infrastructure/adapters/fsPlanFileRepository.ts` | `PlanFileRepositoryPort` implementation via `node:fs` |
+| **Infrastructure** | `src/infrastructure/adapters/fsMemoryRepository.ts` | `MemoryRepositoryPort` implementation: reads the workspace memory file, degrading every failure to "no memory" |
 | **Infrastructure** | `src/infrastructure/adapters/fsPromptRepository.ts` | `PromptRepositoryPort` implementation via `node:fs` |
 | **Infrastructure** | `src/infrastructure/adapters/sseApprovalInteractor.ts` | `ApprovalInteractorPort` implementation: emits `tool_request_pending` SSE + parks Promise |
 | **Infrastructure** | `src/infrastructure/adapters/systemClock.ts` | `ClockPort` implementation via `Date.now()` |
@@ -110,7 +111,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Infrastructure** | `src/infrastructure/thinkingDetector.ts` | Extracts `reasoning_content` from a backend response, whichever field it arrives in |
 | **Infrastructure** | `src/infrastructure/pythonExecutor.ts` | Auto-managed venv behind the `python` workspace action |
 | **Assets** | `locales/en_US.json` | English locale — 45 keys, flat map, `{{param}}` placeholders. Its shape is asserted by [`test/i18n.test.ts`](../test/i18n.test.ts) |
-| **Assets** | `prompts/en_US/` | `agent-base.md`, `plan-mode.md`, `existing-plan-section.md` — loaded through `PromptRepositoryPort` |
+| **Assets** | `prompts/en_US/` | `agent-base.md`, `plan-mode.md`, `existing-plan-section.md`, `memory-section.md` — loaded through `PromptRepositoryPort` |
 | **Tests** | `test/` | `node:test` suites, type-checked alongside the sources — see [testing.md](testing.md) |
 
 ---

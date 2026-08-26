@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 238 tests, ~410 ms
+cd proxy && npm test         # 257 tests, ~430 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -144,13 +144,18 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 238 tests on every push.
+deliberately left alone. 257 tests on every push.
 
 "Every component has a suite" would be an overstatement, and was made once in
 this repo's own docs before being counted: the routing use case, the slash
-interceptor, the prompt builder, startup probing and the thin adapters have no
-tests. [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
+interceptor, startup probing and the thin adapters have no tests. [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
 enumerates them.
+
+**Phase 3 is under way.** Cross-session memory is done: `.claudio/MEMORY.md` is
+prepended to the system prompt when present, and the model updates it through
+the ordinary gated `write` rather than a dedicated path. Next in PLAN.md §6 is
+verifying the image path end to end — the model is a VLM, the translation and
+the attachment UI both exist, and it may already work.
 
 **Phase 2 — known correctness**, from PLAN.md §5:
 

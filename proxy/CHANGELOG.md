@@ -7,6 +7,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Added — Cross-session memory
+
+- **`.claudio/MEMORY.md`** (workspace-relative, configurable via `MEMORY_FILE`,
+  empty string disables) is prepended to the system prompt whenever it exists,
+  so a convention or a decision recorded last week survives a restart of the
+  proxy, the editor and the conversation.
+
+  New `MemoryRepositoryPort` + `FsMemoryRepository`, injected into
+  `SystemPromptBuilder`, which was already the only injection point. Capped at
+  8 KB; every failure to read — missing file, a directory in its place, no
+  permission — degrades to "no memory" rather than to a failed request.
+
+- **There is deliberately no `save()` on the port.** The model updates the file
+  through the ordinary `write` action, which means every update passes the
+  approval gate like any other write to disk. A dedicated write path would have
+  been a second one, ungated.
+
+- **No memory means no section**, not an empty heading and not "(no memories
+  yet)". Every token spent on an empty section is taken from the conversation,
+  and on these models the context window is the scarce resource in the project.
+
+### Added — Prompt builder test suite (11 tests) and memory repository suite (8)
+
+- **`test/systemPromptBuilder.test.ts`** — the first tests for what every
+  workspace request is prefixed with: mode selection, the textual tail on Path B,
+  an existing plan being offered back, and the memory section.
+
+- One of them checks the **shipped templates**, not the fake: every parameter the
+  builder computes must have a `{{placeholder}}` in the corresponding
+  `prompts/en_US/*.md`. A parameter no template interpolates is silently dropped
+  — no error, no warning, a feature that quietly never happens.
+
+  It caught this feature shipping broken: memory was wired end to end and
+  `agent-base.md` had no `{{memorySection}}`, so the ten tests above passed
+  against a prompt that would never have contained it. It also caught a
+  pre-existing case — `plansDir` was computed for the base prompt, which has
+  never used it — now passed only to the plan-mode template that does.
+
+- Negative control: removing the placeholder from the real template fails
+  exactly 1 test, emitting an empty section instead of none fails exactly 1, and
+  dropping the `.trim()` on the memory file fails exactly 1.
+
+- `npm test` is now 257 tests in ~430 ms.
+
+
 ### Fixed — Path B ignored the configured iteration limit
 
 - **`MAX_ITERATIONS = 10` was hardcoded in `textualAgentLoop`** while the 1.3.0
