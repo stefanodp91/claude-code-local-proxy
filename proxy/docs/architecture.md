@@ -123,7 +123,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | `GET` | `/health` | Health check: `{"status":"ok","target":"..."}`. Available immediately after `proxy.start()`. |
 | `GET` | `/config` | Runtime config: proxyPort, targetUrl, temperature, systemPrompt, enableThinking, locale, maxTokensFallback, model info. Used by Claudio to auto-configure. |
 | `GET` | `/commands` | Slash command registry (`SLASH_COMMAND_REGISTRY`). Used by Claudio for command autocomplete. |
-| `POST` | `/v1/messages` | Main translation endpoint. Returns `503` while `initializeTools()` is still running. |
+| `POST` | `/v1/messages` | Main translation endpoint. Returns `503` while `initializeTools()` is still running. **A request that omits `stream` is answered with SSE**, not JSON: `requestTranslator` defaults it to `true` (`stream: body.stream ?? true`), because every client this proxy serves streams. Only an explicit `"stream": false` gets a JSON body. Verified against the running proxy, and pinned by `requestTranslator.test.ts`. |
 | `POST` | `/v1/messages/:requestId/approve` | Resolve a pending destructive-action approval. Body: `{"approved": bool}`. Returns `200 {"ok":true}`. |
 | `GET` | `/plan-mode` | Current plan mode state: `{"enabled": bool}`. |
 | `POST` | `/plan-mode` | Toggle plan mode. Body: `{"enabled": bool}`. Returns `{"enabled": bool}`. |
