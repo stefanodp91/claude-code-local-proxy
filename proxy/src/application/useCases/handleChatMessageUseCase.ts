@@ -92,6 +92,8 @@ export class HandleChatMessageUseCase {
     private readonly logger: LoggerPort,
     private readonly modelInfoProvider: () => LoadedModelInfo | null,
     private readonly maxToolsProvider: () => number,
+    /** Same resolved ceiling Path A uses — see NativeAgentLoopService. */
+    private readonly maxIterationsResolver: () => number,
     private readonly targetUrl: string,
     private readonly compactor: ContextCompactor,
     private readonly venvDir: string = ".claudio/python-venv",
@@ -209,10 +211,13 @@ export class HandleChatMessageUseCase {
           this.llm,
           modelInfo?.id ?? openaiReq.model ?? "unknown",
           this.logger,
-          this.makeTextualApprovalGate(workspaceCwd),
-          this.venvDir,
-          this.compactor,
-          modelInfo?.loadedContextLength ?? 0,
+          {
+            approvalGate:   this.makeTextualApprovalGate(workspaceCwd),
+            venvDir:        this.venvDir,
+            compactor:      this.compactor,
+            contextBudget:  modelInfo?.loadedContextLength ?? 0,
+            maxIterations:  this.maxIterationsResolver(),
+          },
         );
         return { type: "handled", llmReachable: null };
       }

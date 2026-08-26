@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 236 tests, ~410 ms
+npm test          # 238 tests, ~410 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -55,7 +55,7 @@ proxy/test/
   toolManager.test.ts          23 tests — selection, overflow, promotion decay
   autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
   workspaceActions.test.ts     34 tests — the filesystem and shell backend
-  textualAgentLoop.test.ts     17 tests — Path B, the XML-tag loop
+  textualAgentLoop.test.ts     20 tests — Path B, the XML-tag loop
   nativeAgentLoop.test.ts      22 tests — Path A, the native tool-call loop
   contextCompactor.test.ts     20 tests — trimming a conversation to fit the window
 ```
@@ -405,6 +405,20 @@ at all.
 The tag scan is now quote-aware as well, so a `>` inside an attribute
 (`cmd="ls > out"`) no longer risks ending the tag early.
 
+A third overstatement, of a different kind: `MAX_ITERATIONS = 10` was hardcoded
+here while the 1.3.0 changelog announced that `MAX_AGENT_ITERATIONS` "replaces
+the hardcoded limit of 10". It replaced it in Path A only. The direction of the
+error matters — on a small context window the adaptive tier resolves *below* ten,
+so the hardcoded value meant ten rounds of observations into a window sized for
+fewer. Path B now receives the same resolved ceiling Path A does.
+
+And one claim in the other direction, worth recording because it was written down
+as a gap and was not one: Path B was said to be missing parallel dispatch of
+read-only actions. It is not missing, it does not apply — the parser stops at the
+first complete tag and discards the rest of the turn, exactly as the manual tells
+the model to behave, so a second action never exists. A test pins that the parser
+and the manual agree on it.
+
 Path B is a fallback and documented as second-class, which is presumably why
 this survived: on a model with native tool calls it never runs. That is also
 what made it invisible.
@@ -512,6 +526,7 @@ tests fail — and fail *narrowly*:
 | Drop the separator from `safeResolvePath` | Sibling-prefix test fails | exactly 1 fails |
 | Remove `old_string`/`new_string` from the parser | Edit and grammar tests fail | exactly 2 fail |
 | Stop accepting the body tag form | Manual-form write test fails | exactly 1 fails |
+| Ignore the caller's iteration ceiling in Path B | Configured-limit test fails | exactly 1 fails |
 | Never return `"fallthrough"` | Fallthrough tests fail | exactly 2 fail |
 | Drop the assistant tool_calls turn from the replay | Replay test fails | exactly 1 fails |
 | Run destructive calls in parallel | Overlap test fails | exactly 1 fails |

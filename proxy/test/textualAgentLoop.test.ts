@@ -100,7 +100,7 @@ function parse(raw: string): Event[] {
 }
 
 /** Run the loop over a scripted conversation. Approves everything by default. */
-async function drive(turns: string[][], gate?: TextualApprovalGate, contextBudget = 0) {
+async function drive(turns: string[][], gate?: TextualApprovalGate, contextBudget = 0, maxIterations?: number) {
   const { writer, events } = collectingWriter();
   const scripted = scriptedLlm(turns);
   const approve: TextualApprovalGate = gate ?? (async () => ({ approved: true, scope: "once" }));
@@ -113,12 +113,14 @@ async function drive(turns: string[][], gate?: TextualApprovalGate, contextBudge
     scripted.llm,
     "local-model",
     silentLogger,
-    approve,
-    undefined,
-    new ContextCompactor(scripted.llm, silentLogger as unknown as LoggerPort, {
-      semanticEnabled: false, summaryMaxTokens: 128, summaryTimeout: 50,
-    }),
-    contextBudget,
+    {
+      approvalGate: approve,
+      compactor: new ContextCompactor(scripted.llm, silentLogger as unknown as LoggerPort, {
+        semanticEnabled: false, summaryMaxTokens: 128, summaryTimeout: 50,
+      }),
+      contextBudget,
+      maxIterations,
+    },
   );
 
   return { events: events(), sentToModel: scripted.seen, turns: scripted.turns };
@@ -353,6 +355,46 @@ test("the loop stops on its own when the model stops emitting actions", async ()
   assert.equal(turns, 3);
 });
 
+test("Path B honours the configured iteration limit", async () => {
+  // MAX_AGENT_ITERATIONS is documented as replacing "the hardcoded limit of 10"
+  // (CHANGELOG 1.3.0). It replaced it in Path A only; here the 10 stayed, so a
+  // model on this path ran ten rounds no matter what the operator configured —
+  // and on a small context window the adaptive tier is *lower* than ten, which
+  // is the direction that hurts: ten rounds of observations into a window sized
+  // for fewer.
+  writeFileSync(join(ws, "a.ts"), "x");
+
+  const { turns } = await drive(
+    [['<action name="read" path="a.ts"/>']],
+    undefined,
+    0,
+    3,
+  );
+
+  assert.equal(turns, 3);
+});
+
+test("only the first action in a turn runs, whatever else the model wrote", async () => {
+  // Path B is one action per iteration by construction: the parser stops at the
+  // first complete tag and discards the rest of the turn. So the "missing
+  // parallel dispatch of read-only actions" PLAN.md listed against this path is
+  // not a gap — there is never a second action to dispatch. The manual tells the
+  // model the same thing ("Emit exactly one action at a time"), and this pins
+  // that the two agree.
+  writeFileSync(join(ws, "a.ts"), "AAA");
+  writeFileSync(join(ws, "b.ts"), "BBB");
+
+  const { sentToModel, turns } = await drive([
+    ['<action name="read" path="a.ts"/> and also <action name="read" path="b.ts"/>'],
+    ["done"],
+  ]);
+
+  assert.equal(turns, 2, "one action, one round trip");
+  const observation = JSON.stringify(sentToModel[1]);
+  assert.match(observation, /AAA/);
+  assert.equal(observation.includes("BBB"), false, "the second tag was not executed");
+});
+
 test("a model that never stops is cut off and the client is told", async () => {
   // Without a ceiling this is an infinite loop against a paid-for-by-electricity
   // backend. The cut-off has to be visible, not just a stream that stops.
@@ -373,7 +415,7 @@ test("an LLM error ends the turn cleanly instead of hanging the client", async (
 
   await runTextualAgentLoop(
     writer, { model: "m", messages: [] }, ws, false, llm, "local-model", silentLogger,
-    async () => ({ approved: true, scope: "once" }),
+    { approvalGate: async () => ({ approved: true, scope: "once" }) },
   );
 
   const out = events();

@@ -112,7 +112,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **236 test** a ogni push, e **ogni componente
+gira senza GPU accesa. Oggi sono **238 test** a ogni push, e **ogni componente
 del proxy ha una suite**.
 
 I sei punti dell'ordine d'attacco sono stati coperti per primi; poi i tre che
@@ -269,7 +269,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 236 test / ~410 ms, senza GPU e senza rete.
+`npm test` in 238 test / ~410 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -305,28 +305,23 @@ Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
   esattamente quelle in cui la compaction gira. `repairToolPairing()` ripara
   entrambe le forme di messaggio, perché la compaction ora gira su entrambi i
   lati della traduzione.
-- **Path B è di serie B.**  ← **prossimo** `MAX_ITERATIONS = 10` hardcoded a
-  [`textualAgentLoop.ts:85`](proxy/src/application/textualAgentLoop.ts#L85),
-  mentre il CHANGELOG 1.3.0 dichiara che il limite configurabile "replaces the
-  hardcoded limit of 10" — è arrivato solo in Path A. Manca anche il dispatch
-  parallelo delle azioni read-only. Con un modello che supporta i tool, Path B
-  è un fallback: **non serve portarlo alla pari, serve che smetta di mentire** e
-  sia marcato come degradato.
-- **`tool_choice: "any"` viene mappato su `auto`.** In Anthropic `any` significa
-  *"devi chiamare un tool, scegli tu"*; l'equivalente OpenAI è `required`, che
-  questo backend supporta — il probe stesso lo usa. Mapparlo su `auto` lascia il
-  modello libero di rispondere in prosa quando il client aveva chiesto una tool
-  call. Non l'ho cambiato: forzare una chiamata è esattamente il tipo di
-  pressione che alcuni modelli locali gestiscono male, e il compromesso è una
-  decisione da prendere, non da dedurre. Un test lo fissa al comportamento
-  attuale e rimanda qui.
-- **Uno stream troncato non si chiude.** Se l'upstream cade senza `[DONE]` né
-  `finish_reason`, il proxy emette `message_start`, apre il blocco e poi chiude
-  il controller: niente `content_block_stop`, niente `message_delta`, niente
-  `message_stop` (misurato, non dedotto). Il client resta con un blocco aperto.
-  La correzione richiede una scelta: emettere un evento `error`, oppure
-  sintetizzare la chiusura — ma con quale `stop_reason`? Presentare un troncamento
-  come `end_turn` sarebbe una bugia, ed è la ragione per cui non l'ho deciso io.
+- ~~**Path B è di serie B.**~~ — **sistemato ciò che era una bugia.**
+  `MAX_ITERATIONS = 10` era hardcoded mentre il CHANGELOG 1.3.0 dichiarava che il
+  limite configurabile "replaces the hardcoded limit of 10": era arrivato solo in
+  Path A. Ora Path B riceve lo stesso limite risolto di Path A. Non è un
+  dettaglio cosmetico: su un contesto piccolo il tier adattivo scende *sotto*
+  dieci, quindi il valore hardcoded sbagliava nella direzione che fa male — dieci
+  giri di osservazioni dentro una finestra dimensionata per meno.
+
+  La coda di parametri opzionali è diventata un oggetto `TextualLoopOptions`:
+  erano già undici posizionali, e stavo per aggiungere il dodicesimo.
+
+  **Il resto di quella voce era sbagliato.** Diceva che a Path B "manca il
+  dispatch parallelo delle azioni read-only": non manca, *non si applica*. Il
+  parser si ferma al primo tag completo e scarta il resto del turno, e il manuale
+  dice al modello la stessa cosa ("Emit exactly one action at a time"). Non c'è
+  mai una seconda azione da dispacciare. Un test lo fissa.
+
 - **Path B non sa esprimere una virgoletta dentro `old_string`.** Gli attributi
   del tag sono parsati con `[^"]*` e il manuale non insegna nessun escaping,
   quindi `<action name="edit" old_string="const s = \"hi\"" …/>` si tronca. Per

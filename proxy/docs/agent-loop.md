@@ -230,7 +230,7 @@ runTextualAgentLoop(res, openaiReq, workspaceCwd, ...):
   │
   ├── Emit: message_start (lazy, on first content)
   │
-  └── for i in 0..MAX_ITERATIONS (10):
+  └── for i in 0..maxIterations (same adaptive tier as Path A):
         │
         ├── POST to backend with stream: true
         │

@@ -163,7 +163,8 @@ export class ProxyServer {
       this.approvalGate, this.promptBuilder, this.nativeLoop, this.llm,
       this.requestTranslator, this.responseTranslator, this.streamTranslator,
       this.slashInterceptor, this.logger,
-      () => this.modelInfo, () => this.maxTools, this.config.targetUrl,
+      () => this.modelInfo, () => this.maxTools, () => this.computeMaxIterations(),
+      this.config.targetUrl,
       this.compactor,
       this.config.pythonVenvDir,
     );

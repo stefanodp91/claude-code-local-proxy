@@ -83,7 +83,17 @@ export const TEXTUAL_TOOL_MANUAL = [
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MAX_ITERATIONS = 10;
+/**
+ * Iteration ceiling when the caller does not supply one.
+ *
+ * `MAX_AGENT_ITERATIONS` was documented in 1.3.0 as replacing "the hardcoded
+ * limit of 10". It replaced it in Path A; here the 10 stayed, so this path ran
+ * ten rounds whatever the operator configured — and on a small context window
+ * the adaptive tier is *below* ten, which is the direction that hurts. The
+ * caller now passes the same resolved limit Path A uses; this constant is only
+ * the fallback for a caller that passes nothing.
+ */
+const DEFAULT_MAX_ITERATIONS = 10;
 
 // Number of trailing characters to keep in the pending text buffer as
 // lookahead for a tag boundary split across two streaming chunks.
@@ -106,6 +116,20 @@ const TAG_LOOKAHEAD = 7;
 export interface TextualApprovalResult {
   approved: boolean;
   scope: "once" | "turn" | "file";
+}
+
+/** Everything optional the Path B loop accepts, grouped so the call site stays readable. */
+export interface TextualLoopOptions {
+  /** Asks the user before a destructive action. Omitted, destructive actions are refused upstream. */
+  approvalGate?: TextualApprovalGate;
+  /** Relative path from the workspace root to the Python venv. */
+  venvDir?: string;
+  /** Trims `messages` between iterations. Omitted, no trimming happens. */
+  compactor?: ContextCompactor;
+  /** The loaded model's context window, or 0 when unknown. */
+  contextBudget?: number;
+  /** Iteration ceiling for this turn. Defaults to {@link DEFAULT_MAX_ITERATIONS}. */
+  maxIterations?: number;
 }
 
 export type TextualApprovalGate = (
@@ -142,7 +166,7 @@ interface TextualIterationResult {
  *      client as an Anthropic tool_use content block, executes the action,
  *      and injects the result as an <observation> user turn.
  *   3. Loops with the updated message history until the model responds without
- *      an action tag or MAX_ITERATIONS is reached.
+ *      an action tag or the iteration ceiling is reached.
  *
  * The client receives standard Anthropic SSE throughout and does not need to
  * know whether Path A or Path B is active.
@@ -155,13 +179,16 @@ export async function runTextualAgentLoop(
   llm: LlmClientPort,
   modelId: string,
   logger: ILogger,
-  approvalGate?: TextualApprovalGate,
-  venvDir = ".claudio/python-venv",
-  /** Optional: trims `messages` between iterations. Omitted, the loop behaves as before. */
-  compactor?: ContextCompactor,
-  /** The loaded model's context window, or 0 when unknown. */
-  contextBudget = 0,
+  opts: TextualLoopOptions = {},
 ): Promise<void> {
+  const {
+    approvalGate,
+    venvDir = ".claudio/python-venv",
+    compactor,
+    contextBudget = 0,
+    maxIterations = DEFAULT_MAX_ITERATIONS,
+  } = opts;
+
   // Strip any tool-related fields — this model cannot use them.
   const baseReq = { ...openaiReq, tools: undefined, tool_choice: undefined };
 
@@ -235,7 +262,7 @@ export async function runTextualAgentLoop(
 
   // ── Agent loop ─────────────────────────────────────────────────────────────
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  for (let i = 0; i < maxIterations; i++) {
     // Same reasoning as Path A: each iteration appends an assistant turn and an
     // <observation>, and a `read` truncates at 50 KB, so the turn can outgrow
     // the window even when the request that started it was small. Path B is a

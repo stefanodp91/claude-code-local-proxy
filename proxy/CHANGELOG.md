@@ -7,6 +7,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Fixed — Path B ignored the configured iteration limit
+
+- **`MAX_ITERATIONS = 10` was hardcoded in `textualAgentLoop`** while the 1.3.0
+  entry below announced that `MAX_AGENT_ITERATIONS` "replaces the hardcoded limit
+  of 10". It replaced it in Path A only, and the claim was left unqualified.
+
+  The direction of the error is the part that matters: on a small context window
+  the adaptive tier resolves *below* ten, so a hardcoded ten meant ten rounds of
+  observations pushed into a window sized for fewer. Path B now receives the same
+  resolved ceiling Path A uses.
+
+- **`runTextualAgentLoop`'s optional tail is now a `TextualLoopOptions` object.**
+  It had eleven positional parameters and this change would have added a
+  twelfth — the call site already carried an `undefined` placeholder.
+
+### Documentation — one recorded gap that was not one
+
+- PLAN.md listed "missing parallel dispatch of read-only actions" against Path B.
+  It is not missing, it does not apply: the tag parser stops at the first
+  complete tag and discards the rest of the turn, which is exactly what
+  `TEXTUAL_TOOL_MANUAL` tells the model to do ("Emit exactly one action at a
+  time"). There is never a second action to dispatch. A test now pins that the
+  parser and the manual agree, and `docs/agent-loop.md` no longer shows a
+  hardcoded `(10)` in the Path B trace.
+
+
 ### Fixed — Compaction could produce a conversation the backend rejects
 
 - **Trimming by position cuts through `tool_use` / `tool_result` pairs.** After

@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 236 tests, ~410 ms
+cd proxy && npm test         # 238 tests, ~410 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -144,7 +144,7 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed**: every component of the proxy has a suite.
-Phase 2 is under way — 236 tests on every push.
+Phase 2 is under way — 238 tests on every push.
 
 **Phase 2 — known correctness**, from PLAN.md §5:
 
@@ -154,10 +154,12 @@ Phase 2 is under way — 236 tests on every push.
    `tool_result` pairs, and an orphan on either side makes the backend reject the
    request — in long conversations only, which is to say exactly when compaction
    runs. `repairToolPairing()` handles both message shapes.
-2. **Path B lies about its own limits**  ← **next** — `MAX_ITERATIONS = 10` is hardcoded
-   while the changelog claims the configurable limit replaced it. It does not
-   need to reach parity; it needs to stop overstating itself.
-3. **`bash` blocks the event loop** for up to 30s (`spawnSync`). Acceptable for
+2. ~~Path B lies about its own limits~~ — **done**. It now receives the same
+   resolved iteration ceiling Path A uses. The other half of that item was
+   wrong: parallel read-only dispatch is not *missing* from Path B, it does not
+   *apply* — the parser stops at the first complete tag, so there is never a
+   second action to dispatch.
+3. **`bash` blocks the event loop**  ← **next** for up to 30s (`spawnSync`). Acceptable for
    a local single-user proxy — know it, do not fix it now.
 
 Three **decisions**, not gaps, also recorded in PLAN.md §5: the
