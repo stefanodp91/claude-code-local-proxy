@@ -899,7 +899,7 @@ was launched by Claudio, in the extension's output channel.
 ```
 ./
   start_agent_cli.sh       Port discovery + proxy spawn + model picker + claude, with cleanup trap
-  .github/workflows/ci.yml Typecheck & tests on push and pull request (no GPU required)
+  .github/workflows/ci.yml Typecheck & tests, on request only (no GPU required)
   proxy/
     src/
       main.ts              Composition root: loads config, builds adapters, probes, then listens

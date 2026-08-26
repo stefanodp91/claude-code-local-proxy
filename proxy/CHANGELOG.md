@@ -7,6 +7,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Changed — CI runs on request, not on every commit
+
+- `.github/workflows/ci.yml` no longer fires per push or per pull-request
+  commit. It runs on `workflow_dispatch` (`gh workflow run ci.yml --ref <branch>`)
+  or when the commit message carries a `[ci]` marker.
+
+- Stated plainly because it cuts against why the workflow was added: **nothing
+  automatic now stands between a broken commit and `main`.** `npm test` and
+  `npm run typecheck`, run locally before committing, are the gate — the same
+  two commands, minus the machine that used to remember them for you.
+
 ### Added — A `python` figure is also written into the workspace
 
 - **`PYTHON_PLOT_DIR`** (default `.claudio/plots`, empty disables) receives the

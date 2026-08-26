@@ -13,12 +13,15 @@ npm run typecheck # type-checks src/ and test/ together
 ```
 
 No GPU. No LM Studio. No model loaded. No network. That constraint is not an
-accident — it is the whole design goal, because it is what lets these tests gate
-a pull request. [`scripts/regression.sh`](../scripts/regression.sh) needs a live
-backend and therefore never could.
+accident — it is the whole design goal, because it is what lets these tests run
+on any machine, on any commit, in well under a second.
+[`scripts/regression.sh`](../scripts/regression.sh) needs a live backend and
+therefore never could.
 
-Both run on every push and pull request via
-[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml).
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs both, **on
+request only** — `gh workflow run ci.yml --ref <branch>`, or a `[ci]` marker in
+the commit message. Nothing runs automatically per commit, which moves the whole
+weight of the gate onto running the two commands above before committing.
 
 ---
 

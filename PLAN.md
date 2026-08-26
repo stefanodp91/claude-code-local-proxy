@@ -95,8 +95,10 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
   `feature-gap.md`.
 - **`test(proxy)`** — Prima suite automatica del repository: `node:test`, 13
   test, ~160 ms, senza GPU. Vedi la Fase 1 qui sotto.
-- **`ci`** — [`ci.yml`](.github/workflows/ci.yml): typecheck e test su ogni push
-  e ogni PR. È il commit che rende i test una barriera invece che un'abitudine.
+- **`ci`** — [`ci.yml`](.github/workflows/ci.yml): typecheck e test del proxy e
+  dell'estensione. Nato come barriera automatica su ogni push e ogni PR; oggi
+  **parte solo su richiesta** (vedi §4). La barriera è tornata a essere il
+  comando locale prima del commit.
 - **`docs`** (secondo giro) — `proxy/README.md` descriveva ancora un server Bun
   a file singolo con `start.sh` e `start_claude_code.sh`: requisiti, quick start,
   script e struttura file riscritti sul codice reale. Nuovo
@@ -112,7 +114,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **283 test** a ogni push.
+gira senza GPU accesa. Oggi sono **283 test**, ~400 ms, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -285,6 +287,14 @@ porta, il test si semplificherebbe da solo.
 **CI** — [`.github/workflows/ci.yml`](.github/workflows/ci.yml): typecheck +
 test del proxy, typecheck dell'estensione. Nessuna GPU, ed è il motivo per cui
 `regression.sh` non copre questa esigenza e non va confuso con essa.
+
+**Dal 2026-08-27 la pipeline parte solo su richiesta**: `gh workflow run ci.yml
+--ref <branch>`, oppure un marcatore `[ci]` nel messaggio di commit quando la
+run è concordata. Nessun giro automatico per commit. È una scelta esplicita e ha
+un prezzo altrettanto esplicito: **fra un commit rotto e `main` non c'è più
+niente di automatico**. Il cancello sono `npm test` e `npm run typecheck` da
+lanciare in locale prima di committare — cioè esattamente ciò che la CI era
+stata introdotta per non dover ricordare.
 
 > Uno script `pretest` fallisce se il glob non matcha nulla. Serve: `node --test`
 > **esce 0 quando non trova test**, quindi un glob rotto o un Node senza il

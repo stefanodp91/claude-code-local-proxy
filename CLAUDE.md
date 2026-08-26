@@ -41,8 +41,14 @@ cd chat-extension && npm run typecheck
 ```
 
 No GPU, no LM Studio, no model loaded, no network. That is deliberate: it is what
-lets these gate a pull request. [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-runs exactly these on every push and PR.
+lets these run anywhere, on any commit, in under a second.
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs exactly these — but
+**only when asked**, never once per commit: `gh workflow run ci.yml --ref <branch>`,
+or a `[ci]` marker in the commit message when a run has been agreed. So nothing
+automatic stands between a broken commit and `main`: **the gate is the two
+commands above, run locally before committing.** Treat them as mandatory, not as
+a convenience the pipeline will repeat for you.
 
 `proxy/scripts/regression.sh` is a different tool — a curl snapshot needing a
 live backend and a loaded model. It answers "does *this model* still behave like
@@ -154,7 +160,8 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 283 tests on every push.
+deliberately left alone. 283 tests, run locally before every commit and in CI
+on request.
 
 "Every component has a suite" would be an overstatement, and was made once in
 this repo's own docs before being counted: the routing use case, the slash

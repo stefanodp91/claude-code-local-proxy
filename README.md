@@ -196,12 +196,21 @@ cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs exactly these on
-every push to `main` and every pull request: the proxy typechecks and tests, the
-extension host typechecks. Everything in CI runs without a GPU, without LM Studio
-and without a model loaded — which is the reason
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs exactly these — the
+proxy typechecks and tests, the extension host typechecks — but **on request
+only**, not on every commit:
+
+```bash
+gh workflow run ci.yml --ref <branch>     # explicit
+git commit -m "fix(proxy): … [ci]"        # agreed, marked in the message
+```
+
+Everything in CI runs without a GPU, without LM Studio and without a model
+loaded — which is the reason
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), a curl snapshot
-that needs a live backend, can complement the suite but never gate a merge.
+that needs a live backend, can complement the suite but never replace it. With
+the pipeline off the automatic path, the commands above are the gate, and they
+run on your machine.
 
 The Angular webview under `chat-extension/src/webview-ui` is deliberately left
 out of CI until there is something to check there beyond compilation.
