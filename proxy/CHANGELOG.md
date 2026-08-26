@@ -20,6 +20,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   64 and 96 tools all produce correct structured calls with the right tool
   selected. The real ceiling was never reached. Override with `PROBE_UPPER_BOUND`.
 
+### Added — Test harness (first automated tests in the project)
+
+- **`node:test`**, no new dependencies — `dependencies` stays `{}`. Tests live
+  in `proxy/test/` and are covered by `tsc --noEmit`. `npm test` runs 13 tests
+  in ~160ms with no GPU, no LM Studio and no model loaded, which is what makes
+  it usable as a merge gate; `scripts/regression.sh` needs a live backend and
+  never could be.
+
+- **`test/i18n.test.ts`** — every key passed to `t()` exists in every locale,
+  every locale is a *flat* map of strings, and locales do not drift apart.
+  `t()` returns the key itself when a lookup misses, and locale files are read
+  through `JSON.parse`, so a nested object type-checks fine and surfaces to the
+  user as a raw key. This suite exists because that mistake was made, and
+  caught by hand, while adding `tools.unsupportedByModel`.
+
+- **`test/toolProbe.test.ts`** — 8 tests over the outcome triage: a refusal
+  searches downward, a timeout is retried, an HTTP error is not read as a
+  capability, a persistent timeout caps the search and says so. Includes a
+  regression test reproducing the observed trace — a slow reply at n=48 against
+  a model that handles 64 — which reports `actual: 47` against the pre-fix code.
+
+- **`pretest` guard**: `node --test` exits 0 when it matches no files, so a
+  broken glob would have produced a green build that verified nothing. The
+  script now fails loudly instead.
+
 ### Fixed — Probe read timeouts as capability limits
 
 - **`ToolProbe` now triages each attempt** into `tool_calls` / `no_tool_calls` /

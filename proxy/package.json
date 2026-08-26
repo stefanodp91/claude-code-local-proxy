@@ -6,7 +6,9 @@
     "start": "node --import tsx src/main.ts",
     "dev": "tsx --watch src/main.ts",
     "build": "tsup src/main.ts --format esm --target node18 --outDir dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "pretest": "node --input-type=module -e \"import{globSync}from'node:fs';const f=globSync('test/**/*.test.ts');if(!f.length){console.error('No test files matched test/**/*.test.ts. node --test exits 0 when it finds nothing, so this check exists to stop an empty run from looking like a passing one.');process.exit(1);}console.log('discovered '+f.length+' test file(s)');\""
   },
   "dependencies": {},
   "devDependencies": {
