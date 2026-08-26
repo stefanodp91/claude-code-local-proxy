@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 176 tests, ~250 ms
+npm test          # 193 tests, ~350 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -55,6 +55,7 @@ proxy/test/
   toolManager.test.ts          23 tests — selection, overflow, promotion decay
   autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
   workspaceActions.test.ts     34 tests — the filesystem and shell backend
+  textualAgentLoop.test.ts     17 tests — Path B, the XML-tag loop
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -293,6 +294,59 @@ root arriving as `/ws/` from the `X-Workspace-Root` header was compared against
 have failed with "outside the workspace root", which is about as confusing as a
 correct-sounding error gets. `resolve()` on the root normalises it.
 
+### `textualAgentLoop.test.ts`
+
+Path B, for models with no native tool calls: the model writes `<action …/>`
+tags into ordinary prose and the loop intercepts them mid-stream. The suite
+drives the real loop with a scripted LLM and a real temporary workspace, and
+asserts on both what reached the client and what reached disk.
+
+The grammar the parser accepts and the grammar `TEXTUAL_TOOL_MANUAL` teaches the
+model are written in two different files, and nothing connected them. When they
+disagree the model does exactly as instructed and the action silently does not
+happen — see [Two grammars that had drifted apart](#two-grammars-that-had-drifted-apart).
+One test now derives the attribute list from the manual and asks `parseActionTag`
+about each one, so they cannot drift again.
+
+---
+
+## Two grammars that had drifted apart
+
+`TEXTUAL_TOOL_MANUAL` is the model's entire instruction set for Path B. Every
+example in it is a promise, and two of them were not kept.
+
+**`edit` could not work at all.** The manual teaches
+
+```xml
+<action name="edit" path="src/foo.ts" old_string="const x = 1" new_string="const x = 2"/>
+```
+
+but `parseActionTag` only ever read `name`, `path`, `pattern`, `include` and
+`cmd`. A model following that example to the letter produced an action with
+neither string, so `executeAction` answered `Error: 'old_string' is required` —
+every time, for every edit, on every model without native tool calls.
+
+**`write` in the documented form was shown to the user instead of run.** The
+manual teaches a body form:
+
+```xml
+<action name="write" path="hello.txt">
+hi
+</action>
+```
+
+The parser looked only for `/>`, which that tag never contains. It stayed in tag
+mode, buffered to the end of the stream, and the remainder flush emitted the
+whole thing to the client as prose. No file, no error, and a model told nothing
+at all.
+
+The tag scan is now quote-aware as well, so a `>` inside an attribute
+(`cmd="ls > out"`) no longer risks ending the tag early.
+
+Path B is a fallback and documented as second-class, which is presumably why
+this survived: on a model with native tool calls it never runs. That is also
+what made it invisible.
+
 ---
 
 ## Fail closed
@@ -394,6 +448,8 @@ tests fail — and fail *narrowly*:
 | Pass `new_string` to `replace()` directly | Dollar-sign test fails | exactly 1 fails |
 | Skip `resolve()` on the workspace root | Trailing-slash test fails | exactly 1 fails |
 | Drop the separator from `safeResolvePath` | Sibling-prefix test fails | exactly 1 fails |
+| Remove `old_string`/`new_string` from the parser | Edit and grammar tests fail | exactly 2 fail |
+| Stop accepting the body tag form | Manual-form write test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
@@ -454,9 +510,8 @@ Everything on the original priority list — i18n, the probe, the approval gate,
 the translators, `ToolManager`, the allowlist — is now covered. What remains, in
 priority order:
 
-1. **The two agent loops** — `nativeAgentLoopService` (Path A) and
-   `textualAgentLoop` (Path B). The largest remaining surface, and the one a
-   live-backend snapshot still catches best.
+1. **Path A** — `nativeAgentLoopService`, the loop for models that do have
+   native tool calls. The last uncovered component.
 
 Two behaviours are known-uncovered on purpose, both recorded in
 [PLAN.md](../../PLAN.md) as decisions rather than gaps: the `tool_choice: "any"`

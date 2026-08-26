@@ -7,6 +7,52 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Fixed — Path B could not edit a file, and its documented write form was never executed
+
+`TEXTUAL_TOOL_MANUAL` is the entire instruction set handed to a model without
+native tool calls. Two of its examples were not implemented.
+
+- **`edit` never worked.** The manual teaches
+  `<action name="edit" path="…" old_string="…" new_string="…"/>`, but
+  `parseActionTag` read only `name`, `path`, `pattern`, `include` and `cmd`. A
+  model following that example exactly produced an action carrying neither
+  string, and `executeAction` answered `Error: 'old_string' is required` — every
+  time, for every edit, on every Path B model.
+
+- **`write` in the documented body form was printed, not performed.** The manual
+  teaches `<action name="write" path="hello.txt">` … `</action>`, and the parser
+  looked only for `/>`. The tag never closed, stayed buffered to the end of the
+  stream, and the remainder flush emitted the whole thing to the client as prose.
+  No file written, no error raised, and nothing told to the model.
+
+  The tag scan is now quote-aware, so a `>` inside an attribute
+  (`cmd="ls > out"`) no longer ends the tag early and truncates its arguments.
+
+  Path B is a fallback and documented as second-class, which is presumably how
+  this survived — on any model with native tool calls it never runs.
+
+### Added — Path B test suite (17 tests)
+
+- **`test/textualAgentLoop.test.ts`** — drives the real loop with a scripted LLM
+  and a real temporary workspace, asserting on both what reached the client and
+  what reached disk. Covers tag parsing across chunk boundaries (down to one
+  character per chunk), prose that merely mentions a tag, malformed tags, the
+  observation round trip, approval scopes including "allow for this turn", the
+  iteration ceiling being visible to the user, and a backend error ending the
+  turn cleanly.
+
+- One test derives the attribute list from `TEXTUAL_TOOL_MANUAL` and asks
+  `parseActionTag` about each one, rather than checking against a list written
+  in the test. A hardcoded list would have passed at exactly the moment it
+  needed to fail — which is how the first draft of that test passed against both
+  bugs above.
+
+- Negative control: removing `old_string`/`new_string` from the parser fails
+  exactly 2 tests, dropping the body form fails exactly 1.
+
+- `npm test` is now 193 tests in ~350 ms.
+
+
 ### Fixed — `edit` corrupted replacements containing a dollar sign
 
 - **`actionEdit` passed `new_string` straight to `String.prototype.replace`**,

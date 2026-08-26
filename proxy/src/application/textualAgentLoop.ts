@@ -469,17 +469,40 @@ async function parseTextualIteration(
         inTag = true;
         // fall through to tag-mode processing in the same iteration
       } else {
-        // Tag mode: look for the self-closing marker.
-        const closePos = pendingText.indexOf("/>");
-        if (closePos === -1) {
-          // Tag not complete yet — wait for more chunks.
-          break;
+        // Tag mode. Two forms are accepted, because the manual teaches both:
+        //
+        //   <action name="read" path="a.ts"/>                    self-closing
+        //   <action name="write" path="a.txt">…body…</action>    with a body
+        //
+        // Only the first was implemented. A `write` in the documented body form
+        // never found its `/>`, stayed buffered to the end of the stream, and
+        // was flushed to the user as prose — the file was never written and the
+        // model was never told. The scan is quote-aware so a `>` inside an
+        // attribute (`cmd="ls > out"`) does not end the tag early.
+        const tagEnd = findTagEnd(pendingText);
+        if (!tagEnd) break; // opening tag still arriving
+
+        let completeTag: string;
+        let body: string | null = null;
+
+        if (tagEnd.selfClosing) {
+          completeTag = pendingText.slice(0, tagEnd.index + 1);
+          pendingText = pendingText.slice(tagEnd.index + 1);
+        } else {
+          const bodyEnd = pendingText.indexOf(ACTION_CLOSE_TAG, tagEnd.index);
+          if (bodyEnd === -1) break; // body still arriving
+          completeTag = pendingText.slice(0, tagEnd.index + 1);
+          body = pendingText.slice(tagEnd.index + 1, bodyEnd);
+          pendingText = pendingText.slice(bodyEnd + ACTION_CLOSE_TAG.length);
         }
-        const completeTag = pendingText.slice(0, closePos + 2);
-        pendingText = pendingText.slice(closePos + 2);
         inTag = false;
 
         const args = parseActionTag(completeTag);
+        if (args && body !== null) {
+          // Drop the single newline that separates the opening tag from the
+          // body in the documented layout; keep everything else verbatim.
+          args.content = body.replace(/^\r?\n/, "");
+        }
         if (args) {
           foundActionTag = completeTag;
           foundActionArgs = args;
@@ -590,23 +613,48 @@ async function parseTextualIteration(
  *
  * @returns ActionArgs on success, null if the tag is malformed or missing name.
  */
-function parseActionTag(tag: string): ActionArgs | null {
+export /** Closing tag for the body form of an action. */
+const ACTION_CLOSE_TAG = "</action>";
+
+/**
+ * Locate the `>` that ends an opening tag, skipping any that sit inside a
+ * quoted attribute value, and report whether the tag closed itself.
+ *
+ * Scanning for a literal `/>` — as this did before — also matches one written
+ * inside an attribute, e.g. `cmd="ls />"`, which truncates the tag mid-attribute
+ * and produces an action with arguments silently missing.
+ */
+function findTagEnd(s: string): { index: number; selfClosing: boolean } | null {
+  let quote: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; continue; }
+    if (c === ">") return { index: i, selfClosing: s[i - 1] === "/" };
+  }
+  return null;
+}
+
+export function parseActionTag(tag: string): ActionArgs | null {
   const nameMatch = tag.match(/name="([^"]+)"/);
   if (!nameMatch) return null;
 
   const args: ActionArgs = { action: nameMatch[1] };
 
-  const pathMatch = tag.match(/path="([^"]+)"/);
-  if (pathMatch) args.path = pathMatch[1];
-
-  const patternMatch = tag.match(/pattern="([^"]+)"/);
-  if (patternMatch) args.pattern = patternMatch[1];
-
-  const includeMatch = tag.match(/include="([^"]+)"/);
-  if (includeMatch) args.include = includeMatch[1];
-
-  const cmdMatch = tag.match(/cmd="([^"]+)"/);
-  if (cmdMatch) args.cmd = cmdMatch[1];
+  // Every attribute TEXTUAL_TOOL_MANUAL teaches the model to write must appear
+  // here. `old_string` and `new_string` did not, so a model following the
+  // manual's own `edit` example to the letter always got back
+  // "Error: 'old_string' is required" — Path B could not edit a file at all,
+  // and nothing said so. `test/textualAgentLoop.test.ts` now derives the list
+  // from the manual and asks this function about each one, so the two cannot
+  // drift apart again.
+  for (const attr of ["path", "pattern", "include", "cmd", "old_string", "new_string", "content"]) {
+    const m = tag.match(new RegExp(`${attr}="([^"]*)"`));
+    if (m) args[attr] = m[1];
+  }
 
   return args;
 }

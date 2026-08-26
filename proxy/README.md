@@ -634,7 +634,7 @@ model-specific logic.
 cd proxy && npm test
 ```
 
-176 tests, ~250 ms, no GPU, no LM Studio, no model loaded, no network. That is
+193 tests, ~350 ms, no GPU, no LM Studio, no model loaded, no network. That is
 the property that matters: it is why these can gate a pull request while
 `scripts/regression.sh` cannot.
 
@@ -649,6 +649,7 @@ the property that matters: it is why these can gate a pull request while
 | [`test/toolManager.test.ts`](test/toolManager.test.ts) | Which ~6 of ~40 tools the model is offered — scoring, the reserved UseTool slot, overflow reachability, tie stability, promotion and its decay |
 | [`test/autoApproveConfig.test.ts`](test/autoApproveConfig.test.ts) | `.claudio/auto-approve.json` — rule matching, constraints that fail closed, unusable patterns, and the workspace containment of the diff preview read |
 | [`test/workspaceActions.test.ts`](test/workspaceActions.test.ts) | The filesystem and shell backend — `safeResolvePath` containment, every action's success and failure strings, literal replacement in `edit`, output limits |
+| [`test/textualAgentLoop.test.ts`](test/textualAgentLoop.test.ts) | Path B — tag parsing across chunk boundaries, both documented tag forms, approval scopes, the iteration ceiling, and agreement between the tool manual and the parser |
 
 Both suites exist because the bug they describe actually happened. `t()` returns
 the key itself when a lookup misses and locale files arrive through `JSON.parse`,
@@ -668,9 +669,8 @@ without a mock framework — the hexagonal architecture is paid for, it just has
 to be used. `ToolProbe` still reaches for global `fetch` and the test stubs it;
 if it ever becomes a port, that test gets simpler on its own.
 
-What remains uncovered is the two agent loops — the largest surface, and the one
-a live-backend snapshot still catches best. See [Testing](docs/testing.md) and
-[PLAN.md](../PLAN.md).
+What remains uncovered is Path A, `nativeAgentLoopService`. See
+[Testing](docs/testing.md) and [PLAN.md](../PLAN.md).
 
 ---
 
