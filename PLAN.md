@@ -114,7 +114,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **283 test**, ~400 ms, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **287 test**, ~400 ms, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -277,7 +277,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 283 test / ~400 ms, senza GPU e senza rete.
+`npm test` in 287 test / ~400 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -437,8 +437,32 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
    negativi. Niente fa pulizia della directory: merita una riga di `.gitignore`,
    non del codice che cancella file dell'utente.
 
-   **Resta la prova end-to-end**: che il modello *veda* davvero l'immagine non lo
-   può dire nessuna suite qui: serve LM Studio con il VLM caricato.
+   **Prova end-to-end — fatta il 2026-08-27**, con `qwen/qwen3.8-27b` (vlm,
+   119.552 token) caricato in LM Studio e il proxy in ascolto su 5678.
+
+   | Prova | Esito |
+   |---|---|
+   | Immagine in ingresso, percorso traduzione (nessun header) | tre bande colorate → «Red, green, blue» |
+   | Immagine in ingresso, agent loop (`x-workspace-root`) | «qual è la banda centrale?» → «Green» |
+   | `python` che disegna, loop in modalità auto | figura salvata in `.claudio/plots/`, descritta dal modello |
+   | **Discriminante** | codice con `n = random.randint(3,9)` mai stampato, dot rossi disegnati e basta → il modello risponde **7**; il PNG salvato ne contiene **7** |
+
+   Le prime tre non provano niente da sole: la descrizione del grafico era
+   deducibile dal codice che il modello aveva appena scritto. La quarta sì —
+   quel numero esiste solo dentro l'immagine, e la verifica è stata fatta
+   guardando il file. **Il percorso immagini funziona davvero, in entrambe le
+   direzioni.**
+
+   **La prova ha trovato un bug che nessuna suite avrebbe trovato.** Al primo
+   tentativo il turno è morto un'iterazione dopo, con una pagina HTML di errore
+   dentro la risposta: il modello aveva emesso una tool call con **argomenti
+   vuoti**, e il loop rigioca la propria storia così com'è. Misurato contro LM
+   Studio, un `tool_calls` il cui `arguments` non è la stringa di un *oggetto*
+   JSON viene rifiutato: `""` → 500, `"   "` → 500, `{"action":` troncato → 500,
+   `"null"` → 400, `"{}"` → 200. Ora gli argomenti vengono normalizzati dove si
+   costruisce il turno assistant, con lo stesso fallback che usa l'esecutore —
+   così la storia concorda con il tool result che le sta accanto — e la
+   sostituzione viene loggata. Quattro test, due controlli negativi.
 3. Il resto (hooks, skills, MCP, sub-agent, TodoWrite, web tools, worktree) è
    parità con Claude Code, costoso e di resa modesta su un 27B locale.
 

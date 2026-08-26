@@ -51,7 +51,7 @@ interface Event { type: string; data: any }
 interface Turn {
   text?: string;
   thinking?: string;
-  calls?: { id: string; args: Record<string, unknown> }[];
+  calls?: { id: string; args?: Record<string, unknown>; rawArgs?: string }[];
   /** Deliver this turn as a JSON body instead of a stream, as LM Studio sometimes does. */
   nonStreaming?: boolean;
 }
@@ -67,7 +67,11 @@ function scriptedLlm(turns: Turn[]) {
       const toolCalls = (turn.calls ?? []).map((c, i) => ({
         index: i,
         id: c.id,
-        function: { name: "workspace", arguments: JSON.stringify(c.args) },
+        // `rawArgs` is how a real model misbehaves: the arguments field is a
+        // string it wrote, not an object the fake serialised, so it can be
+        // empty or truncated. A fake that can only produce valid JSON cannot
+        // reproduce the turn that actually broke.
+        function: { name: "workspace", arguments: c.rawArgs ?? JSON.stringify(c.args ?? {}) },
       }));
 
       if (turn.nonStreaming) {
@@ -569,4 +573,71 @@ test("tool calls arriving as JSON are executed too", async () => {
   ]);
 
   assert.match(JSON.stringify(sentToModel[1]), /body/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Malformed tool arguments
+//
+// Measured against the loaded backend, not assumed: an assistant turn whose
+// `tool_calls[].function.arguments` is not a JSON *object* string is rejected
+// outright — `""` and a truncated `{"action":` both return 500, `"null"` returns
+// 400, `"{}"` returns 200. This model does emit argument-less calls, and the
+// loop replays its own history verbatim on the next iteration, so one malformed
+// call killed the turn one step later with a raw HTML error page in the user's
+// chat. The execution side already tolerates it; only the replay did not.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The assistant turn the loop replayed, from the request it sent next. */
+function replayedCalls(sent: any[][], iteration = 1): any[] {
+  const msgs = sent[iteration] ?? [];
+  return msgs.filter((m: any) => Array.isArray(m.tool_calls)).flatMap((m: any) => m.tool_calls);
+}
+
+test("a tool call with no arguments is never replayed as an empty string", async () => {
+  const { sentToModel, llmCalls } = await drive([
+    { calls: [{ id: "c1", rawArgs: "" }] },
+    { text: "done" },
+  ]);
+
+  assert.equal(llmCalls, 2, "the loop stopped before it could replay anything");
+  const calls = replayedCalls(sentToModel);
+  assert.equal(calls.length, 1);
+  const parsed = JSON.parse(calls[0].function.arguments);
+  assert.equal(typeof parsed === "object" && parsed !== null && !Array.isArray(parsed), true);
+});
+
+test("unparseable arguments are replayed as the action that actually ran", async () => {
+  // The history has to agree with the tool result sitting next to it: the
+  // executor falls back to `list .`, so that is what the replay must say.
+  const { sentToModel } = await drive([
+    { calls: [{ id: "c1", rawArgs: '{"action":' }] },
+    { text: "done" },
+  ]);
+
+  const parsed = JSON.parse(replayedCalls(sentToModel)[0].function.arguments);
+  assert.deepEqual(parsed, { action: "list", path: "." });
+});
+
+test("arguments that parse to null do not end the turn", async () => {
+  // `JSON.parse("null")` succeeds, so a guard that only catches a throw lets
+  // this one through — and then reading `.action` off it does end the turn.
+  const { outcome, sentToModel } = await drive([
+    { calls: [{ id: "c1", rawArgs: "null" }] },
+    { text: "done" },
+  ]);
+
+  assert.equal(outcome, "handled");
+  const parsed = JSON.parse(replayedCalls(sentToModel)[0].function.arguments);
+  assert.notEqual(parsed, null);
+});
+
+test("well-formed arguments are replayed exactly as the model wrote them", async () => {
+  const { sentToModel } = await drive([
+    { calls: [{ id: "c1", args: { action: "list", path: "." } }] },
+    { text: "done" },
+  ]);
+
+  assert.deepEqual(JSON.parse(replayedCalls(sentToModel)[0].function.arguments), {
+    action: "list", path: ".",
+  });
 });

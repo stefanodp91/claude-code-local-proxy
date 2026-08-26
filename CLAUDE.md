@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 283 tests, ~400 ms
+cd proxy && npm test         # 287 tests, ~400 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -162,7 +162,7 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 283 tests, run locally before every commit and in CI
+deliberately left alone. 287 tests, run locally before every commit and in CI
 on request.
 
 "Every component has a suite" would be an overstatement, and was made once in
@@ -174,9 +174,13 @@ enumerates them.
 prepended to the system prompt when present, and the model updates it through
 the ordinary gated `write` rather than a dedicated path.
 
-**In progress, from PLAN.md §6: the image path.** The translation was already
-covered by tests; what was not covered was every other place an image passes
-through. Two silent problems came out of looking:
+**Done, from PLAN.md §6: the image path, verified end to end on 2026-08-27**
+against `qwen/qwen3.8-27b` in LM Studio. The discriminating test is the one that
+counts: the model ran code with `n = random.randint(3, 9)` that printed nothing
+and drew that many red dots, answered **7**, and the saved PNG has 7. That number
+exists only in the picture.
+
+Getting there needed three fixes. Two came from reading the code:
 
 - **Fixed** — `estimateTokens()` counted base64 as prose, so a 500 KB screenshot
   scored ~171 000 tokens and compaction fired on a conversation that fit. `naive`
@@ -196,9 +200,17 @@ through. Two silent problems came out of looking:
   image is what the model sees; the file is the only handle the user has on it.
   Contained by `safeResolvePath()`, never overwriting, never pruned.
 
-The end-to-end leg — does the model actually see the picture — is still the one
-thing the suites cannot do: it needs LM Studio with a VLM loaded. Cover what you
-can in tests, then say plainly that the rest needs a human with a GPU.
+The third came from running it, and no suite could have: the first live attempt
+died one iteration in with a raw HTML error page in the answer. The model emitted
+a tool call with **empty arguments**, and the loop replays its own history
+verbatim — an assistant `tool_calls` whose `arguments` is not a JSON object
+string is refused by the backend (`""`, `"   "` and truncated JSON give 500,
+`"null"` gives 400). Arguments are normalised at the point the assistant turn is
+built now, and `test/nativeAgentLoop.test.ts` covers it.
+
+**The lesson is the item's own justification.** The cheapest thing on the list
+was the one nobody had tried, and trying it found a bug that had nothing to do
+with images: any model emitting an argument-less call would have hit it.
 
 **Phase 2 — known correctness**, from PLAN.md §5:
 

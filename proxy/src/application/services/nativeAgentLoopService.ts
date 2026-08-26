@@ -123,6 +123,55 @@ interface LoopState {
 // Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * What the loop executes when the model's arguments cannot be read: the
+ * cheapest harmless action. Shared with the replay, so the history the model
+ * sees agrees with the tool result sitting next to it.
+ */
+const MALFORMED_ARGS_FALLBACK: ActionArgs = { action: WorkspaceAction.List, path: "." };
+
+/** Parse a tool call's arguments, falling back when they are not an object. */
+function parseToolArguments(raw: string): ActionArgs {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as ActionArgs;
+  } catch { /* handled below */ }
+  return { ...MALFORMED_ARGS_FALLBACK };
+}
+
+/**
+ * Build the assistant turn the loop replays on the next iteration.
+ *
+ * The arguments are normalised on the way in, and it is not cosmetic: measured
+ * against LM Studio, an assistant `tool_calls` entry whose `arguments` is not a
+ * JSON object string is rejected outright — `""` and a truncated `{"action":`
+ * both give 500, `"null"` gives 400. Models do emit argument-less calls, and
+ * the loop replays its own history verbatim, so one malformed call used to kill
+ * the *next* iteration and put a raw HTML error page in the user's chat.
+ *
+ * A replaced argument is logged: the model produced something unusable, and
+ * that is worth seeing even though the turn now survives it.
+ */
+function assistantToolCallTurn(
+  toolCalls: Array<{ id: string; arguments: string }>,
+  logger: LoggerPort,
+): any {
+  return {
+    role: "assistant",
+    content: null,
+    tool_calls: toolCalls.map((tc) => {
+      const args = parseToolArguments(tc.arguments);
+      const normalised = JSON.stringify(args);
+      if (normalised !== tc.arguments) {
+        logger.info(
+          `[agent] tool call ${tc.id} had unusable arguments (${JSON.stringify(tc.arguments).slice(0, 80)}) — replayed as ${normalised}`,
+        );
+      }
+      return { id: tc.id, type: "function", function: { name: "workspace", arguments: normalised } };
+    }),
+  };
+}
+
 /** Return type of `run()`. "fallthrough" means iter-0 produced no output and
  *  the caller should fall back to normal LLM streaming. */
 export type NativeLoopOutcome = "handled" | "fallthrough";
@@ -298,15 +347,7 @@ export class NativeAgentLoopService {
           return "handled";
         }
 
-        messages.push({
-          role: "assistant",
-          content: null,
-          tool_calls: toolCalls.map((tc) => ({
-            id: tc.id,
-            type: "function",
-            function: { name: "workspace", arguments: tc.arguments },
-          })),
-        });
+        messages.push(assistantToolCallTurn(toolCalls, this.logger));
         const toolResults = await this.executeBatchedToolCalls(
           toolCalls, writeSSE, emitTextBlock, endMessage,
           workspaceCwd, openaiReq.messages, state,
@@ -360,12 +401,15 @@ export class NativeAgentLoopService {
         return "handled";
       }
 
-      messages.push(choice.message);
       const nonStreamingToolCalls = rawToolCalls.map((tc: any) => ({
         id: tc.id as string,
         name: "workspace",
         arguments: tc.function?.arguments ?? "{}",
       }));
+      messages.push({
+        ...assistantToolCallTurn(nonStreamingToolCalls, this.logger),
+        content: choice.message?.content ?? null,
+      });
       // Emit tool_use blocks for the non-streaming path
       // (streaming path emits them inside parseStreamingIteration at [DONE]).
       for (const tc of nonStreamingToolCalls) {
@@ -423,9 +467,7 @@ export class NativeAgentLoopService {
   ): Promise<ToolCallOutcome[] | null> {
     // 1. Check for exit_plan_mode — intercept before any batching
     for (const tc of toolCalls) {
-      let args: ActionArgs;
-      try { args = JSON.parse(tc.arguments); } catch { continue; }
-      if (args.action === WorkspaceAction.ExitPlanMode) {
+      if (parseToolArguments(tc.arguments).action === WorkspaceAction.ExitPlanMode) {
         const { exitLoop } = await this.processToolCall(
           writeSSE, emitTextBlock, endMessage,
           tc.id, tc.arguments,
@@ -439,9 +481,7 @@ export class NativeAgentLoopService {
     const readOnlyTcs: typeof toolCalls = [];
     const destructiveTcs: typeof toolCalls = [];
     for (const tc of toolCalls) {
-      let action: string;
-      try { action = (JSON.parse(tc.arguments) as ActionArgs).action; }
-      catch { action = WorkspaceAction.List; }
+      const action = parseToolArguments(tc.arguments).action;
       if (action === WorkspaceAction.ExitPlanMode) continue; // already handled
       if (ACTION_CLASSIFICATION[action] === ActionClass.ReadOnly) {
         readOnlyTcs.push(tc);
@@ -481,10 +521,7 @@ export class NativeAgentLoopService {
     ]);
     const ordered: ToolCallOutcome[] = [];
     for (const tc of toolCalls) {
-      let action: string;
-      try { action = (JSON.parse(tc.arguments) as ActionArgs).action; }
-      catch { action = WorkspaceAction.List; }
-      if (action === WorkspaceAction.ExitPlanMode) continue;
+      if (parseToolArguments(tc.arguments).action === WorkspaceAction.ExitPlanMode) continue;
       const outcome = resultMap.get(tc.id);
       if (outcome !== undefined) ordered.push({ id: tc.id, outcome });
     }
@@ -519,9 +556,7 @@ export class NativeAgentLoopService {
     originalMessages: any[],
     state: LoopState,
   ): Promise<{ outcome: ActionOutcome; exitLoop: boolean }> {
-    let args: ActionArgs;
-    try { args = JSON.parse(argsRaw); }
-    catch { args = { action: WorkspaceAction.List, path: "." } as ActionArgs; }
+    const args = parseToolArguments(argsRaw);
 
     // ── Control action: model requests exit_plan_mode ──────────────────────
     if (args.action === WorkspaceAction.ExitPlanMode) {

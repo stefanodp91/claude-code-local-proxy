@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 283 tests, ~400 ms
+npm test          # 287 tests, ~400 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -362,6 +362,43 @@ a pair every time.
 
 ---
 
+## Tool arguments the backend refuses
+
+Found by running the thing, not by reading it — the first end-to-end image test
+died one iteration in, with a raw HTML error page in the answer.
+
+The model emitted a `workspace` call with **empty arguments**. Execution
+tolerated that already (unparseable arguments fall back to `list .`), but the
+loop replays its own history verbatim on the next iteration, and measured
+against LM Studio an assistant `tool_calls` entry whose `arguments` is not a
+JSON *object* string is rejected outright:
+
+| `arguments` | Backend |
+|---|---|
+| `""` | 500 |
+| `"   "` | 500 |
+| `{"action":` (truncated) | 500 |
+| `"null"` | 400 |
+| `"{}"` | 200 |
+
+So one malformed call killed the *next* turn, and the error the user saw came
+from a machine two layers down. Arguments are now normalised where the assistant
+turn is built — to the same fallback the executor uses, so the replay agrees
+with the tool result beside it — and a replacement is logged, because a model
+producing unusable calls is worth seeing even when the turn survives.
+
+`"null"` deserved its own test: `JSON.parse` accepts it, so a guard that only
+catches a throw lets it through, and reading `.action` off `null` then ends the
+turn. It was live in three more places in the same file, all found by that one
+test.
+
+The fake had to be extended first. `Turn.calls` could only express arguments as
+an object the fake serialised, so it could not produce the malformed string a
+real model writes — a fake more forgiving than reality, again. It now takes a
+raw `rawArgs` string.
+
+---
+
 ## Where an action's image goes
 
 ### `actionOutcome.test.ts`
@@ -625,6 +662,8 @@ tests fail — and fail *narrowly*:
 | Skip containment on the plot directory | Escape test fails | exactly 1 fails |
 | Swallow the save failure | Save-failure test fails | exactly 1 fails |
 | Leave the saved path out of the notice | Both path tests fail | exactly 2 fail |
+| Replay tool arguments verbatim again | Malformed-argument tests fail | exactly 3 fail |
+| Accept anything `JSON.parse` accepts | Null-arguments test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
