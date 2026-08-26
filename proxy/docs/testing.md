@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 287 tests, ~400 ms
+npm test          # 308 tests, ~410 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -360,6 +360,29 @@ passed against the bug. The version that ships makes the call enormous and its
 answer tiny, so exactly one message is dropped and the cut lands in the middle of
 a pair every time.
 
+### `handleChatMessage.test.ts`
+
+21 tests on the routing decision — the largest gap this document used to list.
+It is the code that decides *which proxy the client is talking to*: Path A with
+a workspace root and a tool-capable model, Path B when the probe says the model
+cannot emit tool calls, and a pure translator with no header at all.
+
+None of the ways it can be wrong throw. Claudio silently loses its agent; the
+CLI silently receives a system prompt written for Claudio and is told about a
+workspace tool it does not have; a `"fallthrough"` treated as `"handled"` leaves
+the user with silence. So every assertion here is about *which* branch ran:
+Path A is a stub that records its calls, and Path B is told apart by the request
+that reaches the fake backend — it strips `tools` from a request the plain
+forward would carry through.
+
+Also covered: the capability guard (tools + `maxTools === 0` + no workspace →
+400, and the two neighbouring cases that must *not* 400), the three shapes a
+system prompt can arrive in, the budget handed to compaction (`0` when the
+backend exposes no metadata — a guess would be worse), and the four ways the
+backend's answer comes back: an error with its status, a connection that never
+opened (502, never status 0), a backend that ignores `stream: true` and replies
+JSON, and a streamed answer.
+
 ---
 
 ## Tool arguments the backend refuses
@@ -664,6 +687,12 @@ tests fail — and fail *narrowly*:
 | Leave the saved path out of the notice | Both path tests fail | exactly 2 fail |
 | Replay tool arguments verbatim again | Malformed-argument tests fail | exactly 3 fail |
 | Accept anything `JSON.parse` accepts | Null-arguments test fails | exactly 1 fails |
+| Route to Path A whatever `maxTools` says | Path B test fails | exactly 1 fails |
+| Treat `"fallthrough"` as `"handled"` | Fallthrough test fails | exactly 1 fails |
+| Inject the agent prompt without a workspace | CLI system-prompt test fails | exactly 1 fails |
+| Remove the capability guard | Guard test fails | exactly 1 fails |
+| Guess a context budget when metadata is missing | Zero-budget test fails | exactly 1 fails |
+| Pass status 0 through as an HTTP status | Connection-refused test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
@@ -726,8 +755,7 @@ Counted honestly, these have no suite:
 
 | Uncovered | Why it matters, or does not |
 |---|---|
-| `handleChatMessageUseCase` | The routing decision itself — which surface, which path, slash interception, prompt injection order. The largest genuine gap left |
-| `slashCommandInterceptor` | 8 proxy-side commands, several shelling out to git |
+| `slashCommandInterceptor` | 8 proxy-side commands, several shelling out to git. The routing suite covers *that* one was intercepted, not what each does |
 | `workspaceTool` | `buildWorkspaceContextSummary`, the static snapshot Path B leans on |
 | `modelInfo`, `thinkingProbe`, `thinkingDetector`, `toolLimitDetector` | Startup probing. `toolProbe` itself is covered; its orchestration is not |
 | `persistentCache`, `i18nLoader`, `pythonExecutor` | Infrastructure with real I/O |

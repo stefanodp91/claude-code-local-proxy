@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 287 tests, ~400 ms
+cd proxy && npm test         # 308 tests, ~410 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -162,12 +162,12 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 287 tests, run locally before every commit and in CI
+deliberately left alone. 308 tests, run locally before every commit and in CI
 on request.
 
 "Every component has a suite" would be an overstatement, and was made once in
-this repo's own docs before being counted: the routing use case, the slash
-interceptor, startup probing and the thin adapters have no tests. [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
+this repo's own docs before being counted. The routing use case now has one; the
+slash interceptor, startup probing and the thin adapters still do not. [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
 enumerates them.
 
 **Phase 3 is under way.** Cross-session memory is done: `.claudio/MEMORY.md` is

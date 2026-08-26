@@ -7,6 +7,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Added — The routing use case has a suite (21 tests)
+
+- `handleChatMessageUseCase` decides which proxy the client is talking to —
+  Path A, Path B, or a pure translator — and it was the largest gap
+  `docs/testing.md` listed. None of its failure modes throw: Claudio silently
+  loses its agent, the CLI silently gets a system prompt written for Claudio, a
+  `"fallthrough"` read as `"handled"` answers with silence.
+
+- Path A is a recording stub; Path B is told apart by what reaches the backend,
+  since it strips `tools` from a request the plain forward carries through. Also
+  covered: the capability guard and the two neighbouring cases that must *not*
+  400, the three shapes a system prompt arrives in, the budget compaction is
+  given (`0` when the backend exposes no metadata), and the four ways an answer
+  comes back — error with status, connection refused (502, never status 0), a
+  backend that ignores `stream: true`, and a real stream.
+
+- `npm test` is now 308 in ~410 ms. Negative control, six fronts, one test each:
+  routing to Path A regardless of `maxTools`, treating fallthrough as handled,
+  injecting the agent prompt without a workspace, removing the guard, guessing a
+  context budget, and passing status 0 through as an HTTP status.
+
 ### Fixed — One malformed tool call killed the next iteration
 
 - Found by running the image path end to end against LM Studio, which is the
