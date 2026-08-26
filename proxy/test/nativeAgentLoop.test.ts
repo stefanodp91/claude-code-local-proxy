@@ -606,16 +606,56 @@ test("a tool call with no arguments is never replayed as an empty string", async
   assert.equal(typeof parsed === "object" && parsed !== null && !Array.isArray(parsed), true);
 });
 
-test("unparseable arguments are replayed as the action that actually ran", async () => {
-  // The history has to agree with the tool result sitting next to it: the
-  // executor falls back to `list .`, so that is what the replay must say.
+test("a call with unusable arguments is replayed as an empty object", async () => {
+  // `{}` because the backend refuses anything that is not an object, and
+  // because nothing ran: replaying an action the model never asked for would
+  // put a listing it did not request next to a call it did not make.
   const { sentToModel } = await drive([
     { calls: [{ id: "c1", rawArgs: '{"action":' }] },
     { text: "done" },
   ]);
 
-  const parsed = JSON.parse(replayedCalls(sentToModel)[0].function.arguments);
-  assert.deepEqual(parsed, { action: "list", path: "." });
+  assert.deepEqual(JSON.parse(replayedCalls(sentToModel)[0].function.arguments), {});
+});
+
+test("a truncated call is not executed — the model is told to send it again", async () => {
+  // Measured against the backend: a tool call cut off by `max_tokens` arrives
+  // with `finish_reason: "length"` and no arguments at all, reproducibly. The
+  // model has not asked for anything yet, so the answer is to say so.
+  const { sentToModel } = await drive([
+    { calls: [{ id: "c1", rawArgs: "" }] },
+    { text: "done" },
+  ]);
+
+  const result = (sentToModel[1] ?? []).find((m: any) => m.role === "tool");
+  assert.match(result.content, /again/i);
+  assert.equal(/cut (short|off)|truncat/i.test(result.content), true, result.content);
+});
+
+test("a truncated call never reaches the approval gate", async () => {
+  // With no arguments there is no action, and an unreadable call must not be
+  // able to raise a modal — least of all one the user cannot make sense of.
+  const asked: string[] = [];
+  const { asked: gateAsked } = await drive(
+    [{ calls: [{ id: "c1", rawArgs: "" }] }, { text: "done" }],
+    { answer: (action) => { asked.push(action); return { approved: true, scope: ApprovalScope.Once }; } },
+  );
+
+  assert.deepEqual(gateAsked, []);
+  assert.deepEqual(asked, []);
+});
+
+test("a truncated call does not touch the workspace", async () => {
+  // The old fallback ran `list .`. Harmless, but it answered a question nobody
+  // asked, and the model had to guess why.
+  const { sentToModel } = await drive([
+    { calls: [{ id: "c1", rawArgs: "null" }] },
+    { text: "done" },
+  ]);
+
+  const result = (sentToModel[1] ?? []).find((m: any) => m.role === "tool");
+  assert.equal(/\.claudio|no such file|^\s*$/i.test(result.content), false);
+  assert.match(result.content, /argument/i);
 });
 
 test("arguments that parse to null do not end the turn", async () => {

@@ -124,19 +124,30 @@ interface LoopState {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * What the loop executes when the model's arguments cannot be read: the
- * cheapest harmless action. Shared with the replay, so the history the model
- * sees agrees with the tool result sitting next to it.
+ * What the model is told when its call arrived without readable arguments.
+ *
+ * The cause is measurable and not the model's fault: a tool call cut off by
+ * `max_tokens` ends with `finish_reason: "length"` and no arguments at all —
+ * reproducible on demand at a low enough cap. The loop used to run `list .` in
+ * its place, which answered a question nobody had asked and left the model to
+ * work out why. Saying what happened costs a sentence and is actionable.
  */
-const MALFORMED_ARGS_FALLBACK: ActionArgs = { action: WorkspaceAction.List, path: "." };
+const TRUNCATED_ARGS_NOTICE =
+  "Your tool call arrived with no readable arguments — it was probably cut short by the " +
+  "token limit. Nothing was executed. Send the call again, with its arguments.";
 
-/** Parse a tool call's arguments, falling back when they are not an object. */
-function parseToolArguments(raw: string): ActionArgs {
+/**
+ * Parse a tool call's arguments.
+ *
+ * @returns the arguments, or `null` when they are unusable — empty, truncated,
+ *          or JSON that is not an object (`"null"` parses fine and is not one).
+ */
+function parseToolArguments(raw: string): ActionArgs | null {
   try {
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as ActionArgs;
-  } catch { /* handled below */ }
-  return { ...MALFORMED_ARGS_FALLBACK };
+  } catch { /* unusable */ }
+  return null;
 }
 
 /**
@@ -160,14 +171,17 @@ function assistantToolCallTurn(
     role: "assistant",
     content: null,
     tool_calls: toolCalls.map((tc) => {
-      const args = parseToolArguments(tc.arguments);
-      const normalised = JSON.stringify(args);
-      if (normalised !== tc.arguments) {
+      const usable = parseToolArguments(tc.arguments) !== null;
+      if (!usable) {
         logger.info(
-          `[agent] tool call ${tc.id} had unusable arguments (${JSON.stringify(tc.arguments).slice(0, 80)}) — replayed as ${normalised}`,
+          `[agent] tool call ${tc.id} had unusable arguments (${JSON.stringify(tc.arguments).slice(0, 80)}) — replayed as {} and not executed`,
         );
       }
-      return { id: tc.id, type: "function", function: { name: "workspace", arguments: normalised } };
+      return {
+        id: tc.id,
+        type: "function",
+        function: { name: "workspace", arguments: usable ? tc.arguments : "{}" },
+      };
     }),
   };
 }
@@ -467,7 +481,7 @@ export class NativeAgentLoopService {
   ): Promise<ToolCallOutcome[] | null> {
     // 1. Check for exit_plan_mode — intercept before any batching
     for (const tc of toolCalls) {
-      if (parseToolArguments(tc.arguments).action === WorkspaceAction.ExitPlanMode) {
+      if (parseToolArguments(tc.arguments)?.action === WorkspaceAction.ExitPlanMode) {
         const { exitLoop } = await this.processToolCall(
           writeSSE, emitTextBlock, endMessage,
           tc.id, tc.arguments,
@@ -481,7 +495,7 @@ export class NativeAgentLoopService {
     const readOnlyTcs: typeof toolCalls = [];
     const destructiveTcs: typeof toolCalls = [];
     for (const tc of toolCalls) {
-      const action = parseToolArguments(tc.arguments).action;
+      const action = parseToolArguments(tc.arguments)?.action ?? "";
       if (action === WorkspaceAction.ExitPlanMode) continue; // already handled
       if (ACTION_CLASSIFICATION[action] === ActionClass.ReadOnly) {
         readOnlyTcs.push(tc);
@@ -521,7 +535,7 @@ export class NativeAgentLoopService {
     ]);
     const ordered: ToolCallOutcome[] = [];
     for (const tc of toolCalls) {
-      if (parseToolArguments(tc.arguments).action === WorkspaceAction.ExitPlanMode) continue;
+      if (parseToolArguments(tc.arguments)?.action === WorkspaceAction.ExitPlanMode) continue;
       const outcome = resultMap.get(tc.id);
       if (outcome !== undefined) ordered.push({ id: tc.id, outcome });
     }
@@ -557,6 +571,14 @@ export class NativeAgentLoopService {
     state: LoopState,
   ): Promise<{ outcome: ActionOutcome; exitLoop: boolean }> {
     const args = parseToolArguments(argsRaw);
+
+    // ── A call that never finished arriving ────────────────────────────────
+    // Before anything else, and before the gate especially: with no arguments
+    // there is no action, and an unreadable call must not be able to raise a
+    // modal the user cannot make sense of.
+    if (!args) {
+      return { outcome: { text: TRUNCATED_ARGS_NOTICE }, exitLoop: false };
+    }
 
     // ── Control action: model requests exit_plan_mode ──────────────────────
     if (args.action === WorkspaceAction.ExitPlanMode) {

@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 311 tests, ~1.0 s
+cd proxy && npm test         # 315 tests, ~1.0 s
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -162,7 +162,7 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 311 tests, run locally before every commit and in CI
+deliberately left alone. 315 tests, run locally before every commit and in CI
 on request.
 
 "Every component has a suite" would be an overstatement, and was made once in

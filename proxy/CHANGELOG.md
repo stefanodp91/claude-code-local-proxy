@@ -7,6 +7,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Fixed — The prompt never mentioned `python`, and a cut-off call ran the wrong action
+
+Both found by measuring how often the model writes tool calls as plain text
+instead of using the native channel. The answer to *that* question is **never**,
+in 39 live calls across three configurations — so no parser was built for it.
+The two findings underneath were worth more.
+
+- **`python` was named in no prompt.** It is implemented, exposed in the tool
+  schema, and the model was being told the available actions are list, read,
+  grep, glob, write, edit and bash. A model that reads its instructions then
+  concludes the action does not exist — which one did, in the wild: *"there's no
+  dedicated `python` action, but `bash` can execute it"*, followed by a tool call
+  written as text. `agent-base.md` now names it, with what the venv provides and
+  what `plt.show()` gives back.
+
+- **A test derived from both artefacts**, so this cannot drift again: every
+  action in `WORKSPACE_TOOL_DEF`'s enum must appear in the shipped prompts. It
+  failed on `python` the moment it was written.
+
+- **An empty tool call is a truncated one.** Measured: `max_tokens: 60` on a
+  prompt needing a longer call ends the stream with `finish_reason: "length"` and
+  zero accumulated arguments, on demand. The loop ran `list .` in its place —
+  harmless, and a puzzle for a model that had asked for nothing. It now returns a
+  sentence saying the call was cut short and asking for it again, executes
+  nothing, never raises an approval modal, and replays `{}` so the backend still
+  accepts the history.
+
+- 4 tests; `npm test` is now 315. Negative control: removing `python` from the
+  prompt fails exactly 1, running `list .` again fails exactly 2, replaying raw
+  arguments fails exactly 3.
+
 ### Changed — `bash` and `grep` no longer stop the process
 
 - `spawnSync` blocked the Node.js event loop for as long as the command ran: up

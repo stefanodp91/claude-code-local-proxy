@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 311 tests, ~1.0 s
+npm test          # 315 tests, ~1.0 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -385,6 +385,44 @@ JSON, and a streamed answer.
 
 ---
 
+## What the model actually does, measured
+
+The third item on the list was a suspicion: during the live image runs the model
+once answered with a tool call written as **plain text** —
+`<tool_call><function=workspace>…` — which Path A does not parse, so the turn was
+lost. The question was how often that happens, and whether the loop should learn
+to read it.
+
+**39 live calls later: never again.** 15 with a minimal system prompt, 12 with
+the shipped one, 12 more in streaming mode, across prompt shapes chosen to
+resemble the one that failed. Every single one used the native channel. One call
+in 39 produced no tool call at all, which is a different thing and a legitimate
+answer.
+
+So no parser was written. The measurement is the deliverable, and it says the
+imitation is rare enough that building for it would be building for a ghost.
+
+What the measurement *did* find is two things worth more than the thing it was
+looking for:
+
+**The prompt had fallen behind the schema.** `python` is implemented, exposed in
+the tool definition, and was named in no prompt at all — so a model reading its
+instructions concludes the action does not exist. That is exactly what the one
+failing turn said: *"there's no dedicated `python` action, but `bash` can execute
+it"*, and then it improvised the textual call. `systemPromptBuilder.test.ts` now
+derives the check from both artefacts: every action in `WORKSPACE_TOOL_DEF`'s
+enum must appear in the shipped prompts. It failed on `python` the moment it was
+written.
+
+**The empty tool call has a cause, and it is not the model.** With
+`max_tokens: 60` and a prompt that needs a longer call, the stream ends with
+`finish_reason: "length"` and *zero* accumulated arguments — reproducible on
+demand. The loop used to run `list .` in its place; it now says so and asks for
+the call again, because the model had not asked for anything yet and a listing it
+did not request is a puzzle, not an answer.
+
+---
+
 ## A shell that does not stop the process
 
 `bash` used to run under `spawnSync`, which blocks the Node.js event loop for as
@@ -726,6 +764,9 @@ tests fail — and fail *narrowly*:
 | Run bash under `spawnSync` again | Event-loop test fails | exactly 1 fails |
 | Time out without killing the child | Timeout test fails | exactly 1 fails, after waiting the full 5 s |
 | Treat grep's exit 1 as an error | No-matches test fails | exactly 1 fails |
+| Drop `python` from the shipped prompt | Schema-vs-prompt test fails | exactly 1 fails |
+| Run `list .` for a truncated call again | Truncated-call tests fail | exactly 2 fail |
+| Replay the raw arguments again | Replay tests fail | exactly 3 fail |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.

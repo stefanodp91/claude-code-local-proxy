@@ -14,6 +14,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SystemPromptBuilder } from "../src/application/services/systemPromptBuilder";
 import { AgentMode } from "../src/domain/types";
+import { WORKSPACE_TOOL_DEF } from "../src/domain/entities/workspaceAction";
 import { PromptKey } from "../src/domain/ports";
 import type {
   MemoryRepositoryPort, PlanFileRepositoryPort, PromptRepositoryPort,
@@ -171,5 +172,33 @@ test("every parameter the builder passes has a placeholder in the real template"
         `prompts/en_US/${key}.md never uses {{${name}}}, so the builder computes it for nothing`,
       );
     }
+  }
+});
+
+test("every action the tool schema offers is named in the shipped prompt", async () => {
+  // Derived from the artefacts, not from a list written here: the schema on one
+  // side, `prompts/en_US/*.md` on the other. The prompt is where the model
+  // learns what it may do, and it had fallen behind the schema — `python` was
+  // implemented, exposed in the tool definition, and named in no prompt at all.
+  // A model that reads the prompt then concludes the action does not exist,
+  // which is exactly what one did: "there's no dedicated `python` action, but
+  // `bash` can execute it", followed by a tool call written as plain text.
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const prompts = ["agent-base", "plan-mode"]
+    .map((k) => readFileSync(join("prompts", "en_US", `${k}.md`), "utf-8"))
+    .join("\n");
+
+  const advertised: string[] =
+    (WORKSPACE_TOOL_DEF.function.parameters.properties.action as any).enum;
+  assert.equal(advertised.length > 0, true, "the schema advertises no actions at all");
+
+  for (const action of advertised) {
+    assert.equal(
+      prompts.includes(action),
+      true,
+      `the tool schema offers '${action}' and no prompt mentions it — the model is being told it does not exist`,
+    );
   }
 });
