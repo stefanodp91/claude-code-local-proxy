@@ -175,7 +175,8 @@ export class RequestTranslator {
    * User messages in Anthropic format can contain mixed content:
    * - Text blocks → OpenAI user message
    * - Tool result blocks → OpenAI tool messages (must follow assistant's tool_calls)
-   * - Thinking/image/document blocks → skipped
+   * - Thinking/document blocks → skipped
+   * - Image blocks (base64) → OpenAI `image_url` parts with a data: URI
    *
    * Tool results are emitted BEFORE user text to maintain proper ordering
    * relative to the assistant's tool_calls they respond to.

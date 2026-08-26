@@ -31,7 +31,7 @@ This repository contains the leaked source code in `claude_code/src/`.
 
 ---
 
-## Anthropic-to-OpenAI Proxy (v1.1.0)
+## Anthropic-to-OpenAI Proxy (v1.4.0)
 
 This repository includes a **Node.js translation proxy** (`proxy/`) that lets Claude Code work with any local LLM through an OpenAI-compatible API. The proxy sits between Claude Code and the LLM backend, translating Anthropic Messages API requests into OpenAI Chat Completions format and back.
 
@@ -76,9 +76,9 @@ sh start_agent_cli.sh
 - **Auto-promotion** — Tools used via UseTool are promoted into the active set for future requests
 - **Tool limit auto-detection** — Binary search probe determines the model's max tool count at startup
 - **Persistent model cache** — `maxTools` per model stored in `proxy/model-cache.json`; probe is skipped on subsequent restarts with the same model
-- **Split initialization** — HTTP server responds immediately (health check passes); tool probe runs in the background
+- **Probe-before-listen startup** — `main.ts` awaits model info and the tool/thinking probes, then starts listening. `/health` stays unreachable until probing finishes, so a cold model can delay first connection by a minute or more; load the model in LM Studio first to avoid it
 - **Slash command interceptor** — `/commit`, `/diff`, `/review`, `/status`, `/version`, `/compact`, `/brief`, `/plan` are handled by the proxy before the LLM is called
-- **Workspace tool + agentic loop** — Models can explore the filesystem (list/read) via up to 10 agentic rounds to gather context before responding
+- **Workspace tool + agentic loop** — Models act on the workspace (`list`/`read`/`grep`/`glob`/`write`/`edit`/`bash`/`python`) across an adaptive number of rounds derived from the model's context window (10/20/30/40, capped by `MAX_AGENT_ITERATIONS`). Destructive actions pass through an approval gate
 - **Model info** — Fetches architecture, context window, and capabilities from LM Studio's internal API
 - **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
 - **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
@@ -97,7 +97,7 @@ Full proxy documentation in [`proxy/docs/`](proxy/docs/):
 
 ---
 
-## Claudio — VS Code Chat Extension (v0.1.0)
+## Claudio — VS Code Chat Extension (v1.5.0)
 
 **Claudio** is a VS Code extension that provides a chat UI for interacting with the proxy directly from the editor — no terminal required.
 
@@ -136,7 +136,7 @@ npm install
 cd src/webview-ui && npm install && cd ../..
 npm run build
 npm run package
-code --install-extension claudio-0.1.0.vsix
+code --install-extension claudio-1.5.0.vsix
 ```
 
 Reload VS Code → the Claudio icon appears in the Activity Bar.

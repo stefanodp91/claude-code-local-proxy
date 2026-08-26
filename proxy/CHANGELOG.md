@@ -75,6 +75,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - New locale key `tools.unsupportedByModel` (`locales/en_US.json`).
 
+### Fixed — Documentation drift
+
+- `toolLimitDetector.ts` docstring claimed the probe runs "after the HTTP
+  server is already listening". `main.ts` awaits `initializeTools()` *before*
+  `start()`; corrected.
+- `requestTranslator.ts` docstring listed image blocks as "skipped" directly
+  above the code that translates them into OpenAI `image_url` data URIs.
+
 ---
 
 ## [1.4.0] — 2026-04-12
