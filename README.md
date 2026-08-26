@@ -201,8 +201,7 @@ proxy typechecks and tests, the extension host typechecks — but **on request
 only**, not on every commit:
 
 ```bash
-gh workflow run ci.yml --ref <branch>     # explicit
-git commit -m "fix(proxy): … [ci]"        # agreed, marked in the message
+gh workflow run ci.yml --ref <branch>
 ```
 
 Everything in CI runs without a GPU, without LM Studio and without a model

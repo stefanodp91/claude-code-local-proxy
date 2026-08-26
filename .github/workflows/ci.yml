@@ -7,26 +7,24 @@ name: CI
 #
 # It runs when asked, and only then — never once per commit:
 #
-#   gh workflow run ci.yml --ref <branch>     ← explicit
-#   git commit -m "fix(proxy): … [ci]"        ← agreed, marked in the message
+#   gh workflow run ci.yml --ref <branch>
+#
+# A commit-message marker was tried first and removed within the hour: the
+# commit that introduced `[ci]` described it, therefore contained it, therefore
+# triggered the run it was meant to withhold. Any token common enough to type is
+# common enough to write about.
 #
 # The trade is real and deliberate: nothing automatic now stands between a
 # broken commit and main. `cd proxy && npm test && npm run typecheck` is the
 # gate, and it lives on the machine the commit is made on.
 
 on:
-  push:
   workflow_dispatch:
 
 jobs:
   proxy:
     name: proxy — typecheck & tests
     runs-on: ubuntu-latest
-    # Asked for explicitly, or marked in the commit message. Repeated verbatim
-    # on the job below — a workflow-level `if` does not exist.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[ci]')
     defaults:
       run:
         working-directory: proxy
@@ -53,9 +51,6 @@ jobs:
   extension:
     name: claudio — typecheck
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[ci]')
     defaults:
       run:
         working-directory: chat-extension

@@ -10,8 +10,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed — CI runs on request, not on every commit
 
 - `.github/workflows/ci.yml` no longer fires per push or per pull-request
-  commit. It runs on `workflow_dispatch` (`gh workflow run ci.yml --ref <branch>`)
-  or when the commit message carries a `[ci]` marker.
+  commit. It runs on `workflow_dispatch` only:
+  `gh workflow run ci.yml --ref <branch>`.
+
+- A `[ci]` marker in the commit message was the second channel, and it lasted
+  one commit: the commit introducing it described it, so it contained it, so it
+  triggered the run it existed to withhold. Any token common enough to type is
+  common enough to write about.
 
 - Stated plainly because it cuts against why the workflow was added: **nothing
   automatic now stands between a broken commit and `main`.** `npm test` and

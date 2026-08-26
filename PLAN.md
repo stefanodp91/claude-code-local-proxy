@@ -289,8 +289,11 @@ test del proxy, typecheck dell'estensione. Nessuna GPU, ed è il motivo per cui
 `regression.sh` non copre questa esigenza e non va confuso con essa.
 
 **Dal 2026-08-27 la pipeline parte solo su richiesta**: `gh workflow run ci.yml
---ref <branch>`, oppure un marcatore `[ci]` nel messaggio di commit quando la
-run è concordata. Nessun giro automatico per commit. È una scelta esplicita e ha
+--ref <branch>`. Nessun giro automatico per commit. Un marcatore `[ci]` nel
+messaggio di commit era il secondo canale previsto ed è durato un'ora: il commit
+che lo introduceva lo *descriveva*, quindi lo conteneva, quindi ha lanciato la
+run che serviva a trattenere. Un token abbastanza comune da digitare è
+abbastanza comune da citare. È una scelta esplicita e ha
 un prezzo altrettanto esplicito: **fra un commit rotto e `main` non c'è più
 niente di automatico**. Il cancello sono `npm test` e `npm run typecheck` da
 lanciare in locale prima di committare — cioè esattamente ciò che la CI era

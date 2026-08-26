@@ -19,9 +19,9 @@ on any machine, on any commit, in well under a second.
 therefore never could.
 
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) runs both, **on
-request only** — `gh workflow run ci.yml --ref <branch>`, or a `[ci]` marker in
-the commit message. Nothing runs automatically per commit, which moves the whole
-weight of the gate onto running the two commands above before committing.
+request only** — `gh workflow run ci.yml --ref <branch>`. Nothing runs
+automatically per commit, which moves the whole weight of the gate onto running
+the two commands above before committing.
 
 ---
 

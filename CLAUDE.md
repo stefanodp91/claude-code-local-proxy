@@ -44,8 +44,10 @@ No GPU, no LM Studio, no model loaded, no network. That is deliberate: it is wha
 lets these run anywhere, on any commit, in under a second.
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs exactly these — but
-**only when asked**, never once per commit: `gh workflow run ci.yml --ref <branch>`,
-or a `[ci]` marker in the commit message when a run has been agreed. So nothing
+**only when asked**, never once per commit: `gh workflow run ci.yml --ref <branch>`.
+A commit-message marker was tried and removed the same hour — the commit
+introducing it described it, so it triggered the run it existed to withhold. So
+nothing
 automatic stands between a broken commit and `main`: **the gate is the two
 commands above, run locally before committing.** Treat them as mandatory, not as
 a convenience the pipeline will repeat for you.
