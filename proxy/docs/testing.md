@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 13 tests, ~160 ms
+npm test          # 33 tests, ~160 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -45,8 +45,9 @@ starts paying back.
 
 ```
 proxy/test/
-  i18n.test.ts       5 tests — locale integrity
-  toolProbe.test.ts  8 tests — probe outcome triage
+  i18n.test.ts          5 tests — locale integrity
+  toolProbe.test.ts     8 tests — probe outcome triage
+  approvalGate.test.ts 20 tests — the write/edit/bash/python gate
 ```
 
 Tests live beside the source tree rather than inside it, and `tsconfig.json`
@@ -99,6 +100,76 @@ so the probe was measuring latency and reporting it as capability.
 `ToolProbe` reaches for global `fetch` directly, so the test stubs the global. If
 it ever becomes a port like the other outbound calls, that stub disappears.
 
+### `approvalGate.test.ts`
+
+`ApprovalGateService.request()` is the only thing between a local model and
+`write` / `edit` / `bash` / `python` on the user's filesystem. It is reached only
+for actions classified as Destructive, and decides whether to ask the user or
+answer for them. Four things can short-circuit the prompt, and **the order they
+are checked in is the behaviour**:
+
+```
+plan mode  →  auto mode  →  trusted files  →  allowlist  →  ask the user
+```
+
+The suite covers each branch and, just as importantly, asserts that the modal
+was *not* raised where it should not be. A gate that asks too often is annoying;
+a gate that stops asking is the actual failure, and nothing downstream reports
+it — the action simply executes. Roughly half the assertions are therefore on
+`prompts.length` rather than on the verdict.
+
+Three behaviours worth calling out, because they are easy to break and hard to
+notice:
+
+- **`scope: "once"` must not be remembered.** If the persistence branch stopped
+  discriminating on scope, "just this once" would silently become "forever",
+  which is precisely the direction that does harm.
+- **`scope: "turn"` is deliberately not handled here.** The two agent loops keep
+  `allowAllThisTurn` in per-turn state; the gate passes the scope back up and
+  keeps nothing. If it started persisting turn grants they would outlive the turn.
+- **Plan mode outranks the allowlist.** A plan run that quietly edits files
+  because `.claudio/auto-approve.json` said so is not a plan run.
+
+Writing it surfaced a real defect, which is the argument for writing tests in
+this order rather than the easy order. See [Workspace containment](#workspace-containment)
+below.
+
+---
+
+## Workspace containment
+
+The gate recorded a `scope: "file"` grant with:
+
+```ts
+const full = resolve(workspaceCwd, args.path);
+if (full.startsWith(workspaceCwd)) this.trustedFiles.add(full);
+```
+
+`startsWith` is not a containment test. With a workspace at `/ws`, the sibling
+path `/ws-evil/secrets.txt` passes it, because the comparison ignores the
+directory boundary — so a grant on a file outside the workspace could be
+recorded as trusted for the rest of the session.
+
+It was not exploitable: `safeResolvePath()` in `workspaceActions.ts` rejects the
+write independently, and does the check correctly (`resolved.startsWith(cwd + "/")`,
+plus an outright refusal of absolute and `~` paths). The two layers disagreed
+about what "inside the workspace" means, and only the lower one was right.
+
+Both sites in the gate now use `relative()`, which is the containment idiom that
+does not depend on separator juggling:
+
+```ts
+const rel = relative(resolve(workspaceCwd), fullPath);
+return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+```
+
+The regression test pins the sibling-prefix case specifically. Note that it only
+fails when **both** call sites are weak, as they originally were: the fast path
+and the insertion each guard independently, so reverting one still leaves the
+other refusing. That is defence in depth working as intended, and it is also why
+the negative control below had to restore the original code exactly rather than
+half of it.
+
 ---
 
 ## Negative control
@@ -110,6 +181,9 @@ tests fail — and fail *narrowly*:
 |---|---|---|
 | Nested locale key | i18n suite fails | 2 of 5 fail |
 | `catch { return false }` in `ToolProbe` | Triage tests fail, nothing else | exactly 4 fail |
+| `startsWith` containment at both gate sites | Sibling-prefix test fails | exactly 1 fails |
+| Persist every scope, not just `file` | `once` and `turn` tests fail | exactly 2 fail |
+| Allowlist checked before plan mode | Plan-precedence test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
@@ -135,14 +209,15 @@ fails loudly when the count is zero.
 In priority order, driven by what has actually broken rather than by what is
 easy to test:
 
-1. **Approval gate** — [`approvalGateService.ts`](../src/application/services/approvalGateService.ts)
-   and the rules in `.claudio/auto-approve.json`. It is the only thing standing
-   between a model and `write` / `edit` / `bash`, and nothing downstream would
-   report a bug in it.
-2. **Translators** — request, response, and the SSE state machine in
+1. **Translators** — request, response, and the SSE state machine in
    [`streamTranslator.ts`](../src/application/streamTranslator.ts). Both surfaces
    cross this path on every single request.
-3. **`ToolManager`** — scoring, `UseTool` overflow, promotion decay.
+2. **`ToolManager`** — scoring, `UseTool` overflow, promotion decay.
+3. **`checkAutoApprove()`** — the allowlist predicate itself. The gate's tests
+   fake it, so the `pathPattern` / `cmdPattern` matching in
+   [`autoApproveConfig.ts`](../src/infrastructure/adapters/autoApproveConfig.ts)
+   is still unverified, and it is the one place where a too-generous pattern
+   silently widens what runs without asking.
 
 The agent loops and the workspace actions sit behind these deliberately: they are
 the largest surface but also the one where a live-backend snapshot still catches

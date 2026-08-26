@@ -7,6 +7,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Fixed — Approval gate treated a sibling directory as inside the workspace
+
+- **`ApprovalGateService` recorded `scope: "file"` grants** with
+  `full.startsWith(workspaceCwd)`. That is not a containment test: with a
+  workspace at `/ws` it also accepts `/ws-evil/secrets.txt`, because the
+  comparison ignores the directory boundary. A grant on a path outside the
+  workspace could therefore be recorded as trusted for the rest of the session,
+  and every later write to it waved through without asking.
+
+  Not exploitable: `safeResolvePath()` in `workspaceActions.ts` rejects the
+  write independently, and gets the check right (`resolved.startsWith(cwd + "/")`,
+  plus an outright refusal of absolute and `~` paths). The two layers simply
+  disagreed about what "inside the workspace" means, and only the lower one was
+  correct. Both sites in the gate now use `relative()`, which does not depend on
+  separator juggling.
+
+  Found by writing the tests below, not by observing a failure.
+
+### Added — Approval gate test suite
+
+- **`test/approvalGate.test.ts`** — 20 tests over the gate that gets between a
+  local model and `write` / `edit` / `bash` / `python`. It covers the precedence
+  chain (plan mode → auto mode → trusted files → allowlist → ask the user), which
+  approval scopes persist and which must not, and workspace containment of a
+  `scope: "file"` grant.
+
+  About half the assertions are on *whether the modal was raised at all* rather
+  than on the verdict. A gate that asks too often is an annoyance; a gate that
+  quietly stops asking is the real failure, and nothing downstream reports it —
+  the action just runs.
+
+  Three of them exist for mistakes that would be invisible in use: `scope: "once"`
+  silently becoming permanent if the persistence branch stopped discriminating
+  on scope; `scope: "turn"` being persisted here and outliving the turn it was
+  granted for (the two agent loops own that state); and the allowlist being
+  consulted before plan mode, which would let a plan run edit files.
+
+  Negative control on three fronts — reintroducing the `startsWith` check at both
+  sites fails exactly 1 test, persisting every scope fails exactly 2, and moving
+  the allowlist ahead of plan mode fails exactly 1.
+
+  `npm test` is now 33 tests in ~160 ms, still with no GPU, no LM Studio and no
+  model loaded.
+
+
 ### Documentation — README reconciled with the code it describes
 
 - **`README.md` still described a Bun single-file server.** Requirements asked
@@ -63,7 +108,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Added — Test harness (first automated tests in the project)
 
 - **`node:test`**, no new dependencies — `dependencies` stays `{}`. Tests live
-  in `proxy/test/` and are covered by `tsc --noEmit`. `npm test` runs 13 tests
+  in `proxy/test/` and are covered by `tsc --noEmit`. `npm test` runs 33 tests
   in ~160ms with no GPU, no LM Studio and no model loaded, which is what makes
   it usable as a merge gate; `scripts/regression.sh` needs a live backend and
   never could be.

@@ -628,7 +628,7 @@ model-specific logic.
 cd proxy && npm test
 ```
 
-13 tests, ~160 ms, no GPU, no LM Studio, no model loaded, no network. That is
+33 tests, ~160 ms, no GPU, no LM Studio, no model loaded, no network. That is
 the property that matters: it is why these can gate a pull request while
 `scripts/regression.sh` cannot.
 
@@ -636,6 +636,7 @@ the property that matters: it is why these can gate a pull request while
 |---|---|
 | [`test/i18n.test.ts`](test/i18n.test.ts) | Every key passed to `t()` exists in every locale; every locale is a *flat* map of strings; locales do not drift apart |
 | [`test/toolProbe.test.ts`](test/toolProbe.test.ts) | `ToolProbe` outcome triage — a refusal searches downward, a timeout is retried rather than believed, an HTTP error is not read as a capability, a persistent timeout caps the search and says so |
+| [`test/approvalGate.test.ts`](test/approvalGate.test.ts) | The `write`/`edit`/`bash`/`python` gate — precedence of plan mode, auto mode, trusted files and the allowlist; which approval scopes persist and which must not; workspace containment of a `scope: "file"` grant |
 
 Both suites exist because the bug they describe actually happened. `t()` returns
 the key itself when a lookup misses and locale files arrive through `JSON.parse`,
@@ -655,10 +656,10 @@ without a mock framework — the hexagonal architecture is paid for, it just has
 to be used. `ToolProbe` still reaches for global `fetch` and the test stubs it;
 if it ever becomes a port, that test gets simpler on its own.
 
-What is **not** covered yet, in the order it is worth covering: the approval
-gate, the request/response translators and the SSE state machine, then
-`ToolManager` scoring and overflow. See [Testing](docs/testing.md) and
-[PLAN.md](../PLAN.md).
+What is **not** covered yet, in the order it is worth covering: the
+request/response translators and the SSE state machine, then `ToolManager`
+scoring and overflow, then the allowlist predicate itself — the gate's tests
+fake it. See [Testing](docs/testing.md) and [PLAN.md](../PLAN.md).
 
 ---
 

@@ -108,10 +108,10 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 13 test su i18n e
-`ToolProbe`, eseguiti a ogni push — ma **la copertura è ancora agli inizi**: il
-gate di approvazione, i traduttori e `ToolManager` non sono coperti, ed è lì che
-la fase si chiude davvero.
+gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 33 test su i18n,
+`ToolProbe` e il gate di approvazione, eseguiti a ogni push — ma **la copertura
+non è ancora completa**: i traduttori e `ToolManager` restano scoperti, ed è lì
+che la fase si chiude davvero.
 
 Questa è la fase che sblocca tutto il resto. Senza, ogni modifica successiva è
 una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
@@ -137,18 +137,37 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
    la traccia reale (n=48 lento → il vecchio codice riportava 47). Verificato
    per negativo: ripristinando `catch { return false }` falliscono esattamente
    i 4 test del triage, e la regressione stampa `actual: 47`.
-3. **Approval gate**  ← **prossimo** — [`approvalGateService.ts`](proxy/src/application/services/approvalGateService.ts)
-   e le regole di `.claudio/auto-approve.json`. È l'unico controllo su
-   `write` / `edit` / `bash`; un bug qui non lo segnala nessuno a valle.
-4. **Traduttori** — request, response, e la macchina a stati SSE di
-   [`streamTranslator.ts`](proxy/src/application/streamTranslator.ts). È il
+3. ~~**Approval gate**~~ — **fatto.** [`test/approvalGate.test.ts`](proxy/test/approvalGate.test.ts):
+   20 test sulla precedenza fra plan mode, auto mode, file fidati e allowlist, su
+   quali scope persistono e quali no, e sul contenimento nel workspace. Metà
+   delle asserzioni sono su *"la modale non è stata alzata"*: un gate che chiede
+   troppo dà fastidio, un gate che smette di chiedere è il guasto vero e non lo
+   segnala nessuno. Ha fatto emergere un bug reale — vedi sotto. Verificato per
+   negativo su tre fronti: 1, 2 e 1 test falliti, esattamente quelli attesi.
+4. **Traduttori**  ← **prossimo** — request, response, e la macchina a stati SSE
+   di [`streamTranslator.ts`](proxy/src/application/streamTranslator.ts). È il
    percorso che *entrambe* le superfici attraversano sempre.
 5. **`ToolManager`** — scoring, overflow `UseTool`, decadimento delle
    promozioni.
+6. **`checkAutoApprove()`** — il predicato dell'allowlist. I test del gate lo
+   sostituiscono con un fake, quindi il matching `pathPattern` / `cmdPattern` in
+   [`autoApproveConfig.ts`](proxy/src/infrastructure/adapters/autoApproveConfig.ts)
+   resta non verificato: è l'unico punto dove un pattern troppo generoso allarga
+   in silenzio ciò che gira senza chiedere.
+
+> **Il bug che i test hanno trovato.** Il gate registrava una concessione
+> `scope: "file"` con `full.startsWith(workspaceCwd)`. Non è un test di
+> contenimento: con workspace `/ws`, il fratello `/ws-evil/secrets.txt` lo
+> supera, perché il confronto ignora il confine di directory — quindi un
+> permesso su un file *fuori* dal workspace finiva tra i file fidati per tutta
+> la sessione. Non era sfruttabile: `safeResolvePath()` in `workspaceActions.ts`
+> rifiuta comunque la scrittura, e il controllo lì è fatto bene. Ma i due strati
+> non erano d'accordo su cosa significhi "dentro il workspace", e solo quello
+> basso aveva ragione. Ora entrambi i punti del gate usano `relative()`.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 13 test / ~160 ms, senza GPU e senza rete.
+`npm test` in 33 test / ~160 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
