@@ -34,9 +34,57 @@ const COMPACT_THRESHOLD = 0.80;
 /** Fraction of the context window compaction trims down to. */
 const COMPACT_TARGET = 0.65;
 
-/** Rough token estimate: 4 chars ≈ 1 token (conservative). */
+/**
+ * Nominal token cost of one image, charged in place of its base64 payload.
+ *
+ * The real cost depends on the resolution the vision encoder tiles the image
+ * into — a few hundred tokens for a small one, low thousands for a large one.
+ * Any constant in that range is closer than measuring the payload, which is
+ * wrong by roughly two orders of magnitude in the direction that hurts.
+ */
+const IMAGE_TOKEN_COST = 1_500;
+
+/** What a payload is replaced by. Legible, because the summariser sees it. */
+const IMAGE_PLACEHOLDER = "[image data omitted]";
+
+/**
+ * Serialise `value` with every base64 image payload replaced by a placeholder,
+ * and report how many were found.
+ *
+ * Both shapes are handled because compaction runs on both sides of the
+ * translation: an Anthropic `image` block carries `source.data`, and the
+ * translated OpenAI part carries an `image_url.url` holding a `data:` URI.
+ */
+function stringifyWithoutPayloads(value: unknown, space?: number): { json: string; images: number } {
+  let images = 0;
+  const json = JSON.stringify(value, function (this: any, key: string, val: unknown) {
+    if (key === "data" && typeof val === "string" && this?.type === "base64") {
+      images++;
+      return IMAGE_PLACEHOLDER;
+    }
+    if (key === "url" && typeof val === "string" && val.startsWith("data:")) {
+      images++;
+      return IMAGE_PLACEHOLDER;
+    }
+    return val;
+  }, space);
+  return { json, images };
+}
+
+/**
+ * Rough token estimate: 4 chars ≈ 1 token (conservative).
+ *
+ * That rule holds for prose and fails for base64. A 500 KB screenshot is some
+ * 683 000 characters, which the rule scores at ~171 000 tokens — more than the
+ * whole loaded window, for one attachment the model charges a fraction of.
+ * Left uncorrected it makes a single image trigger compaction on a conversation
+ * that fits comfortably, and the conversation, not the image, is what gets
+ * dropped: `naive` keeps the last two messages. So images are counted at a flat
+ * nominal cost instead of by payload length.
+ */
 export function estimateTokens(value: unknown): number {
-  return Math.ceil(JSON.stringify(value).length / 4);
+  const { json, images } = stringifyWithoutPayloads(value);
+  return Math.ceil(json.length / 4) + images * IMAGE_TOKEN_COST;
 }
 
 export interface CompactorOptions {
@@ -145,7 +193,9 @@ export class ContextCompactor {
       "Preserve: all file names, decisions made, code written, errors encountered, and current task context.",
       "Output only the summary, no preamble.\n",
       "<history>",
-      JSON.stringify(toSummarize, null, 2),
+      // Without the payloads: this is a text call, so an image cannot be
+      // summarised — it can only be the largest thing in the prompt.
+      stringifyWithoutPayloads(toSummarize, 2).json,
       "</history>",
     ].join("\n");
 

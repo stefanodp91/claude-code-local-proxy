@@ -347,3 +347,71 @@ test("the token estimate grows with the content", () => {
 test("the estimate is deliberately rough, and never zero for real content", () => {
   assert.equal(estimateTokens([user("hello")]) > 0, true);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Images
+//
+// The estimator's rule — 4 chars ≈ 1 token — is right for prose and wrong by
+// two orders of magnitude for a base64 image. A 500 KB screenshot is ~683 000
+// characters of payload, so the rule scores it at ~171 000 tokens: more than
+// the whole loaded window, from a single attachment the model would have
+// charged a few hundred tokens for. Nothing errors. The conversation is simply
+// thrown away the moment the user attaches a picture.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** An Anthropic image block, as Claudio sends it. `kb` is the payload size. */
+const imageMessage = (kb: number) => ({
+  role: "user",
+  content: [
+    { type: "image", source: { type: "base64", media_type: "image/png", data: "A".repeat(kb * 1024) } },
+    { type: "text", text: "what is in this screenshot?" },
+  ],
+});
+
+/** The same image after translation, as it sits in an agent loop's history. */
+const oaiImageMessage = (kb: number) => ({
+  role: "user",
+  content: [
+    { type: "image_url", image_url: { url: `data:image/png;base64,${"A".repeat(kb * 1024)}` } },
+    { type: "text", text: "what is in this screenshot?" },
+  ],
+});
+
+test("an image is not counted as if its base64 were prose", () => {
+  // Both shapes, because compaction runs on both sides of the translation.
+  assert.equal(estimateTokens([imageMessage(500)]) < 5_000, true);
+  assert.equal(estimateTokens([oaiImageMessage(500)]) < 5_000, true);
+});
+
+test("an image still costs something — it is not free", () => {
+  assert.equal(estimateTokens([imageMessage(500)]) > estimateTokens([user("what is in this screenshot?")]), true);
+});
+
+test("attaching a screenshot does not by itself discard the conversation", async () => {
+  // A short exchange plus one image, against a window that fits it easily.
+  const s = summarizer("summary");
+  const messages = [user("hello"), assistant("hi"), imageMessage(500)];
+
+  const outcome = await compactor(s.llm).compact(messages, 119_552);
+
+  assert.equal(outcome.compacted, false, "compaction fired on a conversation that fits");
+  assert.equal(messages.length, 3);
+});
+
+test("the summariser is never sent a base64 payload", async () => {
+  // It is a text model call: the payload cannot be summarised, cannot be seen,
+  // and would be the largest thing in the prompt.
+  let prompt = "";
+  const llm: LlmClientPort = {
+    async chat(req: any) {
+      prompt = req.body.messages[0].content;
+      return { ok: true, status: 200, json: { choices: [{ message: { content: "summary" } }] } };
+    },
+    async ping() { return true; },
+  };
+  const messages = [user("start"), imageMessage(500), bulk(80_000), user("last"), assistant("end")];
+
+  await compactor(llm, true).compact(messages, 20_000);
+
+  assert.equal(prompt.includes("A".repeat(1_024)), false, "the base64 payload reached the summariser");
+});

@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 257 tests, ~430 ms
+cd proxy && npm test         # 261 tests, ~370 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -154,7 +154,7 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 257 tests on every push.
+deliberately left alone. 261 tests on every push.
 
 "Every component has a suite" would be an overstatement, and was made once in
 this repo's own docs before being counted: the routing use case, the slash
@@ -165,15 +165,24 @@ enumerates them.
 prepended to the system prompt when present, and the model updates it through
 the ordinary gated `write` rather than a dedicated path.
 
-**Next, from PLAN.md §6: verify the image path end to end.** Every piece already
-exists — the loaded model is `type: vlm`, `requestTranslator` turns Anthropic
-image blocks into `image_url` data URIs (covered by tests), and Claudio can
-already attach images. It may work today with no code written at all, which is
-why it is next: the cheapest item on the list is the one nobody has tried.
+**In progress, from PLAN.md §6: the image path.** The translation was already
+covered by tests; what was not covered was every other place an image passes
+through. Two silent problems came out of looking:
 
-That verification is the one thing in this repo the automated suites cannot do —
-it needs LM Studio running with a VLM loaded. Cover what you can in tests, then
-say plainly that the end-to-end leg needs a human with a GPU.
+- **Fixed** — `estimateTokens()` counted base64 as prose, so a 500 KB screenshot
+  scored ~171 000 tokens and compaction fired on a conversation that fit. `naive`
+  keeps the first message and the last two, so the image survived and the history
+  did not: attaching a picture reset the conversation, with no error anywhere.
+  Images now cost a flat nominal amount in both message shapes.
+- **Open, and a decision rather than a bug** — a `python` action that draws a
+  plot returns the PNG's base64 *as the tool result string*
+  ([`workspaceActions.ts:128`](proxy/src/infrastructure/workspaceActions.ts#L128)).
+  The three options are in PLAN.md §6.2; they differ in what the user sees and
+  one of them changes `executeAction`'s return type.
+
+The end-to-end leg — does the model actually see the picture — is still the one
+thing the suites cannot do: it needs LM Studio with a VLM loaded. Cover what you
+can in tests, then say plainly that the rest needs a human with a GPU.
 
 **Phase 2 — known correctness**, from PLAN.md §5:
 

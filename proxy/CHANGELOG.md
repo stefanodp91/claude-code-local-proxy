@@ -5,7 +5,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased] — 2026-08-26
+## [Unreleased] — 2026-08-27
+
+### Fixed — An attached image threw the conversation away
+
+- **`estimateTokens()` measured base64 payloads as prose.** At 4 characters per
+  token, a 500 KB screenshot scores ~171 000 tokens — more than the whole loaded
+  window, for one attachment a vision model charges a few hundred tokens for.
+
+  Nothing failed, which is why it survived: the request still went through. What
+  happened instead is that compaction fired on a conversation that fit, and
+  `naive` keeps the first message and the last two — so the picture survived and
+  the history around it did not. **Attaching a screenshot silently reset the
+  conversation.**
+
+- Images are now charged a flat nominal `IMAGE_TOKEN_COST` in place of their
+  payload, in **both** message shapes: `source.data` on an Anthropic image block
+  and the `data:` URI in `image_url.url` after translation. Compaction runs on
+  both sides of the translation, so counting only one of them would have fixed
+  the incoming request and left the agent loops wrong.
+
+- **The summariser was being sent the payload too.** The semantic strategy
+  embeds the history in its prompt verbatim, so a megabyte of base64 was going
+  to a text model to be summarised. It now receives the same payload-free
+  serialisation, with `[image data omitted]` in place of the data.
+
+- Four tests in `contextCompactor.test.ts`; `npm test` is now 261 in ~370 ms.
+  Negative control: measuring payloads as prose again fails exactly 2, putting
+  the payload back in the summary prompt fails exactly 1.
+
 
 ### Added — Cross-session memory
 
@@ -49,7 +77,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   exactly 1 test, emitting an empty section instead of none fails exactly 1, and
   dropping the `.trim()` on the memory file fails exactly 1.
 
-- `npm test` is now 257 tests in ~430 ms.
+- `npm test` was 257 tests in ~430 ms at this entry.
 
 
 ### Fixed — Path B ignored the configured iteration limit

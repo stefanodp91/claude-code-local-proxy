@@ -1,7 +1,7 @@
 # Piano di evoluzione
 
 > Stato del progetto e percorso per riprenderlo in mano.
-> Ultimo aggiornamento: 2026-08-26.
+> Ultimo aggiornamento: 2026-08-27.
 >
 > **Chi riprende il lavoro parte da [CLAUDE.md](CLAUDE.md)**: mappa del repo,
 > comandi per verificare, invarianti da non rompere e il metodo di lavoro.
@@ -112,7 +112,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **257 test** a ogni push.
+gira senza GPU accesa. Oggi sono **261 test** a ogni push.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -275,7 +275,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 257 test / ~430 ms, senza GPU e senza rete.
+`npm test` in 261 test / ~370 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -358,11 +358,45 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
    vuota, niente "(nessuna memoria)". Ogni token speso su una sezione vuota è
    tolto alla conversazione, e su questi modelli la finestra è la risorsa scarsa
    dell'intero progetto.
-2. **Verificare il percorso immagini.**  ← **prossimo** Il modello ora è `type: "vlm"` e la
-   traduzione dei blocchi immagine → `image_url` esiste già a
-   [`requestTranslator.ts:202`](proxy/src/application/requestTranslator.ts#L202).
-   Claudio permette già di allegare immagini. Potrebbe funzionare end-to-end
-   senza scrivere niente: va solo provato.
+2. **Verificare il percorso immagini.**  ← **in corso.** La traduzione dei
+   blocchi immagine → `image_url` esiste già a
+   [`requestTranslator.ts:202`](proxy/src/application/requestTranslator.ts#L202)
+   e Claudio permette già di allegare immagini, quindi l'ipotesi era che
+   funzionasse senza scrivere niente. Controllando i due punti in cui
+   un'immagine attraversa codice *non* coperto dai test ne sono usciti due
+   problemi, entrambi silenziosi.
+
+   **Fatto — l'immagine faceva buttare via la conversazione.**
+   `estimateTokens()` conta 4 caratteri per token: giusto per la prosa, sbagliato
+   di due ordini di grandezza per il base64. Uno screenshot da 500 KB vale
+   ~683.000 caratteri, cioè ~171.000 token stimati — più dell'intera finestra
+   caricata, per un allegato che il modello paga qualche centinaio di token.
+   Nessun errore, nessun rifiuto: semplicemente la compaction scattava su una
+   conversazione che ci stava, e `naive` tiene il primo messaggio e gli ultimi
+   due — quindi **sopravviveva l'immagine e spariva la storia intorno**. Con la
+   compaction semantica attiva il payload finiva anche dentro il prompt di
+   riassunto, spedito a un modello di testo. Ora le immagini costano un valore
+   nominale fisso al posto del payload, in *entrambe* le forme di messaggio
+   (`source.data` lato Anthropic, la data URI in `image_url.url` dopo la
+   traduzione), perché la compaction gira su entrambi i lati. Quattro test, con
+   controllo negativo.
+
+   **Da decidere — il grafico di `python` torna al modello come base64.**
+   [`workspaceActions.ts:128`](proxy/src/infrastructure/workspaceActions.ts#L128)
+   restituisce `result.data` così com'è, e per un plot matplotlib quel campo è un
+   PNG in base64: il modello riceve decine di migliaia di token di stringa
+   illeggibile come *tool result*, e quel testo — essendo testo e non un blocco
+   immagine — viene contato per intero anche dopo la correzione qui sopra. Le
+   opzioni sono tre e non sono equivalenti: un marcatore corto al posto del
+   payload (l'immagine si perde, il costo sparisce), salvare il PNG nel workspace
+   e restituirne il path (visibile all'utente, ma è una scrittura su disco che
+   non passa dal gate), oppure restituire un vero blocco immagine al VLM (è la
+   cosa giusta, e cambia il contratto `Promise<string>` di `executeAction` in
+   entrambi i loop). Il percorso SSE `/python` verso Claudio è invece corretto:
+   `server.ts` inoltra l'oggetto `{type:"image"}` intero.
+
+   **Resta la prova end-to-end**: che il modello *veda* davvero l'immagine non lo
+   può dire nessuna suite qui: serve LM Studio con il VLM caricato.
 3. Il resto (hooks, skills, MCP, sub-agent, TodoWrite, web tools, worktree) è
    parità con Claude Code, costoso e di resa modesta su un 27B locale.
 

@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 257 tests, ~430 ms
+npm test          # 261 tests, ~370 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -347,12 +347,42 @@ Both message shapes are covered, since compaction now runs on both sides of the
 translation: the incoming Anthropic request, and each agent loop trimming its own
 OpenAI history between iterations.
 
+Four of its tests are about images rather than pairing — see
+[An image counted as prose](#an-image-counted-as-prose).
+
 One test in this suite was rewritten after it passed. The first version built a
 history of evenly-sized call/result pairs, so messages dropped two at a time and
 the pairing survived by arithmetic rather than by the code being right — it
 passed against the bug. The version that ships makes the call enormous and its
 answer tiny, so exactly one message is dropped and the cut lands in the middle of
 a pair every time.
+
+---
+
+## An image counted as prose
+
+`estimateTokens()` scores a conversation at 4 characters per token. That is right
+for prose and wrong for base64 by about two orders of magnitude: a 500 KB
+screenshot is roughly 683 000 characters of payload, which the rule reports as
+~171 000 tokens — more than the entire loaded window, for one attachment a vision
+model charges a few hundred tokens for.
+
+The consequence is not a rejected request, which is why nothing surfaced it. It
+is that **attaching a picture silently discards the conversation**: the estimate
+clears the 80 % threshold on its own, compaction runs, and `naive` keeps the
+first message and the last two — so the image survives and the history around it
+does not. With semantic compaction enabled it is worse than that, because the
+summarisation prompt embeds the history verbatim, so the payload was also being
+sent to a text model to be summarised.
+
+Images are now charged a flat `IMAGE_TOKEN_COST` in place of their payload, in
+both message shapes — `source.data` on an Anthropic block, and the `data:` URI
+in `image_url.url` after translation — since compaction runs on both sides of it.
+The summariser is handed the same payload-free serialisation.
+
+This is the half of the image path that could be tested without a GPU. The other
+half — whether the model actually *sees* the picture — needs LM Studio with a VLM
+loaded, and no suite here can stand in for it.
 
 ---
 
@@ -534,6 +564,8 @@ tests fail — and fail *narrowly*:
 | Run destructive calls in parallel | Overlap test fails | exactly 1 fails |
 | Disable `repairToolPairing` | Pairing tests fail | exactly 5 fail |
 | Skip compaction between loop iterations | Mid-turn growth test fails | exactly 1 fails per loop |
+| Measure image payloads as prose again | Estimator and screenshot tests fail | exactly 2 fail |
+| Embed the payload in the summary prompt | Summariser payload test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.

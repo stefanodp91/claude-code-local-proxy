@@ -635,7 +635,7 @@ model-specific logic.
 cd proxy && npm test
 ```
 
-257 tests, ~430 ms, no GPU, no LM Studio, no model loaded, no network. That is
+261 tests, ~370 ms, no GPU, no LM Studio, no model loaded, no network. That is
 the property that matters: it is why these can gate a pull request while
 `scripts/regression.sh` cannot.
 
