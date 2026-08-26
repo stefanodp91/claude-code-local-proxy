@@ -7,6 +7,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Fixed — One malformed tool call killed the next iteration
+
+- Found by running the image path end to end against LM Studio, which is the
+  only way it *could* be found: the turn died one iteration in and put a raw
+  HTML error page in the answer.
+
+- The model emitted a `workspace` call with **empty arguments**. Execution
+  already tolerated that — unparseable arguments fall back to `list .` — but the
+  loop replays its own history verbatim, and an assistant `tool_calls` entry
+  whose `arguments` is not a JSON object string is refused by the backend:
+  `""` → 500, `"   "` → 500, a truncated `{"action":` → 500, `"null"` → 400,
+  `"{}"` → 200. Measured, not assumed.
+
+- Arguments are now normalised where the assistant turn is built, to the same
+  fallback the executor uses, so the replayed call agrees with the tool result
+  next to it. A replacement is logged: a model producing unusable calls is worth
+  seeing even now that the turn survives it.
+
+- `"null"` needed its own test. `JSON.parse` accepts it, so a guard that only
+  catches a throw lets it past, and reading `.action` off `null` ends the turn —
+  which it was still doing in three more places in the same file.
+
+- The Path A fake could only express arguments as an object it serialised, so it
+  could not produce what a real model writes. It takes a raw string now.
+
+- 4 tests; `npm test` is now 287. Negative control: replaying verbatim fails
+  exactly 3, accepting anything `JSON.parse` accepts fails exactly 1.
+
 ### Changed — CI runs on request, not on every commit
 
 - `.github/workflows/ci.yml` no longer fires per push or per pull-request
