@@ -75,12 +75,12 @@ Do not conflate the two; the project already did once.
 
 ## How work is done here
 
-**The failure mode of this project is the silent one.** Nine bugs were found
-across the test suites and not one threw, logged, or failed a typecheck: a probe
-reading timeouts as capability, an allowlist rule approving the opposite of what
-it said, an `edit` corrupting `$` in replacements, a tool manual teaching a
-grammar the parser refused. Useful work here is usually *making noisy what is
-currently quiet*.
+**The failure mode of this project is the silent one.** Eleven bugs have been
+found by the test suites and not one threw, logged, or failed a typecheck: a
+probe reading timeouts as capability, an allowlist rule approving the opposite of
+what it said, an `edit` corrupting `$` in replacements, a tool manual teaching a
+grammar the parser refused, compaction producing a conversation the backend
+rejects. Useful work here is usually *making noisy what is currently quiet*.
 
 **Test first, then fix.** Write the test asserting the behaviour you believe is
 correct, watch it fail, then change the code. The suites in `proxy/test/` were
@@ -91,24 +91,34 @@ confirm the test fails — and fails *narrowly*. A suite nobody has seen fail is
 decoration. The observed counts are tabulated in
 [`proxy/docs/testing.md`](proxy/docs/testing.md#negative-control).
 
-Two traps, both hit on this branch, both invisible in a green run:
+Three traps, all hit on this branch, all invisible in a green run:
 
 - **A test that cannot fail.** Four ToolManager tests used a limit of 7 against
   exactly 7 tools, so the code returned early and filtered nothing; the
   assertions passed while verifying nothing. Guard the precondition explicitly
-  when a test depends on one.
+  when a test depends on one — `assert(useToolDef !== null)` before asserting
+  anything about the filtering.
 - **A control that comes back green.** It may mean the test is weak *or* that
   the control never introduced the bug. Reverting a two-site fix at one site
   leaves both sites guarding; `(b.score - a.score) || 1` does not reorder
   anything in V8. Verify the control before touching the test.
+- **A fake more forgiving than reality.** The prompt-builder tests use a
+  repository that echoes its parameters, so they passed while the shipped
+  `agent-base.md` had no `{{memorySection}}` and the whole feature did nothing.
+  Where a fake stands in for a *file on disk*, one test has to read the real
+  file. The same shape caught the Path B grammar bugs: a test comparing against
+  a list written in the test proves only that the list matches itself.
 
 **Fakes are object literals.** `LlmClientPort`, `SseWriterPort` and the rest are
 already ports; `proxy/test/fakes.ts` holds the shared ones. A fake that drifts
 out of shape fails `tsc` because `tsconfig.json` includes `test/`.
 
-**Prefer deriving a test's expectations from the code under test** rather than
-from a list you wrote. The Path B grammar test originally compared against a
-hardcoded attribute list and passed against both bugs it was written to catch.
+**Prefer deriving a test's expectations from the code or the artefact under
+test** rather than from a list you wrote. Two suites now do this and both caught
+real drift: `textualAgentLoop.test.ts` asks `parseActionTag` about every
+attribute `TEXTUAL_TOOL_MANUAL` teaches, and `systemPromptBuilder.test.ts` reads
+`prompts/en_US/*.md` to check every parameter the builder passes is actually
+interpolated somewhere.
 
 ---
 
@@ -153,9 +163,17 @@ enumerates them.
 
 **Phase 3 is under way.** Cross-session memory is done: `.claudio/MEMORY.md` is
 prepended to the system prompt when present, and the model updates it through
-the ordinary gated `write` rather than a dedicated path. Next in PLAN.md §6 is
-verifying the image path end to end — the model is a VLM, the translation and
-the attachment UI both exist, and it may already work.
+the ordinary gated `write` rather than a dedicated path.
+
+**Next, from PLAN.md §6: verify the image path end to end.** Every piece already
+exists — the loaded model is `type: vlm`, `requestTranslator` turns Anthropic
+image blocks into `image_url` data URIs (covered by tests), and Claudio can
+already attach images. It may work today with no code written at all, which is
+why it is next: the cheapest item on the list is the one nobody has tried.
+
+That verification is the one thing in this repo the automated suites cannot do —
+it needs LM Studio running with a VLM loaded. Cover what you can in tests, then
+say plainly that the end-to-end leg needs a human with a GPU.
 
 **Phase 2 — known correctness**, from PLAN.md §5:
 

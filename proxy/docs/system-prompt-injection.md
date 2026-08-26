@@ -49,6 +49,7 @@ Long LLM prompts live as `.md` files under `proxy/prompts/<locale>/`. This keeps
 | [`agent-base.md`](../prompts/en_US/agent-base.md) | Instructions for ask/auto modes — tells the model to CALL the `workspace` tool rather than explain commands. |
 | [`plan-mode.md`](../prompts/en_US/plan-mode.md) | Forced Plan-mode directive — mandatory write to `<plansDir>/<slug>.md`, forbidden behaviors, and the `exit_plan_mode` control action. |
 | [`existing-plan-section.md`](../prompts/en_US/existing-plan-section.md) | Template injected into `plan-mode.md` when an existing plan is found, so the model refines the same file instead of spawning a new one. |
+| [`memory-section.md`](../prompts/en_US/memory-section.md) | Wraps cross-session memory when the workspace has any, and tells the model where to write it back. Injected into **both** `agent-base.md` and `plan-mode.md`. |
 
 ### Templating
 
@@ -63,8 +64,19 @@ Templates use `{{name}}` placeholders — the same syntax as `domain/i18n.ts`. T
 | `{{planPath}}` | `existing.relPath` | `existing-plan-section.md` |
 | `{{mtimeRelative}}` | `existing.mtimeRelative` | `existing-plan-section.md` |
 | `{{planContent}}` | Full content of the existing plan file | `existing-plan-section.md` |
+| `{{memorySection}}` | Rendered `memory-section.md`, or **empty string** when the workspace has no memory | `agent-base.md`, `plan-mode.md` |
+| `{{memory}}` | Contents of `MEMORY_FILE`, capped at 8 KB | `memory-section.md` |
+| `{{memoryPath}}` | `MemoryRepositoryPort.relativePath` (from `ProxyConfig.memoryFile`) | `memory-section.md` |
 
-**Key consequence**: changing `PLANS_DIR` env var (see [configuration.md](configuration.md#plan-mode)) re-routes every mention of the plans directory in the prompt — the model is told to write to the new location without any code change.
+**Key consequence**: changing `PLANS_DIR` env var (see [configuration.md](configuration.md#plan-mode)) re-routes every mention of the plans directory in the prompt — the model is told to write to the new location without any code change. `MEMORY_FILE` works the same way, and setting it to an empty string removes the memory section entirely.
+
+> **A parameter no template interpolates is silently dropped.** No error, no
+> warning — the builder computes it and `get()` discards it, so a feature wired
+> correctly end to end still never happens. Cross-session memory shipped that way
+> for the length of one commit: fully wired, and `agent-base.md` had no
+> `{{memorySection}}`. `test/systemPromptBuilder.test.ts` now reads the shipped
+> templates and asserts every parameter the builder passes has a placeholder in
+> them, which is the only thing connecting this table to reality.
 
 ---
 
@@ -77,15 +89,24 @@ SystemPromptBuilder.build(workspaceCwd, mode, textualPath)
 │     ├── YES → loadMostRecent(cwd) → ExistingPlan | null
 │     │         ├── ExistingPlan non-null → render existing-plan-section.md
 │     │         └── null → existingPlanSection = ""
-│     │         render plan-mode.md with {cwd, cwdBase, plansDir, existingPlanSection}
+│     │         render plan-mode.md with {cwd, cwdBase, memorySection,
+│     │                                    plansDir, existingPlanSection}
 │     │
-│     └── NO  → render agent-base.md with {cwd, cwdBase, plansDir}
+│     └── NO  → render agent-base.md with {cwd, cwdBase, memorySection}
+│
+├── memory file present ?
+│     ├── YES → render memory-section.md into {{memorySection}}
+│     └── NO  → memorySection = "" (no heading, no placeholder text)
 │
 └── textualPath ?
       └── YES → append buildWorkspaceContextSummary(cwd)
                 append TEXTUAL_TOOL_MANUAL
       (Path B only — models without native tool calling)
 ```
+
+`plansDir` goes only to `plan-mode.md`. The base prompt was receiving it too and
+has never used it — harmless, but it hid which prompt depends on what, which is
+the same class of drift as the missing placeholder above.
 
 The `textualPath` flag is set by `ProxyServer` when `this.maxTools === 0`. On that path the model has no way to fetch workspace context later, so the builder front-loads a project snapshot and a manual for the `<action>` XML protocol.
 

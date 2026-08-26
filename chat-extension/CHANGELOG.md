@@ -7,6 +7,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Documentation — cross-session memory is no longer absent
+
+- **`feature-gap.md` listed cross-session memory as ABSENT.** The proxy now
+  prepends `.claudio/MEMORY.md` to the system prompt when it exists (see
+  `MEMORY_FILE` in the proxy configuration reference).
+
+  There is nothing to build on the Claudio side: the memory is workspace state,
+  not extension state, and the model updates it through the ordinary `write`
+  action — so an update surfaces in Claudio's existing approval modal like any
+  other write to disk. Recorded as PRESENT (proxy) with that noted, rather than
+  left in the parity backlog it no longer belongs to.
+
+
 ### Documentation — stale packaging references and dead code anchors
 
 - **`claudio-0.1.0.vsix`** appeared in the README, `quick-start.md`,

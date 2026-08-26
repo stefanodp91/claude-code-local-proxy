@@ -53,7 +53,7 @@ This means that some features "missing from the chat-extension" are actually **a
 |---|---|---|
 | **Streaming during native agent loop iterations** | FIXED in Path A | [nativeAgentLoopService.ts:222-236](../../proxy/src/application/services/nativeAgentLoopService.ts#L222-L236) — **every** iteration now uses `stream: true` and forwards text/thinking deltas in real time. Iteration 0 no longer runs as a non-streaming probe; it keeps only the fallback-guard role, returning `"fallthrough"` when the model emits nothing at all. |
 | **Automatic context compaction** | PRESENT | [`services/contextCompactor.ts`](../../proxy/src/application/services/contextCompactor.ts): at 80% of the model's context window it summarizes via LLM (`SEMANTIC_COMPACT`), falling back to dropping messages, and trims down to 65%. Runs on the incoming request **and between iterations of both agent loops**, so a turn that grows past the window mid-flight is handled rather than rejected by the backend. Tool-call pairing is repaired after any trim. **Remaining limitation:** Claudio's own `conversation[]` is never trimmed — the proxy trims what it sends, the extension keeps everything. |
-| **Cross-session memory** | ABSENT | No `MEMORY.md` or persistent equivalent. The only cross-request state on the proxy side is the `promoted` map in ToolManager, in-memory and reset on restart. |
+| **Cross-session memory** | PRESENT (proxy) | `.claudio/MEMORY.md`, configurable via `MEMORY_FILE`, is prepended to the system prompt when it exists — see [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md). The model updates it through the ordinary `write` action, so updates pass the approval gate and appear in Claudio's approval modal like any other write. **Claudio-side:** nothing to build — the file is workspace state, not extension state. |
 | **Plan mode** | PRESENT | `PlanExitModalComponent` gestisce l'uscita da Plan mode; `SetAgentMode` message sincronizza lo stato Ask/Auto/Plan tra webview ed extension host; `ModeSelectorComponent` mostra un dropdown con dot colorati per ogni modalità. |
 | **Visualization of `tool_use` blocks in streaming** | PRESENT | Full pipeline in place: `StreamingService` parses `content_block_start/delta/stop` for `tool_use` blocks → `MessageStoreService` accumulates `rawInput` and parses JSON at completion → `MessageBubbleComponent` renders `<app-tool-use-block>` → `ToolUseBlockComponent` shows icon + label with pulsing animation while pending. |
 | **Hooks** | ABSENT | No event-driven hook system (`pre-tool-use`, `post-tool-use`, etc.). |
@@ -97,13 +97,13 @@ All minimum-gap items are now implemented. The following secondary features are 
 
 The remaining gaps are full Claude Code parity items (lower priority):
 
-Everything else (skills, MCP, hooks, sub-agents, todo, web tools, cross-session memory) is important for full parity with Claude Code, but lower priority.
+Everything else (skills, MCP, hooks, sub-agents, todo, web tools) is important for full parity with Claude Code, but lower priority.
 
 ---
 
 ## 6. High-Level Roadmap (Remaining)
 
-**Full Claude Code parity** (lower priority): cross-session memory, hooks, skills, MCP, sub-agents, TodoWrite, web tools, worktree isolation.
+**Full Claude Code parity** (lower priority): hooks, skills, MCP, sub-agents, TodoWrite, web tools, worktree isolation.
 
 In-loop compaction, previously the sharpest gap here, now runs in both loops. What is left on the Claudio side is that its own `conversation[]` grows without bound.
 

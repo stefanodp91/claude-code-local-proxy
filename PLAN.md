@@ -393,6 +393,13 @@ Tre schemi ricorrenti, utili a chi riprende in mano il codice:
   regge uno, la chiave i18n annidata che stampa sé stessa, il dispose mai
   chiamato. Nessuno di questi solleva un errore. Il lavoro utile è quasi sempre
   *rendere rumoroso ciò che oggi tace*.
+- **I fake possono essere più indulgenti della realtà.** I test del prompt
+  builder usano un repository che fa da eco ai parametri, quindi passavano
+  mentre l'`agent-base.md` spedito non aveva `{{memorySection}}` e la memoria
+  non arrivava da nessuna parte. Dove un fake sostituisce un *file su disco*,
+  almeno un test deve leggere il file vero. Stessa forma dei bug di Path B: un
+  test che confronta con una lista scritta nel test dimostra solo che la lista
+  coincide con sé stessa.
 - **Misurare, non dedurre.** Le capacità dei modelli non si trasferiscono tra
   modelli, e i metadata dichiarati dal backend non sono affidabili. Il codice lo
   sapeva già; il modo di lavorare deve saperlo altrettanto.
