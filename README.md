@@ -208,7 +208,12 @@ out of CI until there is something to check there beyond compilation.
 See [proxy/docs/testing.md](proxy/docs/testing.md) for what the suites cover and
 what is still uncovered.
 
-### Where the project stands
+### Picking this up
+
+[CLAUDE.md](CLAUDE.md) is the orientation document for anyone — human or agent —
+arriving cold: what the repo contains, the commands that verify it, the
+invariants that must not break quietly, and the working method the test suites
+were built with. Read it before changing anything in `proxy/`.
 
 [PLAN.md](PLAN.md) is the honest account: the two surfaces and how they differ,
 what was measured on the current model rather than assumed, what is done, and

@@ -27,6 +27,7 @@ Claude Code (Anthropic SDK)
 
 ## Documentation
 
+- [CLAUDE.md](../CLAUDE.md) — orientation for anyone picking the project up: invariants, working method, current state
 - [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
 - [Architecture](docs/architecture.md) — hexagonal structure, request flow, SSE state machine, slash commands, workspace tool
 - [Configuration](docs/configuration.md) — complete reference for all environment variables

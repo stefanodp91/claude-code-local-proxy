@@ -2,6 +2,10 @@
 
 > Stato del progetto e percorso per riprenderlo in mano.
 > Ultimo aggiornamento: 2026-08-26.
+>
+> **Chi riprende il lavoro parte da [CLAUDE.md](CLAUDE.md)**: mappa del repo,
+> comandi per verificare, invarianti da non rompere e il metodo di lavoro.
+> Questo documento è il *dove siamo e dove andiamo*; quello è il *come*.
 
 ---
 
