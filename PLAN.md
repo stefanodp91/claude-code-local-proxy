@@ -108,10 +108,9 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 97 test
-eseguiti a ogni push — e i quattro punti più esposti sono coperti. Resta
-`ToolManager`, più il predicato dell'allowlist: **la fase non è chiusa**, ma da
-qui in avanti ogni modifica ha qualcosa che la guarda.
+gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 120 test
+eseguiti a ogni push — e cinque dei sei punti sono coperti. Resta il predicato
+dell'allowlist, ed è l'ultimo prima che la fase si chiuda.
 
 Questa è la fase che sblocca tutto il resto. Senza, ogni modifica successiva è
 una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
@@ -149,15 +148,43 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
    superfici attraversano sempre. Hanno trovato **tre bug**, nessuno dei quali
    lanciava un errore o falliva un typecheck — vedi sotto. Verificato per
    negativo: 3, 1 e 1 test falliti, esattamente quelli attesi.
-5. **`ToolManager`**  ← **prossimo** — scoring, overflow `UseTool`, decadimento
-   delle promozioni. Le suite dei traduttori lo sostituiscono con un fake,
-   quindi il suo comportamento resta non verificato — e il bug dell'overflow qui
-   sotto mostra quanto costi.
-6. **`checkAutoApprove()`** — il predicato dell'allowlist. I test del gate lo
-   sostituiscono con un fake, quindi il matching `pathPattern` / `cmdPattern` in
+5. ~~**`ToolManager`**~~ — **fatto.** [`test/toolManager.test.ts`](proxy/test/toolManager.test.ts):
+   23 test su scoring, slot riservato a `UseTool`, raggiungibilità dell'overflow,
+   stabilità dei pari merito, promozione e decadimento. Girano sui **pesi di
+   default veri** (10 core, 8 promosso, 5 in cronologia, 20 forzato), perché il
+   comportamento sta in come si confrontano: un promosso vale 8 contro i 10 di un
+   core, quindi da solo non scalza nessuno; promosso *e* visto in cronologia vale
+   13, e ce la fa. L'auto-promozione documentata funziona perché i bonus si
+   sommano, non perché la promozione basti da sola.
+
+   **Nessun bug nel codice.** Ne ha trovati quattro nei test stessi — vedi sotto.
+6. **`checkAutoApprove()`**  ← **prossimo** — il predicato dell'allowlist. I test
+   del gate lo sostituiscono con un fake, quindi il matching `pathPattern` /
+   `cmdPattern` in
    [`autoApproveConfig.ts`](proxy/src/infrastructure/adapters/autoApproveConfig.ts)
    resta non verificato: è l'unico punto dove un pattern troppo generoso allarga
-   in silenzio ciò che gira senza chiedere.
+   in silenzio ciò che gira senza chiedere. È l'ultimo punto della fase.
+
+> **Quattro test che non verificavano niente.** `toolManager.test.ts` era scritto
+> con limite 7 su un insieme di esattamente 7 tool. `selectTools` esce subito
+> quando `allTools.length <= maxTools`, quindi non filtrava affatto: il tool sotto
+> esame era banalmente presente, l'asserzione passava, e quattro test non
+> verificavano nulla. Altri due asserivano sulla descrizione di `UseTool` che,
+> senza locale caricato, è la stringa `useTool.description` — `t()` restituisce
+> la chiave quando manca.
+>
+> Nessuna delle due cose si vede in una run verde. Un test che non può fallire è
+> peggio di un test mancante, perché occupa il posto in cui quello mancante
+> sarebbe andato. Ora il limite è una costante con la ragione scritta accanto, il
+> locale vero viene caricato in un hook, e i test che dipendono dal filtro
+> asseriscono `useToolDef !== null` come guardia.
+>
+> Vale anche il caso opposto, capitato due volte: **un controllo negativo che
+> resta verde** può voler dire che il test è debole *oppure* che il controllo non
+> ha introdotto davvero il bug. Rompere l'ordinamento con
+> `(b.score - a.score) || 1` non riordina niente — l'insertion sort di V8 sposta
+> solo su comparatore negativo — mentre `|| -1` sì, e allora falliscono 5 test.
+> Quando un controllo torna verde, la prima cosa da verificare è il controllo.
 
 > **I tre bug dei traduttori.** Nessuno alzava un errore, e per questo erano
 > ancora lì.
@@ -201,7 +228,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 97 test / ~165 ms, senza GPU e senza rete.
+`npm test` in 120 test / ~170 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`

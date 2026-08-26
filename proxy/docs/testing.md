@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 97 tests, ~165 ms
+npm test          # 120 tests, ~170 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -52,6 +52,7 @@ proxy/test/
   requestTranslator.test.ts    25 tests — Anthropic → OpenAI
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
   streamTranslator.test.ts     23 tests — the SSE state machine
+  toolManager.test.ts          23 tests — selection, overflow, promotion decay
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -173,6 +174,24 @@ usage-only chunk arriving *after* `finish_reason` still has to reach the final
 `message_delta` — which is exactly why the machine defers its closing events to
 `[DONE]`.
 
+### `toolManager.test.ts`
+
+Decides which ~6 of Claude Code's ~40 tools a local model is actually offered.
+Everything here fails quietly by construction: the model is never shown the tool
+it needed, answers as best it can, and nothing reports that a capability was
+withheld.
+
+The suite runs on the **real default weights** — 10 for a core tool, 8 promoted,
+5 seen in history, 20 forced — rather than round test numbers, because the
+behaviour lives in how they compare. A promoted tool scores 8 against a core
+tool's 10, so promotion alone never displaces one; promoted *and* seen in history
+is 13, and that does. Since calling a tool through UseTool also puts it in the
+history, the documented auto-promotion works — but it works because the bonuses
+stack, not because promotion is strong enough by itself. A suite built on 1/2/3
+would have proved nothing about the configuration anyone actually runs.
+
+This one found no bugs in the code. It found four in itself: see below.
+
 ---
 
 ## Three bugs the translator suite found
@@ -278,9 +297,47 @@ tests fail — and fail *narrowly*:
 | Re-seed UseTool `arguments` at registration | UseTool tests fail | exactly 3 fail |
 | Pin the thinking block to index 0 | Interleaving test fails | exactly 1 fails |
 | Drop the held-whitespace buffer | Padding test fails | exactly 1 fails |
+| Stop reserving the UseTool slot | Budget and overflow tests fail | exactly 3 fail |
+| Reverse tie order in the sort | Every order-dependent test fails | 5 fail |
+| Never age promotions | Both decay tests fail | exactly 2 fail |
+| Make scoring non-additive | Promotion-stacking test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
+
+### When the control does not fail
+
+Two things look identical from the outside — a test too weak to notice the bug,
+and a control that never introduced it. They need opposite fixes, so it is worth
+knowing which one you have.
+
+Both happened while writing these suites:
+
+- Reverting the workspace containment check at **one** of its two call sites left
+  the approval suite green. The test was fine; the fast path and the insertion
+  guard independently, so half the bug is not the bug.
+- Breaking the tie sort with `(b.score - a.score) || 1` left the ToolManager
+  suite green. V8's insertion sort only moves an element when the comparator
+  returns negative, so that comparator does not actually reorder anything.
+  `|| -1` does, and then 5 tests fail.
+
+The habit that catches both: when a control comes back green, verify the control
+itself before touching the test.
+
+### Four tests that proved nothing
+
+`toolManager.test.ts` was written with a limit of 7 against a set of exactly 7
+tools. `selectTools` returns early when `allTools.length <= maxTools`, so no
+filtering happened at all: the tool under test was trivially present, the
+assertion passed, and four tests verified nothing whatsoever. Two more asserted
+on a UseTool description that, with no locale loaded, was the bare string
+`useTool.description` — `t()` returns the key on a miss.
+
+Both classes are invisible in a green run. The file now pins the limit in a
+named constant with the reason attached, loads the real locale in a `before`
+hook, and the tests that depend on filtering assert `useToolDef !== null` as a
+guard first. A test that cannot fail is worse than a missing one, because it
+occupies the space where the missing one would have gone.
 
 ---
 
@@ -303,10 +360,7 @@ fails loudly when the count is zero.
 In priority order, driven by what has actually broken rather than by what is
 easy to test:
 
-1. **`ToolManager`** — scoring, `UseTool` overflow, promotion decay. The
-   translator suites fake it, so its own behaviour is still unverified — and the
-   overflow bug above showed what that costs.
-2. **`checkAutoApprove()`** — the allowlist predicate itself. The gate's tests
+1. **`checkAutoApprove()`** — the allowlist predicate itself. The gate's tests
    fake it, so the `pathPattern` / `cmdPattern` matching in
    [`autoApproveConfig.ts`](../src/infrastructure/adapters/autoApproveConfig.ts)
    is still unverified, and it is the one place where a too-generous pattern

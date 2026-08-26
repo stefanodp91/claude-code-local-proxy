@@ -7,6 +7,45 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Added — ToolManager test suite (23 tests)
+
+- **`test/toolManager.test.ts`** — what decides which ~6 of Claude Code's ~40
+  tools a local model is actually offered. Covers the reserved `UseTool` slot and
+  the exact budget, overflow reachability (every tool either sent or listed),
+  per-tool description truncation, scoring, tie stability, `UseTool` call
+  rewriting, and promotion decay.
+
+  The suite runs on the real default weights rather than round test numbers,
+  because the behaviour is in how they compare: a promoted tool scores 8 against
+  a core tool's 10 and never displaces one on its own, while promoted *and* seen
+  in history is 13 and does. The documented auto-promotion works because the
+  bonuses stack — calling a tool through UseTool also puts it in the history —
+  not because promotion is strong enough alone. That distinction is now pinned.
+
+  Negative control: removing the reserved UseTool slot fails 3 tests, reversing
+  tie order fails 5, never ageing promotions fails 2, and making scoring
+  non-additive fails 1.
+
+- **No bugs found in `toolManager.ts`.** Four were found in the tests
+  themselves, and both classes are invisible in a green run:
+
+  - The suite used a limit of 7 against a set of exactly 7 tools. `selectTools`
+    returns early when `allTools.length <= maxTools`, so nothing was filtered —
+    the tool under test was trivially present and four tests verified nothing.
+    The limit is now a named constant carrying the reason, and tests that depend
+    on filtering assert `useToolDef !== null` first.
+  - Two more asserted on a `UseTool` description that, with no locale loaded, is
+    the bare key `useTool.description`. The suite now loads the real locale in a
+    `before` hook, which also exercises the real template.
+
+  Also recorded in `docs/testing.md`: a negative control that comes back green
+  may mean the test is weak *or* that the control never introduced the bug.
+  Breaking the tie sort with `(b.score - a.score) || 1` reorders nothing —
+  V8's insertion sort only moves on a negative comparator — while `|| -1` does.
+
+- `npm test` is now 120 tests in ~170 ms.
+
+
 ### Fixed — UseTool arguments were accumulated twice, breaking tool overflow
 
 - **`streamTranslator` seeded a streamed tool call's `arguments` with the first
