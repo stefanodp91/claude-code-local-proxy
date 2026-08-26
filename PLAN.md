@@ -92,7 +92,7 @@ Quattro commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti.
 
 ---
 
-## 4. Fase 1 — rete di sicurezza  ← **prossimo passo**
+## 4. Fase 1 — rete di sicurezza  ← **in corso**
 
 **Zero test automatici. Zero CI.** L'unico strumento è
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
@@ -114,12 +114,16 @@ una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
 
 Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
-1. **Chiavi i18n** — ogni chiave passata a `t()` in `src/` esiste in ogni file
-   locale. Test banale, previene esattamente il quasi-bug qui sopra.
-2. **`ToolProbe`** — triage degli esiti: timeout → `inconclusive` → ritentato;
-   risposta senza tool_calls → ricerca verso il basso; i tre rami del log
-   finale. È il codice appena corretto, e va bloccato lì.
-3. **Approval gate** — [`approvalGateService.ts`](proxy/src/application/services/approvalGateService.ts)
+1. ~~**Chiavi i18n**~~ — **fatto.** [`test/i18n.test.ts`](proxy/test/i18n.test.ts):
+   ogni chiave passata a `t()` esiste in ogni locale, ogni locale è una mappa
+   *piatta* di stringhe, e i locale non divergono tra loro. Verificato per
+   negativo: reintroducendo la chiave annidata, 2 test su 5 falliscono.
+2. ~~**`ToolProbe`**~~ — **fatto.** [`test/toolProbe.test.ts`](proxy/test/toolProbe.test.ts):
+   8 test sul triage degli esiti, incluso un caso di regressione che riproduce
+   la traccia reale (n=48 lento → il vecchio codice riportava 47). Verificato
+   per negativo: ripristinando `catch { return false }` falliscono esattamente
+   i 4 test del triage, e la regressione stampa `actual: 47`.
+3. **Approval gate**  ← **prossimo** — [`approvalGateService.ts`](proxy/src/application/services/approvalGateService.ts)
    e le regole di `.claudio/auto-approve.json`. È l'unico controllo su
    `write` / `edit` / `bash`; un bug qui non lo segnala nessuno a valle.
 4. **Traduttori** — request, response, e la macchina a stati SSE di
@@ -128,12 +132,23 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 5. **`ToolManager`** — scoring, overflow `UseTool`, decadimento delle
    promozioni.
 
-**Infrastruttura:** `node:test` (built-in — preserva la proprietà zero-deps).
-`LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
-framework: l'architettura esagonale è già pagata, va solo usata.
+**Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
+`dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
+`npm test` in 13 test / ~160 ms, senza GPU e senza rete.
 
-**CI:** una GitHub Action con `typecheck` + questi test. Nessuna GPU richiesta —
-è il motivo per cui `regression.sh` non basta e non va confuso con questa fase.
+`LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
+framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
+invece usa `fetch` globale, e il test lo stubba: se un domani diventasse una
+porta, il test si semplificherebbe da solo.
+
+**CI** — [`.github/workflows/ci.yml`](.github/workflows/ci.yml): typecheck +
+test del proxy, typecheck dell'estensione. Nessuna GPU, ed è il motivo per cui
+`regression.sh` non copre questa esigenza e non va confuso con essa.
+
+> Uno script `pretest` fallisce se il glob non matcha nulla. Serve: `node --test`
+> **esce 0 quando non trova test**, quindi un glob rotto o un Node senza il
+> supporto avrebbero prodotto una build verde che non ha verificato niente — lo
+> stesso schema di fallimento silenzioso che il progetto ha già mostrato tre volte.
 
 ---
 

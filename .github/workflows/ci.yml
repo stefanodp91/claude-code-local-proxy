@@ -1,0 +1,62 @@
+name: CI
+
+# Everything here runs without a GPU, without LM Studio, and without a model
+# loaded. That is the whole point: proxy/scripts/regression.sh needs a live
+# backend and so can never gate a pull request, which is why the proxy shipped
+# for months with nothing watching it.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  proxy:
+    name: proxy — typecheck & tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: proxy/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `pretest` fails the run if the glob matches nothing — node --test exits
+      # 0 on an empty run, which would otherwise show up as a green build that
+      # verified nothing.
+      - name: Tests
+        run: npm test
+
+  extension:
+    name: claudio — typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chat-extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: chat-extension/package-lock.json
+
+      - run: npm ci
+
+      # Extension-host code only. The Angular webview has its own dependency
+      # tree under src/webview-ui and is not built here — add it once there is
+      # something to check beyond compilation.
+      - name: Typecheck
+        run: npm run typecheck
