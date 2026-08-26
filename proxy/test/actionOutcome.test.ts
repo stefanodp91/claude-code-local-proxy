@@ -207,3 +207,37 @@ test("both paths resolve vision capability from the loaded model", () => {
     assert.match(source(rel), /type === "vlm"/, `${rel} never asks whether the model can see`);
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The file on disk
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("the notice names the file the figure was saved to", () => {
+  // The model can see the image; the user can only open the file. The path is
+  // how the two are the same picture.
+  const messages: any[] = [assistantCalls("c1")];
+  const outcome: ActionOutcome = {
+    text: "",
+    image: { media_type: "image/png", data: PAYLOAD, savedPath: ".claudio/plots/plot-20260827-120000.png" },
+  };
+
+  appendNativeToolResults(messages, [{ id: "c1", outcome }], true);
+
+  assert.match(messages.find((m) => m.role === "tool").content, /\.claudio\/plots\/plot-20260827-120000\.png/);
+});
+
+test("a text-only model still gets told where the figure is", () => {
+  // This is the whole of what it can act on, so losing the path here would
+  // leave `python` drawing into a void.
+  const messages: any[] = [assistantCalls("c1")];
+  const outcome: ActionOutcome = {
+    text: "",
+    image: { media_type: "image/png", data: PAYLOAD, savedPath: ".claudio/plots/plot-20260827-120000.png" },
+  };
+
+  appendNativeToolResults(messages, [{ id: "c1", outcome }], false);
+
+  const toolMsg = messages.find((m) => m.role === "tool");
+  assert.match(toolMsg.content, /\.claudio\/plots\/plot-20260827-120000\.png/);
+  assert.equal(toolMsg.content.includes(PAYLOAD), false);
+});

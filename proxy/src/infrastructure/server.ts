@@ -46,6 +46,7 @@ import { loadOldContent, checkAutoApprove } from "./adapters/autoApproveConfig";
 import { ToolLimitDetector } from "./toolLimitDetector";
 import { ThinkingDetector } from "./thinkingDetector";
 import { executePythonCode } from "./pythonExecutor";
+import type { ActionEnv } from "../domain/entities/workspaceAction";
 import type { PlanFileRepositoryPort } from "../domain/ports";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +58,8 @@ export class ProxyServer {
   private modelInfo: LoadedModelInfo | null = null;
   private toolManager!: ToolManager;
   private readonly compactor: ContextCompactor;
+  /** Workspace-relative directories both agent loops hand to executeAction. */
+  private readonly actionEnv: ActionEnv;
   private readonly memoryFiles: FsMemoryRepository;
   private requestTranslator!: RequestTranslator;
   private responseTranslator!: ResponseTranslator;
@@ -94,6 +97,10 @@ export class ProxyServer {
       this.approvalInteractor, this.planFiles, this.logger,
       loadOldContent, checkAutoApprove,
     );
+    this.actionEnv = {
+      venvDir: this.config.pythonVenvDir,
+      plotDir: this.config.pythonPlotDir,
+    };
     this.compactor = new ContextCompactor(this.llm, this.logger, {
       semanticEnabled:  this.config.semanticCompact,
       summaryMaxTokens: this.computeSummaryMaxTokens(),
@@ -106,7 +113,7 @@ export class ProxyServer {
       this.compactor,
       () => this.modelInfo?.loadedContextLength ?? 0,
       () => this.modelInfo?.type === "vlm",
-      this.config.pythonVenvDir,
+      this.actionEnv,
     );
   }
 
@@ -170,7 +177,7 @@ export class ProxyServer {
       () => this.modelInfo, () => this.maxTools, () => this.computeMaxIterations(),
       this.config.targetUrl,
       this.compactor,
-      this.config.pythonVenvDir,
+      this.actionEnv,
     );
     this.resolveApprovalUseCase = new ResolveApprovalUseCase(this.approvalInteractor);
   }

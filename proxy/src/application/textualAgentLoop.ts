@@ -20,6 +20,7 @@ import {
   ACTION_CLASSIFICATION,
   ActionClass,
   type ActionArgs,
+  type ActionEnv,
   type ActionOutcome,
 } from "../infrastructure/workspaceActions";
 import { buildObservationMessage } from "./services/actionOutcome";
@@ -129,8 +130,8 @@ export interface TextualApprovalResult {
 export interface TextualLoopOptions {
   /** Asks the user before a destructive action. Omitted, destructive actions are refused upstream. */
   approvalGate?: TextualApprovalGate;
-  /** Relative path from the workspace root to the Python venv. */
-  venvDir?: string;
+  /** Workspace-relative venv and plot directories for action='python'. */
+  actionEnv?: ActionEnv;
   /** Trims `messages` between iterations. Omitted, no trimming happens. */
   compactor?: ContextCompactor;
   /** The loaded model's context window, or 0 when unknown. */
@@ -192,7 +193,7 @@ export async function runTextualAgentLoop(
 ): Promise<void> {
   const {
     approvalGate,
-    venvDir = ".claudio/python-venv",
+    actionEnv = {},
     compactor,
     contextBudget = 0,
     maxIterations = DEFAULT_MAX_ITERATIONS,
@@ -359,7 +360,7 @@ export async function runTextualAgentLoop(
     if (ACTION_CLASSIFICATION[actionArgs.action] === ActionClass.Destructive && approvalGate) {
       if (allowAllThisTurn) {
         logger.dbg(`[workspace/textual] ${actionArgs.action} auto-approved (allowAllThisTurn)`);
-        actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
+        actionResult = await executeAction(actionArgs, workspaceCwd, actionEnv);
       } else {
         const approval = await approvalGate(actionArgs.action, actionArgs, writeSSE);
         if (approval.scope === "turn" && approval.approved) {
@@ -369,11 +370,11 @@ export async function runTextualAgentLoop(
           logger.dbg(`[workspace/textual] ${actionArgs.action} denied by user`);
           actionResult = { text: `Action '${actionArgs.action}' was denied by the user.` };
         } else {
-          actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
+          actionResult = await executeAction(actionArgs, workspaceCwd, actionEnv);
         }
       }
     } else {
-      actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
+      actionResult = await executeAction(actionArgs, workspaceCwd, actionEnv);
     }
     logger.dbg(
       `[workspace/textual] ${actionArgs.action} "${actionArgs.path ?? ""}" → ${actionResult.text.slice(0, 120)}`,

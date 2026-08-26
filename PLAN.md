@@ -112,7 +112,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **275 test** a ogni push.
+gira senza GPU accesa. Oggi sono **283 test** a ogni push.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -275,7 +275,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 275 test / ~390 ms, senza GPU e senza rete.
+`npm test` in 283 test / ~400 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -408,6 +408,21 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
    fake — un helper che nessuno chiama supera il typecheck — e controllo negativo
    su sei fronti. Il percorso SSE `/python` verso Claudio era ed è corretto:
    `server.ts` inoltra l'oggetto `{type:"image"}` intero.
+
+   **Fatto anche — la figura finisce su disco** (`PYTHON_PLOT_DIR`, default
+   `.claudio/plots`, vuoto per disattivare), come `plot-YYYYMMDD-HHMMSS.png`, e
+   il risultato ne dice il path sia al modello che vede sia a quello che non
+   vede. Era l'opzione (b), e non è alternativa alla (c): l'immagine allegata è
+   ciò che vede il *modello*, il file è l'unico appiglio che ha una *persona* su
+   una figura che altrimenti esiste solo dentro la conversazione. Il nome porta
+   un contatore oltre all'orologio, perché due plot nello stesso secondo sono il
+   caso normale (il modello disegna, guarda, ridisegna) e la scrittura usa `wx`,
+   quindi non sovrascrive mai. Il path passa dallo stesso `safeResolvePath()` di
+   ogni altra scrittura: una `PYTHON_PLOT_DIR` sbagliata non è una via d'uscita
+   dal workspace. Un salvataggio fallito lo dice nel testo e l'immagine arriva
+   lo stesso: si perde la figura, non il turno. Otto test, quattro controlli
+   negativi. Niente fa pulizia della directory: merita una riga di `.gitignore`,
+   non del codice che cancella file dell'utente.
 
    **Resta la prova end-to-end**: che il modello *veda* davvero l'immagine non lo
    può dire nessuna suite qui: serve LM Studio con il VLM caricato.

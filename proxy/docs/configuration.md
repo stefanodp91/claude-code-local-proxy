@@ -185,6 +185,7 @@ These variables control the Python execution engine used by the `python` workspa
 | Variable | Type | Default | Description |
 |---|---|---|---|
 | `PYTHON_VENV_DIR` | string | `.claudio/python-venv` | Directory (relative to the workspace root) where the proxy creates and manages the Python virtual environment. Each workspace gets its own isolated venv. |
+| `PYTHON_PLOT_DIR` | string | `.claudio/plots` | Directory (relative to the workspace root) where a figure produced by `action="python"` is written, as `plot-YYYYMMDD-HHMMSS.png`. The image itself goes to the model inside the conversation; this file is the copy a person can open. Empty disables saving. Files are never overwritten and never pruned — the directory is worth adding to `.gitignore`. |
 
 The proxy creates the venv on first use, installs base packages (`matplotlib`, `numpy`, `pandas`, `scipy`), and auto-installs any missing imports before each execution.
 

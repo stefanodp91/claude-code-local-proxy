@@ -19,10 +19,10 @@
 
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { executeAction, safeResolvePath, type ActionOutcome } from "../src/infrastructure/workspaceActions";
+import { join, basename } from "node:path";
+import { executeAction, safeResolvePath, savePlot, saveFigure, type ActionOutcome } from "../src/infrastructure/workspaceActions";
 import { WorkspaceAction, type ActionArgs } from "../src/domain/entities/workspaceAction";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -321,4 +321,86 @@ test("an action that draws nothing carries no image", async () => {
 
   assert.equal(out.text, "hello");
   assert.equal(out.image, undefined);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Saving a figure
+//
+// A plot the model can see is still a plot the user cannot: the image travels
+// inside the conversation, not to the screen. Writing it into the workspace is
+// what puts it somewhere a person can open — and it is a file write, so it is
+// contained and it reports its own failures rather than swallowing them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PNG_BASE64 = Buffer.from("not really a png, but bytes are bytes").toString("base64");
+
+test("a figure is written under the configured directory", () => {
+  const out = savePlot(PNG_BASE64, ws, ".claudio/plots");
+
+  assert.equal("error" in out, false, `savePlot failed: ${(out as any).error}`);
+  const { relPath } = out as { relPath: string };
+  assert.match(relPath, /^\.claudio\/plots\/plot-\d{8}-\d{6}(-\d+)?\.png$/);
+  assert.equal(
+    readFileSync(join(ws, relPath)).toString("base64"),
+    PNG_BASE64,
+    "the bytes on disk are not the bytes that came back from python",
+  );
+});
+
+test("a second figure does not overwrite the first", () => {
+  // Two plots in the same second is the ordinary case: the model draws, looks,
+  // redraws. A name derived from the clock alone would lose the first one.
+  const a = savePlot(PNG_BASE64, ws, ".claudio/plots") as { relPath: string };
+  const b = savePlot(PNG_BASE64, ws, ".claudio/plots") as { relPath: string };
+
+  assert.notEqual(a.relPath, b.relPath);
+  assert.equal(existsSync(join(ws, a.relPath)), true);
+  assert.equal(existsSync(join(ws, b.relPath)), true);
+});
+
+test("a plot directory outside the workspace is refused", () => {
+  // The same containment every other write goes through. A misconfigured
+  // PYTHON_PLOT_DIR must not be a way out of the workspace.
+  //
+  // The escape target is named after this workspace: `ws` sits in the shared
+  // temp directory, so a fixed name would be a file one run leaves behind and
+  // the next one trips over — including the run that reintroduces the bug on
+  // purpose, which is exactly when the mess gets made.
+  const escape = `../escaped-${basename(ws)}`;
+
+  const out = savePlot(PNG_BASE64, ws, escape);
+
+  assert.equal("error" in out, true, "an escaping plot directory was accepted");
+  assert.equal(existsSync(join(ws, escape)), false);
+});
+
+test("a directory that cannot be created comes back as an error, not a throw", () => {
+  // A file where the directory should be. The figure is lost; the turn is not.
+  put(".claudio/plots", "i am a file");
+
+  const out = savePlot(PNG_BASE64, ws, ".claudio/plots");
+
+  assert.equal("error" in out, true);
+  assert.match((out as { error: string }).error, /.+/, "the failure came back with no reason");
+});
+
+test("a figure that cannot be saved says so, and is still shown to the model", async () => {
+  // Losing the file is a small failure; losing it quietly is the failure this
+  // project is made of. The image must survive it either way.
+  put(".claudio/plots", "i am a file");
+
+  const { image, error } = saveFigure(PNG_BASE64, ws, ".claudio/plots");
+
+  assert.match(error ?? "", /.+/, "the figure vanished without a word");
+  assert.equal(image.data, PNG_BASE64);
+  assert.equal(image.savedPath, undefined);
+});
+
+test("saving disabled means no path and no complaint", async () => {
+  // An empty PYTHON_PLOT_DIR is a choice, not a failure.
+  const { image, error } = saveFigure(PNG_BASE64, ws, "");
+
+  assert.equal(error, undefined);
+  assert.equal(image.savedPath, undefined);
+  assert.equal(image.data, PNG_BASE64);
 });

@@ -136,6 +136,13 @@ export interface ProxyConfig {
    */
   pythonVenvDir: string;
 
+  /**
+   * Directory (relative to workspaceCwd) where a figure produced by workspace
+   * action `python` is written, so the user can open it — the image itself
+   * only ever reaches the model. Empty disables saving.
+   */
+  pythonPlotDir: string;
+
   // ── Context compaction ──
 
   /**
@@ -234,6 +241,9 @@ const DEFAULT_MEMORY_FILE = ".claudio/MEMORY.md";
 
 /** Default Python venv directory — relative to the workspace root. */
 const DEFAULT_PYTHON_VENV_DIR = ".claudio/python-venv";
+
+/** Where saved figures go. Empty disables saving them at all. */
+const DEFAULT_PYTHON_PLOT_DIR = ".claudio/plots";
 
 /**
  * Hard cap on agentic loop iterations. The proxy derives the actual limit
@@ -355,6 +365,7 @@ export function loadConfig(): ProxyConfig {
 
     // Python execution
     pythonVenvDir:           env("PYTHON_VENV_DIR", DEFAULT_PYTHON_VENV_DIR),
+    pythonPlotDir:           env("PYTHON_PLOT_DIR", DEFAULT_PYTHON_PLOT_DIR),
 
     // Context compaction
     semanticCompact:         envBool("SEMANTIC_COMPACT", DEFAULT_SEMANTIC_COMPACT),

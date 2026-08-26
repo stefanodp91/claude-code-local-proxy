@@ -40,12 +40,19 @@ function sizeKb(image: ActionImage): number {
  * It always says an image exists. A model that is told nothing answers about a
  * picture it never received, which reads exactly like a model that hallucinated
  * one — and `attached: false` is the ordinary case on a text-only model.
+ *
+ * When the figure was also written to disk the path goes in too, whether or not
+ * the image is attached: it is the only handle the *user* has on a picture that
+ * otherwise exists solely inside the conversation.
  */
 function imageNotice(image: ActionImage, attached: boolean): string {
+  const saved = image.savedPath ? `, saved to ${image.savedPath}` : "";
   const where = attached
     ? "attached as an image below"
-    : "not attached: this model cannot see images — have the script save the figure to a file instead";
-  return `[the action produced an image (${image.media_type}, ~${sizeKb(image)} KB) — ${where}]`;
+    : image.savedPath
+      ? "not attached: this model cannot see images — the file above is what the user can open"
+      : "not attached: this model cannot see images — have the script save the figure to a file instead";
+  return `[the action produced an image (${image.media_type}, ~${sizeKb(image)} KB)${saved} — ${where}]`;
 }
 
 /** An OpenAI image part holding the payload as a `data:` URI. */

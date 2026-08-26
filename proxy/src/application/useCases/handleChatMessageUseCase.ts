@@ -22,7 +22,7 @@ import { t } from "../../domain/i18n";
 import type { LlmClientPort, SseWriterPort, LoggerPort } from "../../domain/ports";
 import type { AnthropicRequest, LoadedModelInfo, ApprovalResult } from "../../domain/types";
 import { ThinkingType } from "../../domain/types";
-import type { ActionArgs } from "../../domain/entities/workspaceAction";
+import type { ActionArgs, ActionEnv } from "../../domain/entities/workspaceAction";
 import { ApprovalGateService } from "../services/approvalGateService";
 import { SystemPromptBuilder } from "../services/systemPromptBuilder";
 import { NativeAgentLoopService } from "../services/nativeAgentLoopService";
@@ -96,7 +96,7 @@ export class HandleChatMessageUseCase {
     private readonly maxIterationsResolver: () => number,
     private readonly targetUrl: string,
     private readonly compactor: ContextCompactor,
-    private readonly venvDir: string = ".claudio/python-venv",
+    private readonly actionEnv: ActionEnv = {},
   ) {}
 
   async execute(
@@ -213,7 +213,7 @@ export class HandleChatMessageUseCase {
           this.logger,
           {
             approvalGate:   this.makeTextualApprovalGate(workspaceCwd),
-            venvDir:        this.venvDir,
+            actionEnv:      this.actionEnv,
             compactor:      this.compactor,
             contextBudget:  modelInfo?.loadedContextLength ?? 0,
             maxIterations:  this.maxIterationsResolver(),

@@ -88,6 +88,28 @@ export interface ActionImage {
   media_type: string;
   /** The payload, base64, without the `data:` prefix. */
   data: string;
+  /**
+   * Workspace-relative path the image was written to, when it was.
+   *
+   * The attached image is for the model; this is for the person, who cannot
+   * see inside the conversation. Absent when saving is disabled or failed —
+   * and a failure to save is reported in the text, never swallowed.
+   */
+  savedPath?: string;
+}
+
+/**
+ * Where an action finds the things it needs on disk.
+ *
+ * Grouped rather than passed as a tail of positional strings: the loops carry
+ * this through to `executeAction`, and the previous shape had already started
+ * growing one parameter at a time.
+ */
+export interface ActionEnv {
+  /** Workspace-relative Python venv directory. */
+  venvDir?: string;
+  /** Workspace-relative directory for saved figures. Empty disables saving. */
+  plotDir?: string;
 }
 
 /**

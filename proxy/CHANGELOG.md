@@ -7,6 +7,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Added — A `python` figure is also written into the workspace
+
+- **`PYTHON_PLOT_DIR`** (default `.claudio/plots`, empty disables) receives the
+  PNG as `plot-YYYYMMDD-HHMMSS.png`, and the result names the path — for a
+  vision model *and* a text-only one. The attached image is what the model sees;
+  the file is the only handle a person has on a picture that otherwise exists
+  solely inside the conversation.
+
+- The name carries a counter as well as the clock, because two plots in the same
+  second is the ordinary case — the model draws, looks, redraws — and a name
+  taken from the clock alone would lose the first one. The write uses `wx`, so
+  an existing file is never overwritten.
+
+- **The write is contained** by the same `safeResolvePath()` as every other
+  write: a misconfigured plot directory cannot point outside the workspace. It
+  is the output of an action the user already approved (`python` is destructive
+  and passes the gate), confined to the configured directory under the root.
+
+- **A save that fails says so.** The result carries the reason and the image
+  still reaches the model: the figure is lost, the turn is not.
+
+- Nothing prunes the directory. Worth a `.gitignore` line; not worth code that
+  deletes the user's files.
+
+- 8 tests; `npm test` is now 283 in ~400 ms. Negative control: one name per
+  second fails exactly 1, dropping containment fails exactly 1, swallowing the
+  save error fails exactly 1, leaving the path out of the notice fails exactly 2.
+
+- `executeAction`'s trailing `venvDir` became an `ActionEnv` object carrying both
+  directories, rather than growing a second positional string through both loops.
+
 ### Changed — A `python` figure reaches the model as an image
 
 - **`executeAction` now returns an `ActionOutcome`** — `text` for the model plus

@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 275 tests, ~390 ms
+cd proxy && npm test         # 283 tests, ~400 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -154,7 +154,7 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 275 tests on every push.
+deliberately left alone. 283 tests on every push.
 
 "Every component has a suite" would be an overstatement, and was made once in
 this repo's own docs before being counted: the routing use case, the slash
@@ -182,6 +182,10 @@ through. Two silent problems came out of looking:
   takes a string, and nothing may sit between an assistant turn and its tool
   results — so Path A appends all results first, then one user message with the
   batch's images. Attached only when the model reports `type: "vlm"`.
+- **Also fixed** — the figure is written to `PYTHON_PLOT_DIR` (default
+  `.claudio/plots`) and the result names the path, for both kinds of model. The
+  image is what the model sees; the file is the only handle the user has on it.
+  Contained by `safeResolvePath()`, never overwriting, never pruned.
 
 The end-to-end leg — does the model actually see the picture — is still the one
 thing the suites cannot do: it needs LM Studio with a VLM loaded. Cover what you

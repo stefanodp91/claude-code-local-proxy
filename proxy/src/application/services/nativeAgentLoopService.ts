@@ -40,6 +40,7 @@ import {
   WORKSPACE_TOOL_DEF,
   WorkspaceAction,
   type ActionArgs,
+  type ActionEnv,
   type ActionOutcome,
 } from "../../infrastructure/workspaceActions";
 import { t } from "../../domain/i18n";
@@ -164,10 +165,10 @@ export class NativeAgentLoopService {
      */
     private readonly visionCapableResolver: () => boolean = () => false,
     /**
-     * Relative path (from workspaceCwd) to the Python virtual environment.
-     * Forwarded to executeAction() for action='python'.
+     * Workspace-relative venv and plot directories, forwarded to
+     * executeAction() for action='python'.
      */
-    private readonly venvDir: string = ".claudio/python-venv",
+    private readonly actionEnv: ActionEnv = {},
   ) {}
 
   // ── Public entry point ────────────────────────────────────────────────────
@@ -566,12 +567,12 @@ export class NativeAgentLoopService {
         this.logger.dbg(`[workspace] ${args.action} denied by user`);
         outcome = { text: `Action '${args.action}' was denied by the user.` };
       } else {
-        outcome = await executeAction(args, workspaceCwd, this.venvDir);
+        outcome = await executeAction(args, workspaceCwd, this.actionEnv);
         if (emitPlanFileCreated(args, writeSSE, this.planFiles)) state.planFileWritten = true;
       }
     } else {
       // Read-only action: execute without gating.
-      outcome = await executeAction(args, workspaceCwd, this.venvDir);
+      outcome = await executeAction(args, workspaceCwd, this.actionEnv);
     }
 
     this.logger.dbg(`[workspace] ${args.action} "${(args as any).path ?? ""}" → ${outcome.text.slice(0, 120)}`);
