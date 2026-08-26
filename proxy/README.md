@@ -672,8 +672,11 @@ without a mock framework — the hexagonal architecture is paid for, it just has
 to be used. `ToolProbe` still reaches for global `fetch` and the test stubs it;
 if it ever becomes a port, that test gets simpler on its own.
 
-Every component is now covered. See [Testing](docs/testing.md) for what each
-suite pins and what it found, and [PLAN.md](../PLAN.md) for what comes next.
+Covered: everything on the Phase 1 priority list, both agent loops, the workspace
+actions and the compactor. Not covered: the routing use case, the slash
+interceptor, the prompt builder, startup probing, and the thin adapters —
+enumerated in [Testing](docs/testing.md#not-covered-yet), which also records what
+each suite pins and what it found.
 
 ---
 

@@ -112,8 +112,15 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **238 test** a ogni push, e **ogni componente
-del proxy ha una suite**.
+gira senza GPU accesa. Oggi sono **238 test** a ogni push.
+
+> **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
+> scritto qui, e contando è falso: restano scoperti lo use case di routing,
+> l'intercettore degli slash command, il prompt builder, il probing di avvio e
+> gli adapter sottili. L'elenco onesto è in
+> [`testing.md`](proxy/docs/testing.md#not-covered-yet). Coperto è *tutto ciò che
+> era nell'ordine d'attacco*, più i due loop, le azioni di workspace e il
+> compattatore.
 
 I sei punti dell'ordine d'attacco sono stati coperti per primi; poi i tre che
 erano rimasti fuori:

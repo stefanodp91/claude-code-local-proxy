@@ -143,8 +143,14 @@ in step by hand. If you change one, grep for the others.
 
 ## Current state, and what is next
 
-Phase 1 (the safety net) is **closed**: every component of the proxy has a suite.
-Phase 2 is under way — 238 tests on every push.
+Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
+deliberately left alone. 238 tests on every push.
+
+"Every component has a suite" would be an overstatement, and was made once in
+this repo's own docs before being counted: the routing use case, the slash
+interceptor, the prompt builder, startup probing and the thin adapters have no
+tests. [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
+enumerates them.
 
 **Phase 2 — known correctness**, from PLAN.md §5:
 

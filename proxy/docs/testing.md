@@ -588,9 +588,23 @@ fails loudly when the count is zero.
 
 ## Not covered yet
 
-Every component has a suite. What is left is not a component but a set of
-*decisions*, recorded in [PLAN.md](../../PLAN.md) rather than left as silent
-gaps:
+Everything on the Phase 1 priority list is covered, plus both agent loops, the
+workspace actions and the compactor. **That is not the same as "everything".**
+Counted honestly, these have no suite:
+
+| Uncovered | Why it matters, or does not |
+|---|---|
+| `handleChatMessageUseCase` | The routing decision itself — which surface, which path, slash interception, prompt injection order. The largest genuine gap left |
+| `slashCommandInterceptor` | 8 proxy-side commands, several shelling out to git |
+| `systemPromptBuilder` | What every request is prefixed with |
+| `workspaceTool` | `buildWorkspaceContextSummary`, the static snapshot Path B leans on |
+| `modelInfo`, `thinkingProbe`, `thinkingDetector`, `toolLimitDetector` | Startup probing. `toolProbe` itself is covered; its orchestration is not |
+| `persistentCache`, `i18nLoader`, `pythonExecutor` | Infrastructure with real I/O |
+| The adapters (`fetchLlmClient`, `nodeSseWriter`, `fsPromptRepository`, `fsPlanFileRepository`, `sseApprovalInteractor`) | Thin by design; the ports they implement are exercised through fakes everywhere else |
+| `server.ts`, `main.ts` | Wiring and composition |
+
+Beyond those, what is left is not a component but a set of *decisions*, recorded
+in [PLAN.md](../../PLAN.md) rather than left as silent gaps:
 
 - `tool_choice: "any"` maps to `auto`, losing Anthropic's "you must call some
   tool". A test pins the current behaviour and points here.
