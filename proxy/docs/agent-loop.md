@@ -193,7 +193,13 @@ NativeAgentLoopService.run(writer, openaiReq, workspaceCwd, thinkingEnabled):
 
 **Destructive actions remain sequential**: the approval gate presents one modal at a time. If the user approves with `scope="turn"`, all remaining destructive actions in that turn are auto-approved via `state.allowAllThisTurn`.
 
-**Python execution** (`action="python"`): classified as destructive (approval gate required). The `cmd` parameter contains Python source code. The proxy runs it in a per-workspace venv at `<workspaceCwd>/<PYTHON_VENV_DIR>`. Missing packages are auto-installed; `plt.show()` is intercepted and the plot returned as base64 PNG.
+**Python execution** (`action="python"`): classified as destructive (approval gate required). The `cmd` parameter contains Python source code. The proxy runs it in a per-workspace venv at `<workspaceCwd>/<PYTHON_VENV_DIR>`. Missing packages are auto-installed; `plt.show()` is intercepted and the plot captured as a PNG.
+
+**A figure goes to the model as an image, not as base64 text.** `executeAction` returns an `ActionOutcome` — `text` for the model to read, plus an optional `image`. Where that image can travel is decided by the wire format: `role: "tool"` takes a string, and every tool result of an assistant turn must follow that turn with nothing wedged between, so Path A appends all tool results first and then one user message carrying the images the batch produced. Path B has no tool messages at all — its `<observation>` already is a user turn, so the image rides inside it. Both go through [`services/actionOutcome.ts`](../src/application/services/actionOutcome.ts).
+
+The image is attached only when the loaded model reports `type: "vlm"`. On a text-only model the result says an image was produced and was not attached — silence there would leave the model answering about a picture it never received.
+
+**The figure is also written to `PYTHON_PLOT_DIR`** (default `.claudio/plots`, empty disables it) as `plot-YYYYMMDD-HHMMSS.png`, and the result names the path for both kinds of model. The attached image is what the *model* sees; the file is the only handle a *person* has on a picture that otherwise exists solely inside the conversation. The write is the output of an action the user already approved — `python` is destructive and passes the gate — and it is contained by the same `safeResolvePath()` as every other write, so a misconfigured plot directory cannot point outside the workspace. Existing files are never overwritten, and a failed save is reported in the result text rather than swallowed: the figure is lost, the turn is not.
 
 ---
 
@@ -230,7 +236,7 @@ runTextualAgentLoop(res, openaiReq, workspaceCwd, ...):
   │
   ├── Emit: message_start (lazy, on first content)
   │
-  └── for i in 0..MAX_ITERATIONS (10):
+  └── for i in 0..maxIterations (same adaptive tier as Path A):
         │
         ├── POST to backend with stream: true
         │

@@ -1,0 +1,72 @@
+name: CI
+
+# Everything here runs without a GPU, without LM Studio, and without a model
+# loaded. That is the whole point: proxy/scripts/regression.sh needs a live
+# backend and so could never watch a change, which is why the proxy shipped for
+# months with nothing watching it.
+#
+# It runs when asked, and only then — never once per commit:
+#
+#   gh workflow run ci.yml --ref <branch>
+#
+# A commit-message marker was tried first and removed within the hour: the
+# commit that introduced `[ci]` described it, therefore contained it, therefore
+# triggered the run it was meant to withhold. Any token common enough to type is
+# common enough to write about.
+#
+# The trade is real and deliberate: nothing automatic now stands between a
+# broken commit and main. `cd proxy && npm test && npm run typecheck` is the
+# gate, and it lives on the machine the commit is made on.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  proxy:
+    name: proxy — typecheck & tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proxy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: proxy/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `pretest` fails the run if the glob matches nothing — node --test exits
+      # 0 on an empty run, which would otherwise show up as a green build that
+      # verified nothing.
+      - name: Tests
+        run: npm test
+
+  extension:
+    name: claudio — typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: chat-extension
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: chat-extension/package-lock.json
+
+      - run: npm ci
+
+      # Extension-host code only. The Angular webview has its own dependency
+      # tree under src/webview-ui and is not built here — add it once there is
+      # something to check beyond compilation.
+      - name: Typecheck
+        run: npm run typecheck

@@ -1,6 +1,6 @@
 # Proxy Architecture
 
-> Anthropic-to-OpenAI translation proxy — v1.2.0
+> Anthropic-to-OpenAI translation proxy — v1.4.0
 
 ## Overview
 
@@ -28,8 +28,8 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 +─────────────────────────────────────────────────────────────────────+
 │                        INFRASTRUCTURE                               │
 │                                                                     │
-│  main.ts             Bootstrap (composition root)                   │
-│  server.ts           Composition root + HTTP router (280 lines)     │
+│  main.ts             Composition root: config → probes → listen     │
+│  server.ts           HTTP router + wiring (416 lines)               │
 │  config.ts           Environment variable parsing → ProxyConfig     │
 │  logger.ts           Logger implements ILogger port                 │
 │  modelInfo.ts        LM Studio /api/v0/models fetcher               │
@@ -53,7 +53,8 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 │  │  │                      DOMAIN                             │  │  │
 │  │  │                                                         │  │  │
 │  │  │  types.ts    Enums, interfaces, constants               │  │  │
-│  │  │  ports.ts    ILogger interface (DIP contract)           │  │  │
+│  │  │  ports/      7 port interfaces (DIP contracts)          │  │  │
+│  │  │  entities/   workspaceAction, existingPlan              │  │  │
 │  │  │  utils.ts    Pure functions: msgId(), sseEvent()        │  │  │
 │  │  │  i18n.ts     Pure lookup: setMessages(), t()            │  │  │
 │  │  │                                                         │  │  │
@@ -69,10 +70,10 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 
 | Layer | File | Description |
 |---|---|---|
-| **Entry** | `src/main.ts` | Composition root: loadConfig → ProxyServer → initialize → start → initializeTools |
+| **Entry** | `src/main.ts` | Composition root: `loadConfig` → `ProxyServer` → `initialize()` (locale + model info) → `initializeTools()` (probe or cache hit) → `start()`. Listening comes **last**, deliberately — see [probe-before-listen](../README.md#probe-before-listen) |
 | **Domain** | `src/domain/types.ts` | All enums (LogLevel, StopReason, FinishReason, ContentBlockType, SseEventType, ToolChoiceType, DeltaType, MessageRole, OpenAIToolType, Locale) and interfaces (LoadedModelInfo, AnthropicRequest, OpenAIRequest, OpenAITool, ToolSelection) |
 | **Domain** | `src/domain/entities/workspaceAction.ts` | `WorkspaceAction` enum, `ActionClass`, `ActionArgs`, `WORKSPACE_TOOL_DEF` — workspace tool definition moved to pure domain |
-| **Domain** | `src/domain/ports/` | Barrel re-export of all port interfaces: `LlmClientPort`, `SseWriterPort`, `PlanFileRepositoryPort`, `PromptRepositoryPort`, `ApprovalInteractorPort`, `LoggerPort`, `ClockPort` |
+| **Domain** | `src/domain/ports/` | Barrel re-export of all port interfaces: `LlmClientPort`, `SseWriterPort`, `PlanFileRepositoryPort`, `PromptRepositoryPort`, `ApprovalInteractorPort`, `LoggerPort`, `ClockPort`, `MemoryRepositoryPort` |
 | **Domain** | `src/domain/utils.ts` | `msgId()` — Anthropic-style ID generation; `sseEvent()` — SSE wire format |
 | **Domain** | `src/domain/i18n.ts` | `setMessages()` — inbound port; `t(key, params)` — pure `{{param}}` interpolation |
 | **Application** | `src/application/requestTranslator.ts` | Anthropic → OpenAI: messages, tools, tool_choice, max_tokens capping |
@@ -82,17 +83,19 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Application** | `src/application/slashCommandInterceptor.ts` | Slash command registry + interceptor (synthetic / enrich / passthrough) |
 | **Application** | `src/application/workspaceTool.ts` | `buildWorkspaceContextSummary()` — static dir/package/README snapshot for system prompt |
 | **Application** | `src/application/textualAgentLoop.ts` | Path B agent loop: XML tag interception, synthetic tool_use SSE, observation re-injection |
-| **Application** | `src/application/services/nativeAgentLoopService.ts` | Path A agent loop (native tool_calls); shared `processToolCall()` used by both iteration 0 and 1+ |
+| **Application** | `src/application/services/nativeAgentLoopService.ts` | Path A agent loop (native tool_calls). Every iteration streams; iteration 0 additionally acts as the fallback guard |
 | **Application** | `src/application/services/approvalGateService.ts` | Approval state machine: ask / auto / plan modes, trusted-file tracking, auto-approve allowlist |
 | **Application** | `src/application/services/systemPromptBuilder.ts` | System prompt construction via `PromptRepositoryPort` + `PlanFileRepositoryPort` |
+| **Application** | `src/application/services/contextCompactor.ts` | Trims the conversation to fit the context window: semantic summary, naive drop, and the tool-pairing repair both leave behind |
 | **Application** | `src/application/useCases/handleChatMessageUseCase.ts` | Full `POST /v1/messages` orchestration: slash intercept → system prompt → compaction → translate → route → stream |
 | **Application** | `src/application/useCases/resolveApprovalUseCase.ts` | `POST /v1/messages/:id/approve` — parse scope, delegate to `ApprovalInteractorPort` |
-| **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash, path safety, bash timeout |
-| **Infrastructure** | `src/infrastructure/server.ts` | Composition root + HTTP router (280 lines); zero business logic — all decisions live in the application layer |
+| **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash/python, path safety, bash timeout |
+| **Infrastructure** | `src/infrastructure/server.ts` | HTTP router and wiring (416 lines): `/v1/messages`, `/v1/messages/:id/approve`, `/v1/exec-python`, `/health`, `/config`, `/commands`, `/agent-mode`. Zero business logic — all decisions live in the application layer |
 | **Infrastructure** | `src/infrastructure/toolLimitDetector.ts` | Three-tier strategy for `maxTools`: config override → persistent cache → live probe |
 | **Infrastructure** | `src/infrastructure/adapters/fetchLlmClient.ts` | `LlmClientPort` implementation via global `fetch()` |
 | **Infrastructure** | `src/infrastructure/adapters/nodeSseWriter.ts` | `SseWriterPort` implementation via Node.js `ServerResponse` |
 | **Infrastructure** | `src/infrastructure/adapters/fsPlanFileRepository.ts` | `PlanFileRepositoryPort` implementation via `node:fs` |
+| **Infrastructure** | `src/infrastructure/adapters/fsMemoryRepository.ts` | `MemoryRepositoryPort` implementation: reads the workspace memory file, degrading every failure to "no memory" |
 | **Infrastructure** | `src/infrastructure/adapters/fsPromptRepository.ts` | `PromptRepositoryPort` implementation via `node:fs` |
 | **Infrastructure** | `src/infrastructure/adapters/sseApprovalInteractor.ts` | `ApprovalInteractorPort` implementation: emits `tool_request_pending` SSE + parks Promise |
 | **Infrastructure** | `src/infrastructure/adapters/systemClock.ts` | `ClockPort` implementation via `Date.now()` |
@@ -104,7 +107,12 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Infrastructure** | `src/infrastructure/persistentCache.ts` | Generic JSON file-backed key-value cache (stores maxTools per model ID) |
 | **Infrastructure** | `src/infrastructure/httpUtils.ts` | `anthropicError()` — Anthropic-format error Response factory |
 | **Infrastructure** | `src/infrastructure/i18nLoader.ts` | `loadLocale()` — reads JSON from `locales/`, calls `setMessages()` |
-| **Assets** | `locales/en_US.json` | English locale — 30+ message keys with `{{param}}` placeholders |
+| **Infrastructure** | `src/infrastructure/thinkingProbe.ts` | Dual probe: whether reasoning is emitted, and whether `enable_thinking: false` suppresses it |
+| **Infrastructure** | `src/infrastructure/thinkingDetector.ts` | Extracts `reasoning_content` from a backend response, whichever field it arrives in |
+| **Infrastructure** | `src/infrastructure/pythonExecutor.ts` | Auto-managed venv behind the `python` workspace action |
+| **Assets** | `locales/en_US.json` | English locale — 45 keys, flat map, `{{param}}` placeholders. Its shape is asserted by [`test/i18n.test.ts`](../test/i18n.test.ts) |
+| **Assets** | `prompts/en_US/` | `agent-base.md`, `plan-mode.md`, `existing-plan-section.md`, `memory-section.md` — loaded through `PromptRepositoryPort` |
+| **Tests** | `test/` | `node:test` suites, type-checked alongside the sources — see [testing.md](testing.md) |
 
 ---
 

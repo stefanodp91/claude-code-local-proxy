@@ -32,10 +32,12 @@ import { SlashCommandInterceptor, SLASH_COMMAND_REGISTRY } from "../application/
 import { SystemPromptBuilder } from "../application/services/systemPromptBuilder";
 import { ApprovalGateService } from "../application/services/approvalGateService";
 import { NativeAgentLoopService } from "../application/services/nativeAgentLoopService";
+import { ContextCompactor } from "../application/services/contextCompactor";
 import { HandleChatMessageUseCase } from "../application/useCases/handleChatMessageUseCase";
 import { ResolveApprovalUseCase } from "../application/useCases/resolveApprovalUseCase";
 import { FsPromptRepository } from "./adapters/fsPromptRepository";
 import { FsPlanFileRepository } from "./adapters/fsPlanFileRepository";
+import { FsMemoryRepository } from "./adapters/fsMemoryRepository";
 import { FetchLlmClient } from "./adapters/fetchLlmClient";
 import { NodeSseWriter } from "./adapters/nodeSseWriter";
 import { SystemClock } from "./adapters/systemClock";
@@ -44,6 +46,7 @@ import { loadOldContent, checkAutoApprove } from "./adapters/autoApproveConfig";
 import { ToolLimitDetector } from "./toolLimitDetector";
 import { ThinkingDetector } from "./thinkingDetector";
 import { executePythonCode } from "./pythonExecutor";
+import type { ActionEnv } from "../domain/entities/workspaceAction";
 import type { PlanFileRepositoryPort } from "../domain/ports";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -54,6 +57,10 @@ export class ProxyServer {
   private readonly modelCache: PersistentCache<ModelCapabilities>;
   private modelInfo: LoadedModelInfo | null = null;
   private toolManager!: ToolManager;
+  private readonly compactor: ContextCompactor;
+  /** Workspace-relative directories both agent loops hand to executeAction. */
+  private readonly actionEnv: ActionEnv;
+  private readonly memoryFiles: FsMemoryRepository;
   private requestTranslator!: RequestTranslator;
   private responseTranslator!: ResponseTranslator;
   private streamTranslator!: StreamTranslator;
@@ -82,18 +89,31 @@ export class ProxyServer {
     const clock = new SystemClock();
     this.llm               = new FetchLlmClient(config.targetUrl);
     this.planFiles         = new FsPlanFileRepository(config.plansDir, clock);
+    this.memoryFiles       = new FsMemoryRepository(config.memoryFile);
     this.promptRepo        = new FsPromptRepository(config.locale);
-    this.promptBuilder     = new SystemPromptBuilder(this.promptRepo, this.planFiles);
+    this.promptBuilder     = new SystemPromptBuilder(this.promptRepo, this.planFiles, this.memoryFiles);
     this.approvalInteractor = new SseApprovalInteractor(this.logger);
     this.approvalGate       = new ApprovalGateService(
       this.approvalInteractor, this.planFiles, this.logger,
       loadOldContent, checkAutoApprove,
     );
+    this.actionEnv = {
+      venvDir: this.config.pythonVenvDir,
+      plotDir: this.config.pythonPlotDir,
+    };
+    this.compactor = new ContextCompactor(this.llm, this.logger, {
+      semanticEnabled:  this.config.semanticCompact,
+      summaryMaxTokens: this.computeSummaryMaxTokens(),
+      summaryTimeout:   this.config.summaryTimeout,
+    });
     this.nativeLoop = new NativeAgentLoopService(
       this.llm, this.approvalGate, this.planFiles, this.logger,
       () => this.modelInfo?.id ?? "unknown",
       () => this.computeMaxIterations(),
-      this.config.pythonVenvDir,
+      this.compactor,
+      () => this.modelInfo?.loadedContextLength ?? 0,
+      () => this.modelInfo?.type === "vlm",
+      this.actionEnv,
     );
   }
 
@@ -154,9 +174,10 @@ export class ProxyServer {
       this.approvalGate, this.promptBuilder, this.nativeLoop, this.llm,
       this.requestTranslator, this.responseTranslator, this.streamTranslator,
       this.slashInterceptor, this.logger,
-      () => this.modelInfo, () => this.maxTools, this.config.targetUrl,
-      this.config.semanticCompact, this.computeSummaryMaxTokens(), this.config.summaryTimeout,
-      this.config.pythonVenvDir,
+      () => this.modelInfo, () => this.maxTools, () => this.computeMaxIterations(),
+      this.config.targetUrl,
+      this.compactor,
+      this.actionEnv,
     );
     this.resolveApprovalUseCase = new ResolveApprovalUseCase(this.approvalInteractor);
   }

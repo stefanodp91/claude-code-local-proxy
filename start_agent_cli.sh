@@ -114,7 +114,10 @@ for i in $(seq 1 30); do
   kill -0 "$PROXY_PID" 2>/dev/null \
     || die "Proxy exited unexpectedly. Check $PROXY_LOG"
   if [[ $i -eq 30 ]]; then
-    yellow "WARNING: Proxy did not respond within 30s (tool probe may still be running)."
+    yellow "WARNING: Proxy did not respond within 30s."
+    yellow "The proxy probes the model before it starts listening, so a cold or"
+    yellow "large model can push first response past this timeout. Loading the"
+    yellow "model in LM Studio before launching avoids it."
     yellow "Claude Code will connect once the proxy is ready."
     break
   fi

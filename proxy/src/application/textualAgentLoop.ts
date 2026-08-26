@@ -13,8 +13,17 @@
  */
 
 import { sseEvent, msgId } from "../domain/utils";
+import type { ContextCompactor } from "./services/contextCompactor";
 import { SseEventType, StopReason, ContentBlockType, DeltaType } from "../domain/types";
-import { executeAction, ACTION_CLASSIFICATION, ActionClass, type ActionArgs } from "../infrastructure/workspaceActions";
+import {
+  executeAction,
+  ACTION_CLASSIFICATION,
+  ActionClass,
+  type ActionArgs,
+  type ActionEnv,
+  type ActionOutcome,
+} from "../infrastructure/workspaceActions";
+import { buildObservationMessage } from "./services/actionOutcome";
 import type { ILogger, LlmClientPort, SseWriterPort } from "../domain/ports";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +91,17 @@ export const TEXTUAL_TOOL_MANUAL = [
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MAX_ITERATIONS = 10;
+/**
+ * Iteration ceiling when the caller does not supply one.
+ *
+ * `MAX_AGENT_ITERATIONS` was documented in 1.3.0 as replacing "the hardcoded
+ * limit of 10". It replaced it in Path A; here the 10 stayed, so this path ran
+ * ten rounds whatever the operator configured — and on a small context window
+ * the adaptive tier is *below* ten, which is the direction that hurts. The
+ * caller now passes the same resolved limit Path A uses; this constant is only
+ * the fallback for a caller that passes nothing.
+ */
+const DEFAULT_MAX_ITERATIONS = 10;
 
 // Number of trailing characters to keep in the pending text buffer as
 // lookahead for a tag boundary split across two streaming chunks.
@@ -105,6 +124,22 @@ const TAG_LOOKAHEAD = 7;
 export interface TextualApprovalResult {
   approved: boolean;
   scope: "once" | "turn" | "file";
+}
+
+/** Everything optional the Path B loop accepts, grouped so the call site stays readable. */
+export interface TextualLoopOptions {
+  /** Asks the user before a destructive action. Omitted, destructive actions are refused upstream. */
+  approvalGate?: TextualApprovalGate;
+  /** Workspace-relative venv and plot directories for action='python'. */
+  actionEnv?: ActionEnv;
+  /** Trims `messages` between iterations. Omitted, no trimming happens. */
+  compactor?: ContextCompactor;
+  /** The loaded model's context window, or 0 when unknown. */
+  contextBudget?: number;
+  /** Iteration ceiling for this turn. Defaults to {@link DEFAULT_MAX_ITERATIONS}. */
+  maxIterations?: number;
+  /** Whether the loaded model can see images. Omitted, none are attached. */
+  visionCapable?: boolean;
 }
 
 export type TextualApprovalGate = (
@@ -141,7 +176,7 @@ interface TextualIterationResult {
  *      client as an Anthropic tool_use content block, executes the action,
  *      and injects the result as an <observation> user turn.
  *   3. Loops with the updated message history until the model responds without
- *      an action tag or MAX_ITERATIONS is reached.
+ *      an action tag or the iteration ceiling is reached.
  *
  * The client receives standard Anthropic SSE throughout and does not need to
  * know whether Path A or Path B is active.
@@ -154,9 +189,17 @@ export async function runTextualAgentLoop(
   llm: LlmClientPort,
   modelId: string,
   logger: ILogger,
-  approvalGate?: TextualApprovalGate,
-  venvDir = ".claudio/python-venv",
+  opts: TextualLoopOptions = {},
 ): Promise<void> {
+  const {
+    approvalGate,
+    actionEnv = {},
+    compactor,
+    contextBudget = 0,
+    maxIterations = DEFAULT_MAX_ITERATIONS,
+    visionCapable = false,
+  } = opts;
+
   // Strip any tool-related fields — this model cannot use them.
   const baseReq = { ...openaiReq, tools: undefined, tool_choice: undefined };
 
@@ -230,7 +273,21 @@ export async function runTextualAgentLoop(
 
   // ── Agent loop ─────────────────────────────────────────────────────────────
 
-  for (let i = 0; i < MAX_ITERATIONS; i++) {
+  for (let i = 0; i < maxIterations; i++) {
+    // Same reasoning as Path A: each iteration appends an assistant turn and an
+    // <observation>, and a `read` truncates at 50 KB, so the turn can outgrow
+    // the window even when the request that started it was small. Path B is a
+    // fallback, but a fallback that dies halfway through is worse than one that
+    // answers briefly.
+    if (i > 0 && compactor) {
+      const outcome = await compactor.compact(messages, contextBudget);
+      if (outcome.compacted) {
+        logger.info(
+          `[agent] compacted mid-turn at iteration ${i} (${outcome.strategy}, ${outcome.removed} message(s))`,
+        );
+      }
+    }
+
     const llmResp = await llm.chat({ body: { ...baseReq, messages }, stream: true });
     if (!llmResp.ok) {
       emitTextBlock(`Error from LLM: ${llmResp.errorText ?? `HTTP ${llmResp.status}`}`);
@@ -299,11 +356,11 @@ export async function runTextualAgentLoop(
     contentIndex++;
 
     const actionArgs = result.actionArgs;
-    let actionResult: string;
+    let actionResult: ActionOutcome;
     if (ACTION_CLASSIFICATION[actionArgs.action] === ActionClass.Destructive && approvalGate) {
       if (allowAllThisTurn) {
         logger.dbg(`[workspace/textual] ${actionArgs.action} auto-approved (allowAllThisTurn)`);
-        actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
+        actionResult = await executeAction(actionArgs, workspaceCwd, actionEnv);
       } else {
         const approval = await approvalGate(actionArgs.action, actionArgs, writeSSE);
         if (approval.scope === "turn" && approval.approved) {
@@ -311,27 +368,29 @@ export async function runTextualAgentLoop(
         }
         if (!approval.approved) {
           logger.dbg(`[workspace/textual] ${actionArgs.action} denied by user`);
-          actionResult = `Action '${actionArgs.action}' was denied by the user.`;
+          actionResult = { text: `Action '${actionArgs.action}' was denied by the user.` };
         } else {
-          actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
+          actionResult = await executeAction(actionArgs, workspaceCwd, actionEnv);
         }
       }
     } else {
-      actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
+      actionResult = await executeAction(actionArgs, workspaceCwd, actionEnv);
     }
     logger.dbg(
-      `[workspace/textual] ${actionArgs.action} "${actionArgs.path ?? ""}" → ${actionResult.slice(0, 120)}`,
+      `[workspace/textual] ${actionArgs.action} "${actionArgs.path ?? ""}" → ${actionResult.text.slice(0, 120)}`,
     );
 
     // Re-inject as assistant (text before action + the action tag itself) and
     // user (the observation).  The observation is plain text — non-tool models
-    // cannot parse a structured tool_result, so we embed it inline.
+    // cannot parse a structured tool_result, so we embed it inline. An image the
+    // action produced rides in that same user turn, since there is no tool
+    // message here to keep it out of — see services/actionOutcome.ts.
     const assistantContent = result.textBeforeAction
       ? `${result.textBeforeAction}\n${result.actionTag}`
       : result.actionTag;
 
     messages.push({ role: "assistant", content: assistantContent });
-    messages.push({ role: "user", content: `<observation>\n${actionResult}\n</observation>` });
+    messages.push(buildObservationMessage(actionResult, visionCapable));
   }
 
   // Max iterations reached without a final answer.
@@ -469,17 +528,40 @@ async function parseTextualIteration(
         inTag = true;
         // fall through to tag-mode processing in the same iteration
       } else {
-        // Tag mode: look for the self-closing marker.
-        const closePos = pendingText.indexOf("/>");
-        if (closePos === -1) {
-          // Tag not complete yet — wait for more chunks.
-          break;
+        // Tag mode. Two forms are accepted, because the manual teaches both:
+        //
+        //   <action name="read" path="a.ts"/>                    self-closing
+        //   <action name="write" path="a.txt">…body…</action>    with a body
+        //
+        // Only the first was implemented. A `write` in the documented body form
+        // never found its `/>`, stayed buffered to the end of the stream, and
+        // was flushed to the user as prose — the file was never written and the
+        // model was never told. The scan is quote-aware so a `>` inside an
+        // attribute (`cmd="ls > out"`) does not end the tag early.
+        const tagEnd = findTagEnd(pendingText);
+        if (!tagEnd) break; // opening tag still arriving
+
+        let completeTag: string;
+        let body: string | null = null;
+
+        if (tagEnd.selfClosing) {
+          completeTag = pendingText.slice(0, tagEnd.index + 1);
+          pendingText = pendingText.slice(tagEnd.index + 1);
+        } else {
+          const bodyEnd = pendingText.indexOf(ACTION_CLOSE_TAG, tagEnd.index);
+          if (bodyEnd === -1) break; // body still arriving
+          completeTag = pendingText.slice(0, tagEnd.index + 1);
+          body = pendingText.slice(tagEnd.index + 1, bodyEnd);
+          pendingText = pendingText.slice(bodyEnd + ACTION_CLOSE_TAG.length);
         }
-        const completeTag = pendingText.slice(0, closePos + 2);
-        pendingText = pendingText.slice(closePos + 2);
         inTag = false;
 
         const args = parseActionTag(completeTag);
+        if (args && body !== null) {
+          // Drop the single newline that separates the opening tag from the
+          // body in the documented layout; keep everything else verbatim.
+          args.content = body.replace(/^\r?\n/, "");
+        }
         if (args) {
           foundActionTag = completeTag;
           foundActionArgs = args;
@@ -590,23 +672,48 @@ async function parseTextualIteration(
  *
  * @returns ActionArgs on success, null if the tag is malformed or missing name.
  */
-function parseActionTag(tag: string): ActionArgs | null {
+export /** Closing tag for the body form of an action. */
+const ACTION_CLOSE_TAG = "</action>";
+
+/**
+ * Locate the `>` that ends an opening tag, skipping any that sit inside a
+ * quoted attribute value, and report whether the tag closed itself.
+ *
+ * Scanning for a literal `/>` — as this did before — also matches one written
+ * inside an attribute, e.g. `cmd="ls />"`, which truncates the tag mid-attribute
+ * and produces an action with arguments silently missing.
+ */
+function findTagEnd(s: string): { index: number; selfClosing: boolean } | null {
+  let quote: string | null = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; continue; }
+    if (c === ">") return { index: i, selfClosing: s[i - 1] === "/" };
+  }
+  return null;
+}
+
+export function parseActionTag(tag: string): ActionArgs | null {
   const nameMatch = tag.match(/name="([^"]+)"/);
   if (!nameMatch) return null;
 
   const args: ActionArgs = { action: nameMatch[1] };
 
-  const pathMatch = tag.match(/path="([^"]+)"/);
-  if (pathMatch) args.path = pathMatch[1];
-
-  const patternMatch = tag.match(/pattern="([^"]+)"/);
-  if (patternMatch) args.pattern = patternMatch[1];
-
-  const includeMatch = tag.match(/include="([^"]+)"/);
-  if (includeMatch) args.include = includeMatch[1];
-
-  const cmdMatch = tag.match(/cmd="([^"]+)"/);
-  if (cmdMatch) args.cmd = cmdMatch[1];
+  // Every attribute TEXTUAL_TOOL_MANUAL teaches the model to write must appear
+  // here. `old_string` and `new_string` did not, so a model following the
+  // manual's own `edit` example to the letter always got back
+  // "Error: 'old_string' is required" — Path B could not edit a file at all,
+  // and nothing said so. `test/textualAgentLoop.test.ts` now derives the list
+  // from the manual and asks this function about each one, so the two cannot
+  // drift apart again.
+  for (const attr of ["path", "pattern", "include", "cmd", "old_string", "new_string", "content"]) {
+    const m = tag.match(new RegExp(`${attr}="([^"]*)"`));
+    if (m) args[attr] = m[1];
+  }
 
   return args;
 }

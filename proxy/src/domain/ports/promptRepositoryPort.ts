@@ -25,6 +25,8 @@ export enum PromptKey {
   PlanMode            = "plan-mode",
   /** Template injected into the plan-mode prompt when an existing plan is found. */
   ExistingPlanSection = "existing-plan-section",
+  /** Template wrapping cross-session memory. Injected only when memory exists. */
+  MemorySection       = "memory-section",
 }
 
 export interface PromptRepositoryPort {

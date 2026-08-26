@@ -18,8 +18,14 @@
  *
  * Output contract
  * ──────────────────────────────────────────────────────────────────
- *   executeAction() always returns a string.  Callers convert that string into
- *   a tool_result or <observation> as appropriate for their path.
+ *   executeAction() always returns an ActionOutcome: `text` for the model,
+ *   plus an optional `image` when the action produced one (today only a
+ *   matplotlib figure from action='python').  Callers turn the text into a
+ *   tool_result or an <observation>, and hand the image to the model as an
+ *   image part — see application/services/actionOutcome.ts.  The image is kept
+ *   out of `text` deliberately: its base64 used to *be* the result string, and
+ *   an unreadable payload the model pays full price for is worse than no
+ *   picture at all.
  *
  * @module infrastructure/workspaceActions
  */
@@ -33,7 +39,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { execSync, spawnSync } from "node:child_process";
-import { resolve, join, relative, dirname } from "node:path";
+import { resolve, join, relative, dirname, sep } from "node:path";
 import { executePythonCode } from "./pythonExecutor";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,6 +52,10 @@ const MAX_GLOB_RESULTS = 500;
 const SHELL_TIMEOUT_MS = 15_000;
 const BASH_TIMEOUT_MS = 30_000;
 const MAX_BASH_OUTPUT = 8_000;
+
+/** Fallbacks when a caller passes no environment — mirror the proxy config. */
+const DEFAULT_VENV_DIR = ".claudio/python-venv";
+const DEFAULT_PLOT_DIR = ".claudio/plots";
 
 // Directories that are never useful to search or list for an LLM agent.
 const PRUNE_DIRS = new Set([
@@ -78,9 +88,18 @@ export {
   ACTION_CLASSIFICATION,
   WORKSPACE_TOOL_DEF,
   type ActionArgs,
+  type ActionEnv,
+  type ActionImage,
+  type ActionOutcome,
 } from "../domain/entities/workspaceAction";
 
-import { WorkspaceAction, type ActionArgs } from "../domain/entities/workspaceAction";
+import {
+  WorkspaceAction,
+  type ActionArgs,
+  type ActionEnv,
+  type ActionImage,
+  type ActionOutcome,
+} from "../domain/entities/workspaceAction";
 
 /**
  * Async callback the agent loops use to request human approval before
@@ -93,47 +112,134 @@ import { WorkspaceAction, type ActionArgs } from "../domain/entities/workspaceAc
 export type ApprovalGate = (action: string, args: ActionArgs) => Promise<boolean>;
 
 /**
- * Execute a workspace action and return the result as a string.
+ * Execute a workspace action.
  *
  * @param args         - action name plus action-specific parameters
  * @param workspaceCwd - absolute path to the workspace root
  * @param venvDir      - relative path (from workspaceCwd) to the Python venv;
  *                       only used for action='python'. Defaults to the proxy
  *                       config default `.claudio/python-venv`.
- * @returns            - a string result, never throws
+ * @returns            - an {@link ActionOutcome}, never throws. Every failure
+ *                       is text the model can act on, not an exception.
  */
 export async function executeAction(
   args: ActionArgs,
   workspaceCwd: string,
-  venvDir = ".claudio/python-venv",
-): Promise<string> {
+  env: ActionEnv = {},
+): Promise<ActionOutcome> {
+  const { venvDir = DEFAULT_VENV_DIR, plotDir = DEFAULT_PLOT_DIR } = env;
   try {
     switch (args.action) {
       case WorkspaceAction.List:
-        return actionList(args, workspaceCwd);
+        return { text: actionList(args, workspaceCwd) };
       case WorkspaceAction.Read:
-        return actionRead(args, workspaceCwd);
+        return { text: actionRead(args, workspaceCwd) };
       case WorkspaceAction.Grep:
-        return actionGrep(args, workspaceCwd);
+        return { text: actionGrep(args, workspaceCwd) };
       case WorkspaceAction.Glob:
-        return actionGlob(args, workspaceCwd);
+        return { text: actionGlob(args, workspaceCwd) };
       case WorkspaceAction.Write:
-        return actionWrite(args, workspaceCwd);
+        return { text: actionWrite(args, workspaceCwd) };
       case WorkspaceAction.Edit:
-        return actionEdit(args, workspaceCwd);
+        return { text: actionEdit(args, workspaceCwd) };
       case WorkspaceAction.Bash:
-        return actionBash(args, workspaceCwd);
+        return { text: actionBash(args, workspaceCwd) };
       case WorkspaceAction.Python: {
-        if (!args.cmd) return "Error: 'cmd' is required for action='python'";
+        if (!args.cmd) return { text: "Error: 'cmd' is required for action='python'" };
         const result = await executePythonCode(args.cmd, workspaceCwd, venvDir, () => {});
-        return result.type === "error" ? `Error: ${result.data}` : result.data;
+        // A figure comes back instead of stdout, never alongside it — see
+        // executePythonCode. It leaves here as an image, not as base64 text.
+        if (result.type === "image") {
+          const { image, error } = saveFigure(result.data, workspaceCwd, plotDir);
+          return {
+            text: error ? `Note: the figure could not be saved to '${plotDir}' (${error}).` : "",
+            image,
+          };
+        }
+        return { text: result.type === "error" ? `Error: ${result.data}` : result.data };
       }
       default:
-        return `Error: unknown action '${args.action}'. Valid actions: ${Object.values(WorkspaceAction).join(", ")}`;
+        return { text: `Error: unknown action '${args.action}'. Valid actions: ${Object.values(WorkspaceAction).join(", ")}` };
     }
   } catch (err) {
-    return `Error executing action '${args.action}': ${String(err)}`;
+    return { text: `Error executing action '${args.action}': ${String(err)}` };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Saving a figure
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Write a figure into the workspace and describe it.
+ *
+ * The attached image is what the *model* sees; a file is what a *person* can
+ * open, and the two are only the same picture if the path travels with it. A
+ * failure to save is reported in the text and never hides the image: the turn
+ * carries on with a picture the model can still read.
+ *
+ * The write is the output of an action the user has already approved — `python`
+ * is destructive and passes the gate — and it is confined to the configured
+ * directory under the workspace root, through the same `safeResolvePath()` as
+ * every other write.
+ */
+export function saveFigure(
+  data: string,
+  workspaceCwd: string,
+  plotDir: string,
+): { image: ActionImage; error?: string } {
+  const image: ActionImage = { media_type: "image/png", data };
+  if (!plotDir) return { image };   // saving switched off is a choice, not a fault
+
+  const saved = savePlot(data, workspaceCwd, plotDir);
+  if ("relPath" in saved) return { image: { ...image, savedPath: saved.relPath } };
+  return { image, error: saved.error };
+}
+
+/**
+ * Write a base64 image under `plotDir`, returning where it went or why it did
+ * not go anywhere.
+ *
+ * The file name carries a timestamp *and* a counter, because two plots in the
+ * same second is the ordinary case — the model draws, looks, and redraws — and
+ * a name derived from the clock alone would lose the first one.
+ *
+ * @returns `{ relPath }` (workspace-relative, forward slashes) or `{ error }`.
+ *          Never throws: a lost figure must not cost the turn.
+ */
+export function savePlot(
+  data: string,
+  workspaceCwd: string,
+  plotDir: string,
+): { relPath: string } | { error: string } {
+  const dir = safeResolvePath(plotDir, workspaceCwd);
+  if (!dir) return { error: `plot directory '${plotDir}' is outside the workspace root` };
+
+  try {
+    mkdirSync(dir, { recursive: true });
+    const stamp = timestampSlug();
+    for (let n = 0; n < 1_000; n++) {
+      const name = n === 0 ? `plot-${stamp}.png` : `plot-${stamp}-${n}.png`;
+      const full = join(dir, name);
+      if (existsSync(full)) continue;
+      // 'wx' fails rather than overwrites, so a race loses the name, not a file.
+      writeFileSync(full, Buffer.from(data, "base64"), { flag: "wx" });
+      return { relPath: `${plotDir.replace(/\/+$/, "")}/${name}` };
+    }
+    return { error: `could not find a free name in '${plotDir}'` };
+  } catch (err) {
+    return { error: String(err) };
+  }
+}
+
+/** `YYYYMMDD-HHMMSS`, local time — it is a file name a person reads. */
+function timestampSlug(): string {
+  const d = new Date();
+  const p = (n: number, w = 2) => String(n).padStart(w, "0");
+  return (
+    `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}` +
+    `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,7 +500,15 @@ function actionEdit(args: ActionArgs, workspaceCwd: string): string {
   }
 
   // Replace only the first occurrence to match Claude Code behaviour.
-  const newContent = content.replace(args.old_string, args.new_string);
+  //
+  // The replacement goes through a function on purpose. Passing the string
+  // directly makes `$$`, `$&`, `` $` `` and `$'` inside it *replacement
+  // patterns* rather than text: "$$" collapsed to "$", "$&" expanded to the
+  // text being replaced, "$'" to everything after it. An edit inserting shell
+  // or Makefile source therefore wrote something other than what was asked,
+  // reported success, and left no trace. A replacer function is inserted
+  // literally.
+  const newContent = content.replace(args.old_string, () => args.new_string as string);
 
   try {
     writeFileSync(safe, newContent, "utf-8");
@@ -475,8 +589,13 @@ export function safeResolvePath(
   // Reject obviously absolute or home-relative paths before resolve()
   if (relativePath.startsWith("/") || relativePath.startsWith("~")) return null;
 
-  const resolved = resolve(workspaceCwd, relativePath);
-  if (resolved !== workspaceCwd && !resolved.startsWith(workspaceCwd + "/")) {
+  // Normalise the root first. The comparison below appends a separator, so a
+  // root arriving with a trailing slash (from the X-Workspace-Root header) was
+  // compared against "/ws//" and every path in the workspace read as an escape:
+  // total failure, reported as "outside the workspace root".
+  const root = resolve(workspaceCwd);
+  const resolved = resolve(root, relativePath);
+  if (resolved !== root && !resolved.startsWith(root + sep)) {
     return null;
   }
   return resolved;

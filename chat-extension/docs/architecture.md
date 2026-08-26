@@ -66,7 +66,7 @@ src/extension/
 │   └── extension-config.ts    # VS Code settings + GET /config merge + port override
 │
 ├── enums/
-│   └── (command IDs)          # VS Code command enum IDs
+│   └── command-id.enum.ts     # VS Code command IDs
 │
 ├── models/
 │   └── chat-message.model.ts  # Conversation message types
@@ -82,19 +82,23 @@ src/extension/
     ├── sidebar-provider.ts    # Implements WebviewViewProvider (sidebar)
     ├── webview-bridge.ts      # Bidirectional message bus (on/send)
     └── content-provider.ts    # Generates the HTML shell for the Angular app
+
+src/shared/                    # Imported by BOTH host and webview — keep it dependency-free
+├── message-protocol.ts        # ToWebviewType / ToExtensionType and their payloads
+└── anthropic-events.ts        # Anthropic SSE event shapes
 ```
 
 **Key files:**
 
 | File | Lines (approx.) | Responsibility |
 |------|-----------------|----------------|
-| `chat-session.ts` | 557 | Central singleton: all handlers, conversation state, Python, attachments |
-| `proxy-manager.ts` | 190 | Proxy child process lifecycle: spawn, port discovery, orphan cleanup, kill |
-| `proxy-client.ts` | 128 | Async generator HTTP client yielding SSE events |
-| `extension-config.ts` | 130 | VS Code settings + proxy `/config` merge + runtime port override |
+| `chat-session.ts` | 704 | Central singleton: all handlers, conversation state, Python, attachments |
+| `proxy-manager.ts` | 223 | Proxy child process lifecycle: spawn, port discovery, orphan cleanup, kill |
+| `proxy-client.ts` | 219 | Async generator HTTP client yielding SSE events |
+| `extension-config.ts` | 144 | VS Code settings + proxy `/config` merge + runtime port override |
 | `content-provider.ts` | 63 | HTML shell with CSP, import map, dist/webview-ui/ references |
 | `webview-bridge.ts` | 47 | Typed wrapper around `panel.webview.postMessage()` |
-| `activation.ts` | 55 | Entry point: ProxyManager, ChatSession, commands, sidebar |
+| `activation.ts` | 79 | Entry point: ProxyManager, ChatSession, commands, sidebar |
 
 ---
 
@@ -190,7 +194,7 @@ src/webview-ui/src/app/
 │       ├── thinking-block/             # Expandable reasoning block
 │       ├── tool-use-block/             # Tool use block with icon + pulsing dot
 │       ├── message-metadata/           # Token counter
-│       ├── tool-approval-modal/        # Approval modal for write/edit/bash actions
+│       ├── tool-approval-modal/        # Approval modal for write/edit/bash/python
 │       └── plan-exit-modal/            # Confirmation dialog for Plan mode exit
 │
 └── shared/
@@ -370,7 +374,7 @@ npm run build
 
 npm run package
   └── npx @vscode/vsce package --no-dependencies
-        Output: claudio-0.1.0.vsix
+        Output: claudio-1.5.0.vsix
         Include: dist/, media/, package.json, locales
 ```
 
@@ -426,14 +430,14 @@ The `buildChatConfig()` function in `extension-config.ts` performs the merge in 
 
 ## Tool Use & Permission Flow
 
-> **Status: implemented** for the permission gate and approval modal. `tool_use` block visualization in the chat is still absent (see [feature-gap.md](feature-gap.md)).
+> **Status: implemented** — permission gate, approval modal, and `tool_use` block visualization in the chat (see [Tool Use Visualization](#tool-use-visualization-implemented) below and [feature-gap.md](feature-gap.md)).
 
 ### Proxy Dual-Path Agent Loop
 
 The proxy runs a model-agnostic agent loop for workspace-aware requests. It has two paths ([proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md)):
 
-- **Path A** (`maxTools > 0`, e.g. Nemotron): native OpenAI `tool_calls`, streamed starting from iteration 1.
-- **Path B** (`maxTools == 0`, e.g. Qwen): XML tag interception from plain-text model output.
+- **Path A** (`maxTools > 0`): native OpenAI `tool_calls`. Every iteration is streamed; iteration 0 doubles as a fallback guard when the model emits nothing at all.
+- **Path B** (`maxTools == 0`): XML tag interception from plain-text model output.
 
 **Claudio is path-agnostic**: both paths emit identical Anthropic SSE `tool_use` content blocks. No Claudio-side changes are needed to support either path.
 
@@ -491,7 +495,7 @@ The full rendering pipeline is in place:
 - `MessageBubbleComponent` renders `<app-tool-use-block [block]="...">` for every `ToolUse` content block.
 - `ToolUseBlockComponent` shows action icon (📂 list, 📄 read, 🔍 grep, ✏️ write, ⚡ bash) + label, with a pulsing accent dot while the block is in-flight.
 
-See [feature-gap.md § 5](feature-gap.md#5-whats-still-missing-for-a-stable-junior-agent) for what is still missing.
+See [feature-gap.md § 5](feature-gap.md#5-whats-still-missing) for what is still missing.
 
 ---
 

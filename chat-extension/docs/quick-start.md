@@ -163,20 +163,20 @@ npm run package
 
 Expected output:
 ```
-DONE  Packaged: claudio-0.1.0.vsix (X files, Y MB)
+DONE  Packaged: claudio-1.5.0.vsix (X files, Y MB)
 ```
 
-The file `claudio-0.1.0.vsix` is created in the `chat-extension/` directory.
+The file `claudio-1.5.0.vsix` is created in the `chat-extension/` directory.
 
 ### Step 6 — Install in VS Code
 
 ```bash
-code --install-extension claudio-0.1.0.vsix
+code --install-extension claudio-1.5.0.vsix
 ```
 
 Expected output:
 ```
-Extension 'claudio-0.1.0.vsix' was successfully installed.
+Extension 'claudio-1.5.0.vsix' was successfully installed.
 ```
 
 ### Step 7 — Reload VS Code
@@ -239,8 +239,8 @@ Check each item to confirm everything is working:
 - [ ] `npm install` completed without errors (in `chat-extension/`)
 - [ ] `cd src/webview-ui && npm install` completed without errors
 - [ ] `npm run build` completed without errors (creates `dist/extension.js`)
-- [ ] `npm run package` creates `claudio-0.1.0.vsix`
-- [ ] `code --install-extension claudio-0.1.0.vsix` shows "successfully installed"
+- [ ] `npm run package` creates `claudio-1.5.0.vsix`
+- [ ] `code --install-extension claudio-1.5.0.vsix` shows "successfully installed"
 - [ ] After "Reload Window", the Claudio icon appears in the Activity Bar
 - [ ] The Claudio panel shows `● Connected` (proxy started automatically)
 - [ ] The first message receives a streaming response

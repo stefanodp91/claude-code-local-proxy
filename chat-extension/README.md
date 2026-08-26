@@ -30,7 +30,7 @@
 
 > **Python è opzionale.** Senza Python, la funzione di esecuzione codice mostra un errore, ma chat, allegati e slash command funzionano normalmente.
 
-> **Il proxy si avvia automaticamente** quando apri il progetto in VS Code (configurazione inclusa nel `.vscode/settings.json`). Non occorre `sh start.sh` o `npm start` manuale.
+> **Il proxy si avvia automaticamente** quando apri il progetto in VS Code (configurazione inclusa nel `.vscode/settings.json`). Non occorre avviarlo a mano con `sh start_agent_cli.sh` o `npm start`.
 
 ---
 
@@ -59,12 +59,12 @@ npm run build
 # 5. Crea il pacchetto .vsix
 npm run package
 # Output atteso:
-#   DONE  Packaged: claudio-0.1.0.vsix
+#   DONE  Packaged: claudio-1.5.0.vsix
 
 # 6. Installa l'estensione in VS Code
-code --install-extension claudio-0.1.0.vsix
+code --install-extension claudio-1.5.0.vsix
 # Output atteso:
-#   Extension 'claudio-0.1.0.vsix' was successfully installed.
+#   Extension 'claudio-1.5.0.vsix' was successfully installed.
 ```
 
 Dopo l'installazione, **ricarica VS Code** (Ctrl+Shift+P → digita "Reload Window" → invio).
@@ -202,7 +202,7 @@ In VS Code: apri il pannello Claudio → l'indicatore mostra `● Connected` →
 
 | Sintomo | Causa | Soluzione |
 |---|---|---|
-| Indicatore rosso "Disconnected" | Proxy non in esecuzione | `sh start.sh` o `cd proxy && npm start` |
+| Indicatore rosso "Disconnected" | Proxy non in esecuzione | Usa il pulsante Reconnect; in alternativa `cd proxy && npm start` |
 | Icona Claudio non visibile | Estensione non attivata | Controlla Extensions panel → cerca "Claudio" → assicurati che sia abilitata |
 | Indicatore rosso anche col proxy attivo | Host/porta errati nelle impostazioni | Controlla `claudio.proxyHost` e `claudio.proxyPort` in VS Code settings |
 | Risposta `503 Proxy is still initializing` | `initializeTools()` ancora in esecuzione | Attendi 5–30s per il probe in background, poi riprova |
@@ -216,8 +216,9 @@ In VS Code: apri il pannello Claudio → l'indicatore mostra `● Connected` →
 - Filtra per "Claudio" per trovare i messaggi rilevanti
 
 **Log del proxy:**
-- `proxy/proxy.log` (quando avviato con `start.sh`)
-- o direttamente nel terminale dove gira il proxy
+- Output channel "Claudio" in VS Code (quando il proxy è avviato dall'estensione)
+- `proxy.log` nella root del repository (quando è avviato da `start_agent_cli.sh`)
+- o direttamente nel terminale dove gira `npm start`
 
 ---
 

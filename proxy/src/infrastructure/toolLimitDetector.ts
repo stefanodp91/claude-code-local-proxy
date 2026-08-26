@@ -1,7 +1,7 @@
 /**
  * toolLimitDetector.ts — Detects the tool-call limit for the loaded model.
  *
- * Runs at startup (after the HTTP server is already listening) to determine
+ * Runs at startup (before the HTTP server starts listening) to determine
  * `maxTools` — the maximum number of tool definitions the model accepts in a
  * single request. Uses a three-tier strategy:
  *

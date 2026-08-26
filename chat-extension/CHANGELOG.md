@@ -5,6 +5,72 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — 2026-08-26
+
+### Documentation — cross-session memory is no longer absent
+
+- **`feature-gap.md` listed cross-session memory as ABSENT.** The proxy now
+  prepends `.claudio/MEMORY.md` to the system prompt when it exists (see
+  `MEMORY_FILE` in the proxy configuration reference).
+
+  There is nothing to build on the Claudio side: the memory is workspace state,
+  not extension state, and the model updates it through the ordinary `write`
+  action — so an update surfaces in Claudio's existing approval modal like any
+  other write to disk. Recorded as PRESENT (proxy) with that noted, rather than
+  left in the parity backlog it no longer belongs to.
+
+
+### Documentation — stale packaging references and dead code anchors
+
+- **`claudio-0.1.0.vsix`** appeared in the README, `quick-start.md`,
+  `troubleshooting.md` and `architecture.md` as the file to install. The
+  packaged artifact is `claudio-1.5.0.vsix`, so every copy-pasted install
+  command failed.
+
+- **`feature-gap.md` anchors pointed into `proxy/src/infrastructure/server.ts`**
+  at lines 234-253, 289-306, 432-434 and 465 — a file that is now 416 lines
+  long, having lost that logic to the hexagonal refactor. Re-pointed at
+  `handleChatMessageUseCase.ts` (routing), `sseApprovalInteractor.ts` (the
+  `tool_request_pending` emission) and `systemPromptBuilder.ts` (prompt
+  assembly). Same for the client-side ones: the slash-command range pointed at
+  plan-exit handling, and the persistence anchor at `clearHistory()`.
+
+- **`feature-gap.md` claimed 13 proxy-side slash commands.** There are 8, out of
+  15 in `SLASH_COMMAND_REGISTRY`; six of the remaining seven are handled in
+  `chat-session.ts` and `/clear` never leaves the webview.
+
+- **The agent-loop rows described iteration 0 as non-streaming** ("iter 1+
+  streamed"). All iterations stream; iteration 0 is only a fallback guard.
+
+- **`architecture.md` contradicted itself**: the Tool Use section header said
+  `tool_use` visualization was "still absent" while the subsection below it
+  documented the implemented pipeline in detail. Also refreshed the line counts
+  in the key-files table (`chat-session.ts` 557 → 704, and four others), added
+  the missing `src/shared/` folder to the directory map, and fixed a dead
+  cross-doc anchor.
+
+- **`slash-commands.md`** showed `/status` and `/version` returning proxy v1.1.0;
+  the package is at 1.4.0, and the doc now names `proxy/package.json` as where
+  that number comes from.
+
+
+### Fixed — View mutual exclusivity never actually happened
+
+- **`ChatSession.detachView()`** now invokes `activeViewDisposeFn` instead of
+  discarding it. The field was assigned in `attachView()` and nulled in
+  `detachView()` without ever being called, so the "close previous view"
+  behaviour promised by both docstrings did not exist: opening the panel while
+  the sidebar was attached left the old view on screen with a dead bridge
+  behind it. The handle is cleared before being invoked — disposing a
+  `WebviewPanel` fires its own `onDidDispose`, which re-enters `detachView()`.
+
+- **`SidebarProvider`** passed `() => webviewView.dispose()`, but
+  `vscode.WebviewView` has no `dispose()` — a view in the Activity Bar cannot
+  be closed programmatically. This was the repository's only `tsc --noEmit`
+  error. It now passes a documented no-op.
+
+---
+
 ## [1.5.0] — 2026-04-12
 
 ### Changed — Python execution moved to proxy

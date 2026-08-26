@@ -22,10 +22,11 @@ import { t } from "../../domain/i18n";
 import type { LlmClientPort, SseWriterPort, LoggerPort } from "../../domain/ports";
 import type { AnthropicRequest, LoadedModelInfo, ApprovalResult } from "../../domain/types";
 import { ThinkingType } from "../../domain/types";
-import type { ActionArgs } from "../../domain/entities/workspaceAction";
+import type { ActionArgs, ActionEnv } from "../../domain/entities/workspaceAction";
 import { ApprovalGateService } from "../services/approvalGateService";
 import { SystemPromptBuilder } from "../services/systemPromptBuilder";
 import { NativeAgentLoopService } from "../services/nativeAgentLoopService";
+import type { ContextCompactor } from "../services/contextCompactor";
 import { RequestTranslator } from "../requestTranslator";
 import { ResponseTranslator } from "../responseTranslator";
 import { StreamTranslator } from "../streamTranslator";
@@ -36,110 +37,9 @@ import {
 } from "../textualAgentLoop";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Context compaction (moved from server.ts)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Rough token estimate: 4 chars ≈ 1 token (conservative). */
-function estimateTokens(value: unknown): number {
-  return Math.ceil(JSON.stringify(value).length / 4);
-}
-
-const COMPACT_THRESHOLD = 0.80; // trigger at 80% of context window
-const COMPACT_TARGET    = 0.65; // trim down to 65% of context window
-
-/**
- * Naive fallback: drop old messages in-place until the estimated token count
- * is below `budgetTokens * COMPACT_TARGET`. Keeps the first user message and
- * the last 2 messages intact. Returns the number of messages dropped.
- */
-function naiveCompact(messages: any[], budgetTokens: number): number {
-  const target = Math.floor(budgetTokens * COMPACT_TARGET);
-  let dropped = 0;
-  while (messages.length > 2 && estimateTokens(messages) > target) {
-    messages.splice(1, 1);
-    dropped++;
-  }
-  if (dropped > 0) {
-    messages.splice(1, 0, {
-      role: "user",
-      content: `[${dropped} earlier message(s) were removed to fit the context window.]`,
-    });
-  }
-  return dropped;
-}
-
-/**
- * Attempt to summarize old messages via an LLM call and replace them with a
- * single summary message. Returns the number of messages replaced, or 0 on
- * failure (caller should fall back to naive compaction).
- *
- * The summarization call is wrapped in a timeout promise so a slow or
- * unresponsive LLM does not block the main request indefinitely.
- */
-async function semanticCompact(
-  messages: any[],
-  budgetTokens: number,
-  llm: LlmClientPort,
-  maxTokens: number,
-  timeoutMs: number,
-  logger: LoggerPort,
-): Promise<number> {
-  const target = Math.floor(budgetTokens * COMPACT_TARGET);
-  if (estimateTokens(messages) <= target) return 0;
-
-  // Summarize everything except: index 0 (first user msg) and the last 2 msgs
-  // (most recent context). Need at least 4 messages to be worth summarizing.
-  if (messages.length < 4) return 0;
-  const toSummarize = messages.slice(1, messages.length - 2);
-  if (toSummarize.length === 0) return 0;
-
-  const historyJson = JSON.stringify(toSummarize, null, 2);
-  const prompt = [
-    "Summarize this conversation history concisely.",
-    "Preserve: all file names, decisions made, code written, errors encountered, and current task context.",
-    "Output only the summary, no preamble.\n",
-    "<history>",
-    historyJson,
-    "</history>",
-  ].join("\n");
-
-  try {
-    const callPromise = llm.chat({
-      body: {
-        model: "default",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: maxTokens,
-        stream: false,
-      },
-      stream: false,
-    });
-    const timeoutPromise = new Promise<null>((resolve) =>
-      setTimeout(() => resolve(null), timeoutMs),
-    );
-
-    const resp = await Promise.race([callPromise, timeoutPromise]);
-    if (!resp || !resp.ok || !resp.json) {
-      logger.dbg("[compact] semantic summary failed or timed out — falling back to naive");
-      return 0;
-    }
-
-    const summary: string =
-      resp.json.choices?.[0]?.message?.content?.trim() ?? "";
-    if (!summary) return 0;
-
-    // Replace summarized messages with a single placeholder
-    messages.splice(1, toSummarize.length, {
-      role: "user",
-      content: `[Conversation summary — ${toSummarize.length} message(s) condensed]:\n${summary}`,
-    });
-
-    logger.info(`[compact] summarized ${toSummarize.length} message(s) via LLM`);
-    return toSummarize.length;
-  } catch (err) {
-    logger.dbg(`[compact] semantic summary error: ${String(err)} — falling back to naive`);
-    return 0;
-  }
-}
+// Context compaction lives in services/contextCompactor.ts — both this use
+// case and the agent loops need it, and only the loops can catch an overflow
+// that happens mid-turn.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public API
@@ -192,11 +92,11 @@ export class HandleChatMessageUseCase {
     private readonly logger: LoggerPort,
     private readonly modelInfoProvider: () => LoadedModelInfo | null,
     private readonly maxToolsProvider: () => number,
+    /** Same resolved ceiling Path A uses — see NativeAgentLoopService. */
+    private readonly maxIterationsResolver: () => number,
     private readonly targetUrl: string,
-    private readonly semanticCompactEnabled: boolean = true,
-    private readonly summaryMaxTokens: number = 512,
-    private readonly summaryTimeout: number = 15_000,
-    private readonly venvDir: string = ".claudio/python-venv",
+    private readonly compactor: ContextCompactor,
+    private readonly actionEnv: ActionEnv = {},
   ) {}
 
   async execute(
@@ -225,6 +125,32 @@ export class HandleChatMessageUseCase {
       if (last) last.content = intercept.newContent;
     }
 
+    // ── 1b. Tool-calling capability guard ─────────────────────────────────
+    // `maxTools === 0` means the probe found the model cannot emit structured
+    // tool calls at all. Two different consumers read that 0 very differently:
+    //   - routing below treats it as "use the textual Path B loop", which only
+    //     works when `workspaceCwd` is set (i.e. the client is Claudio);
+    //   - `ToolManager.selectTools()` treats `maxTools <= 0` as "filtering
+    //     disabled" and passes every tool through untouched.
+    // Without this guard a tool-carrying client that sends no X-Workspace-Root
+    // (Claude Code CLI) would have all ~40 of its tools forwarded verbatim to a
+    // model that failed a single-tool probe — producing garbage rather than an
+    // error. Fail loudly instead.
+    const requestedTools = Array.isArray(body.tools) ? body.tools.length : 0;
+    if (maxTools === 0 && !workspaceCwd && requestedTools > 0) {
+      const message = t("tools.unsupportedByModel", {
+        model: modelInfo?.id ?? body.model ?? "unknown",
+        count: requestedTools,
+      });
+      this.logger.error(message);
+      return {
+        type:         "json",
+        status:       400,
+        body:         { type: "error", error: { type: "invalid_request_error", message } },
+        llmReachable: null,
+      };
+    }
+
     // ── 2. System prompt injection ────────────────────────────────────────
     // Injects workspace context + agent instructions. When agentMode=plan,
     // appends an additional block that instructs the model to write its plan
@@ -248,28 +174,7 @@ export class HandleChatMessageUseCase {
     }
 
     // ── 3. Context compaction ──────────────────────────────────────────────
-    const contextBudget = modelInfo?.loadedContextLength ?? 0;
-    if (contextBudget > 0) {
-      const trigger = Math.floor(contextBudget * COMPACT_THRESHOLD);
-      if (estimateTokens(body.messages) > trigger) {
-        let compacted = 0;
-        if (this.semanticCompactEnabled) {
-          compacted = await semanticCompact(
-            body.messages, contextBudget,
-            this.llm, this.summaryMaxTokens, this.summaryTimeout, this.logger,
-          );
-        }
-        if (compacted === 0) {
-          // Semantic compaction was disabled, skipped, or failed — use naive fallback
-          const dropped = naiveCompact(body.messages, contextBudget);
-          if (dropped > 0) {
-            this.logger.info(
-              `[compact] dropped ${dropped} message(s) to fit context window (${contextBudget} tokens)`,
-            );
-          }
-        }
-      }
-    }
+    await this.compactor.compact(body.messages, modelInfo?.loadedContextLength ?? 0);
 
     // ── 4. Request translation (Anthropic → OpenAI) ────────────────────────
     const { request: openaiReq, toolSelection } = this.requestTranslator.translate(body);
@@ -306,8 +211,14 @@ export class HandleChatMessageUseCase {
           this.llm,
           modelInfo?.id ?? openaiReq.model ?? "unknown",
           this.logger,
-          this.makeTextualApprovalGate(workspaceCwd),
-          this.venvDir,
+          {
+            approvalGate:   this.makeTextualApprovalGate(workspaceCwd),
+            actionEnv:      this.actionEnv,
+            compactor:      this.compactor,
+            contextBudget:  modelInfo?.loadedContextLength ?? 0,
+            maxIterations:  this.maxIterationsResolver(),
+            visionCapable:  modelInfo?.type === "vlm",
+          },
         );
         return { type: "handled", llmReachable: null };
       }

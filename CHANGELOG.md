@@ -1,9 +1,24 @@
 # Changelog
 
-All notable changes to the proxy and Claudio extension are documented here.
+## Where the real changelogs live
+
+Per-component detail is maintained in the component that changed:
+
+| Component | Version | Changelog |
+|---|---|---|
+| Anthropic→OpenAI proxy | 1.4.0 | [proxy/CHANGELOG.md](proxy/CHANGELOG.md) |
+| Claudio VS Code extension | 1.5.0 | [chat-extension/CHANGELOG.md](chat-extension/CHANGELOG.md) |
+
+This root file stopped being updated after 1.2.0 while both components kept
+shipping, so it has been demoted to an index plus the historical entries below.
+**Add new entries to the component changelogs, not here** — keep this table's
+versions in step with the two `package.json` files and nothing else.
+
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
+
+## Historical entries (root file, up to 1.2.0)
 
 ## [1.2.0] — 2026-04-11
 

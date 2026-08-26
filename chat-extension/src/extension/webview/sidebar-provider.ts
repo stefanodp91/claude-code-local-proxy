@@ -29,7 +29,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     this.session.attachView(
       webviewView.webview,
-      () => webviewView.dispose(),
+      // A WebviewView has no dispose() — unlike a WebviewPanel, a view in the
+      // Activity Bar cannot be closed programmatically. There is nothing to
+      // tear down from our side, so the handle is a no-op here.
+      () => {},
       getWebviewContent(webviewView.webview, this.extensionUri),
     );
 

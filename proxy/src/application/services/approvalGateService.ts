@@ -20,7 +20,7 @@
  * @module application/services/approvalGateService
  */
 
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import {
   AgentMode,
   ApprovalResult,
@@ -114,7 +114,7 @@ export class ApprovalGateService {
       workspaceCwd
     ) {
       const full = resolve(workspaceCwd, args.path);
-      if (full.startsWith(workspaceCwd) && this.trustedFiles.has(full)) {
+      if (this.isInsideWorkspace(full, workspaceCwd) && this.trustedFiles.has(full)) {
         this.logger.dbg(`[approval] trusted-file auto-approved ${action}: ${args.path}`);
         return { approved: true, scope: ApprovalScope.Once };
       }
@@ -139,12 +139,30 @@ export class ApprovalGateService {
       workspaceCwd
     ) {
       const full = resolve(workspaceCwd, args.path);
-      if (full.startsWith(workspaceCwd)) {
+      if (this.isInsideWorkspace(full, workspaceCwd)) {
         this.trustedFiles.add(full);
         this.logger.info(`[approval] scope=file added to trustedFiles: ${args.path}`);
       }
     }
 
     return result;
+  }
+
+  /**
+   * True when `fullPath` lies inside `workspaceCwd`.
+   *
+   * `fullPath.startsWith(workspaceCwd)` is not a containment test: with a
+   * workspace at `/ws` it also accepts the sibling `/ws-evil/secrets.txt`,
+   * because the comparison ignores the directory boundary. That mattered for
+   * the `scope: "file"` grant below — an approval for a path outside the
+   * workspace could be recorded as trusted for the rest of the session.
+   *
+   * The write itself was never actually escaping: `safeResolvePath()` in
+   * `workspaceActions.ts` rejects it independently. This keeps the gate's own
+   * bookkeeping honest rather than relying on the layer underneath to catch it.
+   */
+  private isInsideWorkspace(fullPath: string, workspaceCwd: string): boolean {
+    const rel = relative(resolve(workspaceCwd), fullPath);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
   }
 }

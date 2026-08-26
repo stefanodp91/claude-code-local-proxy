@@ -128,6 +128,7 @@ class StreamStateMachine {
   private started = false;
   private contentIndex = 0;
   private thinkingBlockOpen = false;
+  private thinkingIndex = 0;
   private textBlockOpen = false;
   private toolCallsStarted = false;
   private readonly toolCalls = new Map<number, StreamToolCall>();
@@ -137,6 +138,7 @@ class StreamStateMachine {
   private buffer = "";
   private pendingUsage: { completion_tokens?: number; prompt_tokens?: number } = {};
   private pendingStopReason: StopReason | null = null;
+  private pendingWhitespace = "";
 
   constructor(
     private readonly model: string,
@@ -335,17 +337,23 @@ class StreamStateMachine {
     let out = "";
 
     if (!this.thinkingBlockOpen) {
+      // Reasoning almost always arrives first, in which case this opens block 0
+      // exactly as before. It is not guaranteed to, though: a backend that emits
+      // a line of text and then starts reasoning used to get a thinking block
+      // opened on top of the live text block, and every text delta after it
+      // landed on an index that was never started — malformed for the SDK.
+      out += this.closeTextBlock();
       this.thinkingBlockOpen = true;
-      this.contentIndex = 0;
-      out += this.emitContentBlockStart(0, {
+      this.thinkingIndex = this.contentIndex;
+      this.contentIndex++;
+      out += this.emitContentBlockStart(this.thinkingIndex, {
         type: ContentBlockType.Thinking,
         thinking: "",
         signature: "",
       });
-      this.contentIndex = 1; // next block starts at 1
     }
 
-    out += this.emitContentBlockDelta(0, {
+    out += this.emitContentBlockDelta(this.thinkingIndex, {
       type: DeltaType.ThinkingDelta,
       thinking: reasoningContent,
     });
@@ -368,6 +376,18 @@ class StreamStateMachine {
 
     if (!text) return "";
 
+    // Whitespace arriving before any text block is held rather than emitted.
+    // The check above only catches padding once a tool call is known about, and
+    // the usual shape is the reverse: the model emits "\n\n" and *then* calls a
+    // tool, so by the time we could tell it was padding the text block is
+    // already open and the client is already rendering an empty bubble.
+    // Held whitespace is flushed ahead of the next real text and dropped if a
+    // tool call arrives instead.
+    if (isWhitespaceOnly && !this.textBlockOpen) {
+      this.pendingWhitespace += text;
+      return "";
+    }
+
     let out = "";
 
     // Close thinking block if still open (text follows thinking)
@@ -383,10 +403,17 @@ class StreamStateMachine {
 
     out += this.emitContentBlockDelta(this.contentIndex, {
       type: DeltaType.TextDelta,
-      text,
+      text: this.flushPendingWhitespace() + text,
     });
 
     return out;
+  }
+
+  /** Take whatever whitespace was held back, clearing it. */
+  private flushPendingWhitespace(): string {
+    const held = this.pendingWhitespace;
+    this.pendingWhitespace = "";
+    return held;
   }
 
   /**
@@ -397,6 +424,7 @@ class StreamStateMachine {
    */
   private handleToolCalls(deltaCalls: any[]): string {
     this.toolCallsStarted = true;
+    this.pendingWhitespace = ""; // it was padding around the call, not content
     let out = "";
 
     // Close text/thinking blocks before tool calls
@@ -416,7 +444,14 @@ class StreamStateMachine {
         this.toolCalls.set(idx, {
           id: tc.id,
           name: tc.function?.name ?? "",
-          arguments: tc.function?.arguments ?? "",
+          // Deliberately empty: the accumulation below appends the arguments of
+          // every delta, including this first one. Seeding it here as well made
+          // the opening fragment appear twice, which only mattered for UseTool —
+          // normal tools stream `tc.function.arguments` straight through and
+          // never read this field — but there it corrupted the JSON that
+          // rewriteUseToolCall() has to parse, so the overflow path fell back to
+          // emitting an unusable `UseTool` block with no error anywhere.
+          arguments: "",
           blockIndex: blockIdx,
           started: false,
           pendingRewrite: isUseTool,
@@ -617,11 +652,11 @@ class StreamStateMachine {
 
   // ── Block Lifecycle Helpers ────────────────────────────────────────────
 
-  /** Close an open thinking block (thinking is always at index 0). */
+  /** Close an open thinking block, whichever index it was opened at. */
   private closeThinkingBlock(): string {
     if (!this.thinkingBlockOpen) return "";
     this.thinkingBlockOpen = false;
-    return this.emitContentBlockStop(0);
+    return this.emitContentBlockStop(this.thinkingIndex);
   }
 
   /** Close an open text block and advance the content index. */

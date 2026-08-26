@@ -31,7 +31,7 @@ This repository contains the leaked source code in `claude_code/src/`.
 
 ---
 
-## Anthropic-to-OpenAI Proxy (v1.1.0)
+## Anthropic-to-OpenAI Proxy (v1.4.0)
 
 This repository includes a **Node.js translation proxy** (`proxy/`) that lets Claude Code work with any local LLM through an OpenAI-compatible API. The proxy sits between Claude Code and the LLM backend, translating Anthropic Messages API requests into OpenAI Chat Completions format and back.
 
@@ -76,13 +76,16 @@ sh start_agent_cli.sh
 - **Auto-promotion** — Tools used via UseTool are promoted into the active set for future requests
 - **Tool limit auto-detection** — Binary search probe determines the model's max tool count at startup
 - **Persistent model cache** — `maxTools` per model stored in `proxy/model-cache.json`; probe is skipped on subsequent restarts with the same model
-- **Split initialization** — HTTP server responds immediately (health check passes); tool probe runs in the background
+- **Probe-before-listen startup** — `main.ts` awaits model info and the tool/thinking probes, then starts listening. `/health` stays unreachable until probing finishes, so a cold model can delay first connection by a minute or more; load the model in LM Studio first to avoid it
 - **Slash command interceptor** — `/commit`, `/diff`, `/review`, `/status`, `/version`, `/compact`, `/brief`, `/plan` are handled by the proxy before the LLM is called
-- **Workspace tool + agentic loop** — Models can explore the filesystem (list/read) via up to 10 agentic rounds to gather context before responding
+- **Workspace tool + agentic loop** — Models act on the workspace (`list`/`read`/`grep`/`glob`/`write`/`edit`/`bash`/`python`) across an adaptive number of rounds derived from the model's context window (10/20/30/40, capped by `MAX_AGENT_ITERATIONS`). Destructive actions pass through an approval gate
 - **Model info** — Fetches architecture, context window, and capabilities from LM Studio's internal API
 - **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
+- **Unsupported-tools guard** — A CLI request carrying tools to a model that failed the probe is refused with a readable HTTP 400, instead of firing 40 tool definitions at a model that could not handle one
 - **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
+- **Cross-session memory** — `.claudio/MEMORY.md` (set by `MEMORY_FILE`) is prepended to the system prompt when present, so a decision made last week survives a restart. The model updates it through the ordinary `write` action, so updates pass the approval gate like any other
 - **i18n** — Externalized log/error messages with `{{param}}` interpolation
+- **Zero runtime dependencies** — `dependencies` is `{}`; only Node built-ins at runtime
 
 ### Documentation
 
@@ -91,13 +94,17 @@ Full proxy documentation in [`proxy/docs/`](proxy/docs/):
 - [Quick Setup](proxy/docs/quick-setup.md) — minimum configuration to get up and running (includes prerequisites)
 - [Architecture](proxy/docs/architecture.md) — hexagonal structure, request flow, SSE state machine, slash commands, workspace tool
 - [Configuration](proxy/docs/configuration.md) — complete reference for all environment variables
+- [Agent Loop](proxy/docs/agent-loop.md) — Path A (native tool calls) and Path B (textual tags)
+- [Permission Protocol](proxy/docs/permission-protocol.md) — approval gate and the `tool_request_pending` SSE handshake
+- [System Prompt Injection](proxy/docs/system-prompt-injection.md) — what the proxy prepends, and when
 - [Tool Management](proxy/docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe, persistent cache
+- [Testing](proxy/docs/testing.md) — automated suites, how to run them, what is not covered yet
 - [Startup Scripts](proxy/docs/startup-scripts.md) — start_agent_cli.sh internals
 - [Proxy Lifecycle](proxy/docs/lifecycle.md) — multi-instance architecture and port discovery
 
 ---
 
-## Claudio — VS Code Chat Extension (v0.1.0)
+## Claudio — VS Code Chat Extension (v1.5.0)
 
 **Claudio** is a VS Code extension that provides a chat UI for interacting with the proxy directly from the editor — no terminal required.
 
@@ -136,7 +143,7 @@ npm install
 cd src/webview-ui && npm install && cd ../..
 npm run build
 npm run package
-code --install-extension claudio-0.1.0.vsix
+code --install-extension claudio-1.5.0.vsix
 ```
 
 Reload VS Code → the Claudio icon appears in the Activity Bar.
@@ -164,7 +171,66 @@ All other settings (temperature, system prompt, model info, locale) are read aut
 
 ---
 
-## Directory Structure
+## Development
+
+### Repository layout
+
+```
+./
+├── claude_code/src/     Leaked Claude Code CLI source — reference archive, never imported
+├── proxy/               Anthropic→OpenAI translation proxy — the working code
+├── chat-extension/      Claudio, the VS Code extension
+├── start_agent_cli.sh   Launcher: free port → proxy → health check → model picker → claude
+├── PLAN.md              Project state, what was measured, and the path forward
+└── .github/workflows/   CI
+```
+
+`claude_code/` is an archive. Nothing in `proxy/` or `chat-extension/` imports
+from it, and it is never modified.
+
+### Tests and CI
+
+```bash
+cd proxy && npm test        # 283 tests, ~400 ms, no GPU and no model required
+cd proxy && npm run typecheck
+cd chat-extension && npm run typecheck
+```
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs exactly these — the
+proxy typechecks and tests, the extension host typechecks — but **on request
+only**, not on every commit:
+
+```bash
+gh workflow run ci.yml --ref <branch>
+```
+
+Everything in CI runs without a GPU, without LM Studio and without a model
+loaded — which is the reason
+[`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), a curl snapshot
+that needs a live backend, can complement the suite but never replace it. With
+the pipeline off the automatic path, the commands above are the gate, and they
+run on your machine.
+
+The Angular webview under `chat-extension/src/webview-ui` is deliberately left
+out of CI until there is something to check there beyond compilation.
+
+See [proxy/docs/testing.md](proxy/docs/testing.md) for what the suites cover and
+what is still uncovered.
+
+### Picking this up
+
+[CLAUDE.md](CLAUDE.md) is the orientation document for anyone — human or agent —
+arriving cold: what the repo contains, the commands that verify it, the
+invariants that must not break quietly, and the working method the test suites
+were built with. Read it before changing anything in `proxy/`.
+
+[PLAN.md](PLAN.md) is the honest account: the two surfaces and how they differ,
+what was measured on the current model rather than assumed, what is done, and
+what comes next in priority order. It is written in Italian.
+
+---
+
+## Leaked Source Layout (`claude_code/src/`)
 
 ```
 claude_code/src/

@@ -1,0 +1,175 @@
+/**
+ * systemPromptBuilder.test.ts — what every workspace request is prefixed with.
+ *
+ * The single injection point for everything the model is told before it sees the
+ * user's message: the working directory, plan mode's constraints, the textual
+ * tool manual on Path B, and now cross-session memory. Nothing downstream can
+ * tell whether a section was injected or silently skipped — the model simply
+ * behaves as if it never knew.
+ *
+ * @module test/systemPromptBuilder
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { SystemPromptBuilder } from "../src/application/services/systemPromptBuilder";
+import { AgentMode } from "../src/domain/types";
+import { PromptKey } from "../src/domain/ports";
+import type {
+  MemoryRepositoryPort, PlanFileRepositoryPort, PromptRepositoryPort,
+} from "../src/domain/ports";
+import type { ExistingPlan } from "../src/domain/entities/existingPlan";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Harness
+// ─────────────────────────────────────────────────────────────────────────────
+
+const WS = "/tmp/some/project";
+
+/** Templates that echo their parameters, so a test can see what was passed. */
+function prompts(): PromptRepositoryPort {
+  return {
+    preload: async () => {},
+    get: (key: PromptKey, params: Record<string, string> = {}) =>
+      `[${key}]` + Object.entries(params).map(([k, v]) => `\n${k}=${v}`).join(""),
+  } as unknown as PromptRepositoryPort;
+}
+
+function planFiles(mostRecent: ExistingPlan | null = null): PlanFileRepositoryPort {
+  return {
+    plansDirRelative: ".claudio/plans",
+    isPlanPath: (p) => p.startsWith(".claudio/plans/"),
+    buildRelPath: (f) => `.claudio/plans/${f}`,
+    loadMostRecent: () => mostRecent,
+  };
+}
+
+function memory(content: string | null): MemoryRepositoryPort {
+  return { relativePath: ".claudio/MEMORY.md", load: () => content };
+}
+
+const builder = (mem: MemoryRepositoryPort = memory(null), plans = planFiles()) =>
+  new SystemPromptBuilder(prompts(), plans, mem);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The basics
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("the working directory reaches the template", () => {
+  const out = builder().build(WS, AgentMode.Ask, false);
+
+  assert.match(out, /\[agent-base\]/);
+  assert.match(out, /cwd=\/tmp\/some\/project/);
+  assert.match(out, /cwdBase=project/);
+});
+
+test("plan mode uses a different template entirely", () => {
+  const out = builder().build(WS, AgentMode.Plan, false);
+  assert.match(out, /\[plan-mode\]/);
+  assert.equal(out.includes("[agent-base]"), false);
+});
+
+test("auto mode is prompted like ask mode", () => {
+  // Auto changes what the approval gate does, not what the model is told.
+  assert.match(builder().build(WS, AgentMode.Auto, false), /\[agent-base\]/);
+});
+
+test("the textual tool manual is appended only on Path B", () => {
+  assert.equal(builder().build(WS, AgentMode.Ask, false).includes("<action"), false);
+  assert.match(builder().build(WS, AgentMode.Ask, true), /<action name="read"/);
+});
+
+test("an existing plan is offered back in plan mode", () => {
+  const plans = planFiles({
+    relPath: ".claudio/plans/p.md", absPath: "/tmp/some/project/.claudio/plans/p.md",
+    mtimeRelative: "2 hours ago", content: "# The plan",
+  });
+  const out = builder(memory(null), plans).build(WS, AgentMode.Plan, false);
+
+  assert.match(out, /# The plan/);
+  assert.match(out, /2 hours ago/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-session memory
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("memory is injected when the file has something in it", () => {
+  const out = builder(memory("The user prefers tabs. The build script is flaky.")).build(WS, AgentMode.Ask, false);
+
+  assert.match(out, /The user prefers tabs/);
+  assert.match(out, /flaky/);
+});
+
+test("no memory file means no memory section at all", () => {
+  // Not an empty heading, not "(no memories yet)" — nothing. Every token spent
+  // on an empty section is a token taken from the conversation, on a model
+  // whose window is the scarce resource in this whole project.
+  const out = builder(memory(null)).build(WS, AgentMode.Ask, false);
+
+  assert.equal(out.includes("memory-section"), false);
+  assert.equal(out.includes("memorySection="), true, "the placeholder still resolves, to nothing");
+  assert.match(out, /memorySection=\s*(\n|$)/);
+});
+
+test("the model is told where the memory lives, so it can update it", () => {
+  // There is no new action for this: the model writes the file through the
+  // ordinary `write`, which means it passes the approval gate like any other
+  // write. Telling it the path is the whole mechanism.
+  const out = builder(memory("something remembered")).build(WS, AgentMode.Ask, false);
+
+  assert.match(out, /\.claudio\/MEMORY\.md/);
+});
+
+test("memory reaches plan mode too", () => {
+  // Planning is exactly when knowing what was decided last week matters most.
+  const out = builder(memory("We chose Postgres over SQLite in March.")).build(WS, AgentMode.Plan, false);
+
+  assert.match(out, /Postgres/);
+});
+
+test("memory is injected on both paths", () => {
+  const withMemory = builder(memory("remembered"));
+
+  assert.match(withMemory.build(WS, AgentMode.Ask, false), /remembered/);
+  assert.match(withMemory.build(WS, AgentMode.Ask, true), /remembered/);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The templates on disk, not the fakes above
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("every parameter the builder passes has a placeholder in the real template", async () => {
+  // The tests above use a prompt repository that echoes its parameters, which
+  // proves the builder computes them and proves nothing about whether the
+  // shipped templates use them. A parameter with no `{{placeholder}}` is simply
+  // dropped: no error, no warning, and a feature that quietly never happens.
+  // That is how this would have shipped — the memory section was wired end to
+  // end and absent from agent-base.md.
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const seen: Record<string, string[]> = {};
+  const recording: PromptRepositoryPort = {
+    preload: async () => {},
+    get: (key: PromptKey, params: Record<string, string> = {}) => {
+      seen[key] = Object.keys(params);
+      return "";
+    },
+  } as unknown as PromptRepositoryPort;
+
+  const b = new SystemPromptBuilder(recording, planFiles(), memory("x"));
+  b.build(WS, AgentMode.Ask, false);
+  b.build(WS, AgentMode.Plan, false);
+
+  for (const [key, params] of Object.entries(seen)) {
+    const template = readFileSync(join("prompts", "en_US", `${key}.md`), "utf-8");
+    for (const name of params) {
+      assert.equal(
+        template.includes(`{{${name}}}`),
+        true,
+        `prompts/en_US/${key}.md never uses {{${name}}}, so the builder computes it for nothing`,
+      );
+    }
+  }
+});

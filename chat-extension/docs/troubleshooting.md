@@ -170,7 +170,7 @@ MAX_TOOLS=7
 cd chat-extension
 npm run build
 npm run package
-code --install-extension claudio-0.1.0.vsix
+code --install-extension claudio-1.5.0.vsix
 ```
 
 ---
@@ -186,7 +186,7 @@ code --install-extension claudio-0.1.0.vsix
 cd chat-extension
 npm run build   # recompile everything
 npm run package
-code --install-extension claudio-0.1.0.vsix
+code --install-extension claudio-1.5.0.vsix
 # Reload VS Code
 ```
 
@@ -205,7 +205,7 @@ code --install-extension claudio-0.1.0.vsix
 cd chat-extension
 npm run build   # compiles both webview and extension host
 npm run package
-code --install-extension claudio-0.1.0.vsix
+code --install-extension claudio-1.5.0.vsix
 ```
 
 **Cause 2:** Content Security Policy blocking.
