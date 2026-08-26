@@ -164,7 +164,7 @@ test("plan mode denies bash even though it carries no path", async () => {
 
   const r = await ask(WorkspaceAction.Bash, {
     action: WorkspaceAction.Bash,
-    command: "rm -rf .",
+    cmd: "rm -rf .",
   } as ActionArgs);
 
   assert.equal(r.approved, false);
@@ -194,7 +194,7 @@ test("auto mode approves without consulting the user", async () => {
 
   const r = await ask(WorkspaceAction.Bash, {
     action: WorkspaceAction.Bash,
-    command: "npm test",
+    cmd: "npm test",
   } as ActionArgs);
 
   assert.equal(r.approved, true);
@@ -208,13 +208,13 @@ test("auto mode approves without consulting the user", async () => {
 test("ask mode returns the user's verdict, both ways", async () => {
   h.answerWith(allow());
   assert.equal(
-    (await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, command: "ls" } as ActionArgs)).approved,
+    (await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, cmd: "ls" } as ActionArgs)).approved,
     true,
   );
 
   h.answerWith(deny());
   assert.equal(
-    (await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, command: "ls" } as ActionArgs)).approved,
+    (await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, cmd: "ls" } as ActionArgs)).approved,
     false,
   );
 
@@ -296,10 +296,10 @@ test("scope=once is not remembered", async () => {
 test("scope=file on a pathless action grants nothing", async () => {
   // bash carries a command, not a path — there is nothing to trust.
   h.answerWith(allow(ApprovalScope.File));
-  await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, command: "ls" } as ActionArgs);
+  await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, cmd: "ls" } as ActionArgs);
 
   h.answerWith(deny());
-  const r = await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, command: "ls" } as ActionArgs);
+  const r = await ask(WorkspaceAction.Bash, { action: WorkspaceAction.Bash, cmd: "ls" } as ActionArgs);
 
   assert.equal(r.approved, false);
   assert.equal(h.prompts.length, 2);

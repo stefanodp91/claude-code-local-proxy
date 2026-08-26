@@ -7,6 +7,64 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Fixed — An allowlist rule could approve far more than it said
+
+- **A constraint that does not apply to the action was treated as satisfied.**
+  The guards in `checkAutoApprove()` read
+  `rule.pathPattern && args.path && !test(args.path)`, so when the argument was
+  absent the whole condition short-circuited and the rule matched. A
+  `pathPattern` written against `bash` — which carries a command and never a
+  path — therefore approved **every** shell command without asking:
+
+  ```json
+  { "action": "bash", "pathPattern": "^scripts/" }
+  ```
+
+  That is an easy rule to write, it is the exact opposite of what it says, and it
+  produces no error, no log line and no visible difference until something
+  destructive runs unprompted — in the one file whose entire job is to be
+  restrictive.
+
+- **A pattern that does not compile took the turn down.** `new RegExp()` sat
+  outside the `try` that covers the read and the JSON parse, so a typo threw
+  through `ApprovalGateService` and out of the request, despite the function
+  documenting that it fails quietly on a bad config.
+
+  Both now go through one helper that returns false when the value is absent and
+  false when the pattern will not compile. A rule stating no pattern at all still
+  matches everything for its action — that is an explicit blanket and is
+  deliberate.
+
+  **Behaviour change:** this only ever moves toward asking more, but a config
+  that was silently broader than written will start prompting.
+
+- **`loadOldContent()` used `startsWith` for workspace containment**, the same
+  weakness fixed in `ApprovalGateService` earlier in this release. Here it
+  decided whether a file may be read into the approval modal as the "before"
+  side of a diff, so a sibling directory sharing the workspace's prefix
+  (`/ws-evil` against `/ws`) could be read. Now uses `relative()`.
+
+### Added — Allowlist test suite (22 tests), completing the Phase 1 list
+
+- **`test/autoApproveConfig.test.ts`** — rule matching and its scope, patterns
+  that fail closed, unusable regexes, first-match-wins, the deliberate blanket
+  rule, and `loadOldContent`'s containment and truncation. Uses a real temporary
+  directory: the function's whole purpose is reading a file from a known
+  location, and stubbing that away would leave the part worth testing untested.
+
+- Negative control: treating an unevaluable constraint as satisfied fails
+  exactly 2 tests, letting an unusable regex propagate fails exactly 2, and
+  restoring the `startsWith` containment fails exactly 1.
+
+- `test/approvalGate.test.ts` now uses `cmd` rather than `command` for bash
+  arguments. `ActionArgs` has an index signature, so the wrong key type-checked
+  cleanly while describing a shape the model never sends.
+
+- `npm test` is now 142 tests in ~200 ms. Every component on the Phase 1
+  priority list is covered; the two agent loops and `workspaceActions` remain,
+  and are the surface `scripts/regression.sh` still catches best.
+
+
 ### Added — ToolManager test suite (23 tests)
 
 - **`test/toolManager.test.ts`** — what decides which ~6 of Claude Code's ~40

@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 120 tests, ~170 ms
+npm test          # 142 tests, ~200 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -53,6 +53,7 @@ proxy/test/
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
   streamTranslator.test.ts     23 tests — the SSE state machine
   toolManager.test.ts          23 tests — selection, overflow, promotion decay
+  autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -192,6 +193,23 @@ would have proved nothing about the configuration anyone actually runs.
 
 This one found no bugs in the code. It found four in itself: see below.
 
+### `autoApproveConfig.test.ts`
+
+`.claudio/auto-approve.json` is the one file whose entire job is to say *less*
+than "ask me every time", and `checkAutoApprove()` is what reads it. Anything
+that makes it answer `true` too readily removes a confirmation the user believes
+is still in place, and nothing downstream notices — the action simply runs. The
+approval gate's own suite replaces this function with a fake, which is exactly
+why it went uncovered while the gate around it did not.
+
+These tests use a real temporary directory rather than a filesystem port. The
+function's whole purpose is reading a file from a known location; stubbing that
+away would leave the part worth testing untested. It costs a few milliseconds
+and no network.
+
+It found three bugs — two under [Fail closed](#fail-closed), one under
+[Workspace containment](#workspace-containment).
+
 ---
 
 ## Three bugs the translator suite found
@@ -246,6 +264,40 @@ call arrives instead.
 
 ---
 
+## Fail closed
+
+Two guards in `checkAutoApprove()` were written as
+`pattern && value && !test(value)`. That reads as "check the constraint if there
+is one" and means "treat a constraint you cannot check as satisfied".
+
+**A constraint that does not apply to the action.** A `pathPattern` written
+against `bash` — which carries a command and never a path — short-circuited to a
+match, so
+
+```json
+{ "action": "bash", "pathPattern": "^scripts/" }
+```
+
+approved *every* shell command without asking. The exact opposite of what it
+says, in the file whose only job is to be restrictive. It is an easy rule to
+write, and it produces no error, no log line and no visible difference until
+something destructive runs unprompted.
+
+**A pattern that does not compile.** `new RegExp()` sat outside the `try` that
+covers the read and the parse, so a typo in a pattern threw straight through the
+approval gate and took the turn down — despite this function documenting that it
+fails quietly on a bad config.
+
+Both now go through one helper that returns `false` when the value is absent and
+`false` when the pattern will not compile. A rule stating *no* pattern still
+matches everything for its action: that is an explicit blanket, and deliberate.
+
+The change only ever moves in the direction of asking more, which is the safe
+direction here — but it is a change, and a config that was silently broader than
+written will start prompting.
+
+---
+
 ## Workspace containment
 
 The gate recorded a `scope: "file"` grant with:
@@ -272,6 +324,10 @@ does not depend on separator juggling:
 const rel = relative(resolve(workspaceCwd), fullPath);
 return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 ```
+
+`loadOldContent()` in `autoApproveConfig.ts` carried the identical check,
+deciding whether a file may be read into the approval modal as the "before" side
+of a diff. Fixed the same way, pinned by the same kind of test.
 
 The regression test pins the sibling-prefix case specifically. Note that it only
 fails when **both** call sites are weak, as they originally were: the fast path
@@ -301,6 +357,9 @@ tests fail — and fail *narrowly*:
 | Reverse tie order in the sort | Every order-dependent test fails | 5 fail |
 | Never age promotions | Both decay tests fail | exactly 2 fail |
 | Make scoring non-additive | Promotion-stacking test fails | exactly 1 fails |
+| Treat an unevaluable constraint as satisfied | Fail-closed tests fail | exactly 2 fail |
+| Let an unusable regex propagate | Bad-pattern tests fail | exactly 2 fail |
+| `startsWith` containment in `loadOldContent` | Sibling-prefix test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
@@ -357,18 +416,17 @@ fails loudly when the count is zero.
 
 ## Not covered yet
 
-In priority order, driven by what has actually broken rather than by what is
-easy to test:
+Everything on the original priority list — i18n, the probe, the approval gate,
+the translators, `ToolManager`, the allowlist — is now covered. What remains, in
+priority order:
 
-1. **`checkAutoApprove()`** — the allowlist predicate itself. The gate's tests
-   fake it, so the `pathPattern` / `cmdPattern` matching in
-   [`autoApproveConfig.ts`](../src/infrastructure/adapters/autoApproveConfig.ts)
-   is still unverified, and it is the one place where a too-generous pattern
-   silently widens what runs without asking.
-
-The agent loops and the workspace actions sit behind these deliberately: they are
-the largest surface but also the one where a live-backend snapshot still catches
-most regressions.
+1. **The two agent loops** — `nativeAgentLoopService` (Path A) and
+   `textualAgentLoop` (Path B). The largest remaining surface, and the one a
+   live-backend snapshot still catches best, which is why it sits here rather
+   than at the top.
+2. **`workspaceActions`** — the filesystem and shell backend. `safeResolvePath()`
+   deserves the same treatment the two containment bugs above got, from the other
+   direction: it is the check that was *right* both times, and nothing pins it.
 
 Two behaviours are known-uncovered on purpose, both recorded in
 [PLAN.md](../../PLAN.md) as decisions rather than gaps: the `tool_choice: "any"`

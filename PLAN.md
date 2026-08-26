@@ -103,14 +103,19 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 
 ---
 
-## 4. Fase 1 — rete di sicurezza  ← **in corso**
+## 4. Fase 1 — rete di sicurezza  ← **chiusa**
 
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 120 test
-eseguiti a ogni push — e cinque dei sei punti sono coperti. Resta il predicato
-dell'allowlist, ed è l'ultimo prima che la fase si chiuda.
+gira senza GPU accesa. Oggi sono **142 test** a ogni push, e tutti e sei i punti
+dell'ordine d'attacco sono coperti. La fase si chiude qui.
+
+Il conto di cosa è costata: **sette bug reali**, nessuno dei quali lanciava
+un'eccezione, scriveva un log o falliva un typecheck. Non è una coincidenza — è
+la forma di guasto di questo progetto, ed è la ragione per cui la fase valeva la
+spesa. Restano scoperti i due loop d'agente e `workspaceActions`: la superficie
+più grande, ma anche l'unica dove `regression.sh` prende ancora qualcosa.
 
 Questa è la fase che sblocca tutto il resto. Senza, ogni modifica successiva è
 una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
@@ -158,12 +163,32 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
    sommano, non perché la promozione basti da sola.
 
    **Nessun bug nel codice.** Ne ha trovati quattro nei test stessi — vedi sotto.
-6. **`checkAutoApprove()`**  ← **prossimo** — il predicato dell'allowlist. I test
-   del gate lo sostituiscono con un fake, quindi il matching `pathPattern` /
-   `cmdPattern` in
-   [`autoApproveConfig.ts`](proxy/src/infrastructure/adapters/autoApproveConfig.ts)
-   resta non verificato: è l'unico punto dove un pattern troppo generoso allarga
-   in silenzio ciò che gira senza chiedere. È l'ultimo punto della fase.
+6. ~~**`checkAutoApprove()`**~~ — **fatto.** [`test/autoApproveConfig.test.ts`](proxy/test/autoApproveConfig.test.ts):
+   22 test sul matching delle regole, sui vincoli che devono fallire *chiusi*,
+   sui pattern non compilabili e sul contenimento della lettura per il diff.
+   **Tre bug** — vedi sotto.
+
+> **I tre bug dell'allowlist.** Due guardie di `checkAutoApprove()` erano scritte
+> come `pattern && value && !test(value)`: si legge "controlla il vincolo se c'è",
+> significa "tratta come soddisfatto un vincolo che non puoi controllare".
+>
+> 1. **Un vincolo che non si applica all'azione.** Un `pathPattern` scritto per
+>    `bash` — che porta un comando e mai un path — cortocircuitava a *match*.
+>    Quindi `{"action":"bash","pathPattern":"^scripts/"}` approvava **ogni**
+>    comando di shell senza chiedere: l'esatto contrario di quello che dice, nel
+>    file il cui unico mestiere è restringere. È una regola facile da scrivere e
+>    non produce nessun errore, nessun log, nessuna differenza visibile finché
+>    qualcosa di distruttivo non parte da solo.
+> 2. **Un pattern che non compila.** `new RegExp()` stava fuori dal `try` che
+>    copre lettura e parsing, quindi un refuso nel pattern attraversava il gate e
+>    faceva cadere il turno — mentre la funzione documenta di fallire in silenzio.
+> 3. **`loadOldContent()` aveva lo stesso `startsWith` del gate**, e lì decide se
+>    un file può essere letto dentro la modale di approvazione.
+>
+> La correzione dei primi due si muove solo nella direzione di chiedere *di più*,
+> che è quella sicura per questo file — ma è un cambio di comportamento: una
+> config che era silenziosamente più larga di com'era scritta ora inizierà a
+> chiedere.
 
 > **Quattro test che non verificavano niente.** `toolManager.test.ts` era scritto
 > con limite 7 su un insieme di esattamente 7 tool. `selectTools` esce subito
@@ -228,7 +253,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 120 test / ~170 ms, senza GPU e senza rete.
+`npm test` in 142 test / ~200 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`

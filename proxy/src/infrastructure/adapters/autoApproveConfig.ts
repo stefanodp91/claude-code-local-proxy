@@ -14,7 +14,7 @@
  * @module infrastructure/adapters/autoApproveConfig
  */
 
-import { resolve, join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { WorkspaceAction, type ActionArgs } from "../../domain/entities/workspaceAction";
 
@@ -44,7 +44,7 @@ export function loadOldContent(
   }
   try {
     const full = resolve(workspaceCwd, args.path);
-    if (!full.startsWith(workspaceCwd) || !existsSync(full)) return null;
+    if (!isInside(workspaceCwd, full) || !existsSync(full)) return null;
     let contents = readFileSync(full, "utf-8");
     if (contents.length > 50_000) contents = contents.slice(0, 50_000) + "\n…[truncated]";
     return contents;
@@ -69,9 +69,48 @@ export function checkAutoApprove(action: string, args: ActionArgs, workspaceCwd:
   }
   for (const rule of cfg.rules ?? []) {
     if (rule.action !== action) continue;
-    if (rule.pathPattern && args.path && !new RegExp(rule.pathPattern).test(args.path)) continue;
-    if (rule.cmdPattern  && args.cmd  && !new RegExp(rule.cmdPattern).test(args.cmd))   continue;
+    if (rule.pathPattern !== undefined && !matches(rule.pathPattern, args.path)) continue;
+    if (rule.cmdPattern  !== undefined && !matches(rule.cmdPattern,  args.cmd))  continue;
     return true;
   }
   return false;
+}
+
+/**
+ * Test one rule pattern against one argument, failing closed on anything that
+ * cannot be decided.
+ *
+ * Both of those cases used to read as "constraint satisfied", because the guards
+ * were written as `pattern && value && !test(value)`:
+ *
+ * - **The argument is absent.** A `pathPattern` written against `bash`, which
+ *   carries a command and never a path, short-circuited to a match — turning
+ *   "only under scripts/" into every shell command approved without asking. The
+ *   plausible config mistake produced the opposite of what it said, in the one
+ *   file whose job is to be restrictive.
+ * - **The pattern does not compile.** `new RegExp()` sat outside the try that
+ *   covers the read and the parse, so a typo threw through the approval gate and
+ *   took the turn down, despite this function documenting that it fails quietly.
+ *
+ * A rule that states no pattern at all still matches everything for its action:
+ * that is an explicit blanket, and deliberate.
+ */
+function matches(pattern: string, value: string | undefined): boolean {
+  if (value === undefined) return false;
+  try {
+    return new RegExp(pattern).test(value);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when `fullPath` lies inside `root`. `startsWith(root)` is not a
+ * containment test — for a workspace at `/ws` it also accepts the sibling
+ * `/ws-evil` — and here that decided whether a file outside the workspace could
+ * be read into the approval modal. Mirrors the check in `ApprovalGateService`.
+ */
+function isInside(root: string, fullPath: string): boolean {
+  const rel = relative(resolve(root), fullPath);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
 }
