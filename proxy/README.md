@@ -552,6 +552,7 @@ The proxy has been tested with the following models on LM Studio:
 
 | Model | Reasoning | Tool calling | Notes |
 |-------|:---------:|:------------:|-------|
+| qwen/qwen3.8-27b (MLX 4-bit) | Always on | Yes, ≥96 tools | 119 552 ctx. Reasoning **cannot be switched off** — see note (**). Measured 2026-08-26 |
 | nemotron-cascade-2-30b-a3b@6bit | Yes | Yes | Reasoning + tool calls work well |
 | nemotron-cascade-2-30b-a3b@4bit | Yes | Yes | Same, more aggressive quantization |
 | omnicoder-9b | Yes | Not tested | Very verbose reasoning |
@@ -561,6 +562,18 @@ The proxy has been tested with the following models on LM Studio:
 
 (*) The `reasoning_content` field is present in the response but always empty — the
 proxy handles this correctly by not emitting thinking blocks.
+
+(**) On `qwen/qwen3.8-27b` the model emits `reasoning_content` unconditionally. None
+of the three switches suppress it: top-level `enable_thinking: false` (what the proxy
+sends), `chat_template_kwargs.enable_thinking: false`, or the Qwen `/no_think` soft
+switch. `ThinkingDetector` therefore records `thinkingCanBeDisabled: false`, which is
+the correct answer — Claudio greys the thinking toggle out rather than offering a
+control that would do nothing.
+
+Tool-calling ceilings are per-model and do not transfer between models: an
+architecture, its chat template, and how the backend parses its tool calls all
+matter. Always read the number the probe writes to `model-cache.json` for the model
+you actually loaded.
 
 Any model served by an OpenAI-compatible endpoint should work. The proxy has no
 model-specific logic.

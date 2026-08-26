@@ -175,14 +175,33 @@ const DEFAULT_SCORE_USED_IN_HISTORY = 5;
 /** Default score for tools forced by tool_choice. */
 const DEFAULT_SCORE_FORCED_CHOICE = 20;
 
-/** Default upper bound for the tool probe binary search. */
-const DEFAULT_PROBE_UPPER_BOUND = 32;
+/**
+ * Default upper bound for the tool probe binary search.
+ *
+ * Must stay above the largest tool count a client is expected to send,
+ * otherwise the probe reports its own ceiling instead of the model's and
+ * ToolManager engages the UseTool overflow path for no reason. Claude Code
+ * CLI sends ~40 tool definitions per request, so 32 was truncating the
+ * measurement below the very number that matters. Measured on
+ * qwen/qwen3.8-27b (MLX 4-bit): 96 tools still produce correct structured
+ * calls, i.e. the real ceiling was never reached at 32.
+ */
+const DEFAULT_PROBE_UPPER_BOUND = 64;
 
 /** Default max_tokens for probe requests (minimal to keep probes fast). */
 const DEFAULT_PROBE_MAX_TOKENS = 100;
 
-/** Default timeout for each probe fetch request (30 seconds). */
-const DEFAULT_PROBE_TIMEOUT = 30_000;
+/**
+ * Default timeout for each probe fetch request.
+ *
+ * Probe latency scales with the tool array: measured on qwen/qwen3.8-27b
+ * (MLX 4-bit), 44 tools answered in ~9s and 47 in ~12s, so the previous 30s
+ * left almost no margin at the top of the search — and a timeout there is
+ * indistinguishable from a real failure unless it is triaged separately
+ * (see ToolProbe.attempt). 60s keeps first attempts comfortably inside the
+ * budget; the retry multiplies this for the rare slow reply.
+ */
+const DEFAULT_PROBE_TIMEOUT = 60_000;
 
 /** Default number of requests before a promoted tool decays. */
 const DEFAULT_PROMOTION_MAX_AGE = 10;

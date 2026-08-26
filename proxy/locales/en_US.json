@@ -16,7 +16,10 @@
   "probe.noSupport": "Model does not support tool calling",
   "probe.result.ok": "  {{n}} tools → ✅",
   "probe.result.fail": "  {{n}} tools → ❌",
+  "probe.result.timeout": "  {{n}} tools → ⏱ no answer (timeout) — treated as a ceiling, not a capability",
   "probe.detected": "Max tools detected: {{max}}",
+  "probe.detected.capped": "Max tools: {{max}} — SEARCH WAS CUT SHORT BY A TIMEOUT, so this is a floor, not the model's real limit. Raise PROBE_TIMEOUT to measure it properly.",
+  "probe.detected.atBound": "Max tools: {{max}} — the search hit PROBE_UPPER_BOUND without failing, so the model may well handle more. Raise PROBE_UPPER_BOUND to find out.",
   "probe.override": "Max tools: {{max}} (from MAX_TOOLS env)",
   "probe.cached": "Max tools: {{max}} (from model cache)",
 

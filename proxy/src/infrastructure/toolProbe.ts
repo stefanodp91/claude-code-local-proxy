@@ -49,6 +49,23 @@ const PROBE_TOOL_CHOICE = "required";
 /** Minimum number of tools to test (lower bound of binary search). */
 const PROBE_LOWER_BOUND = 1;
 
+/**
+ * Multiplier applied to `probeTimeout` when retrying an inconclusive attempt.
+ * A larger tool array means a larger prompt and a slower reply, so the retry
+ * gets proportionally more room before we give up on it.
+ */
+const PROBE_RETRY_TIMEOUT_FACTOR = 3;
+
+/**
+ * Outcome of a single probe attempt.
+ *
+ * The distinction matters: a request that timed out tells us nothing about the
+ * model's capability, while a reply carrying no `tool_calls` genuinely does.
+ * Collapsing both into `false` biases the binary search downward, because a
+ * bigger tool array is exactly what makes a reply slow enough to time out.
+ */
+export type ProbeOutcome = "tool_calls" | "no_tool_calls" | "inconclusive";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ToolProbe
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,7 +106,7 @@ export class ToolProbe {
     this.logger.info(t("probe.start"));
 
     // First: verify tool calling works at all with a single tool
-    if (!await this.testWithNTools(modelId, PROBE_LOWER_BOUND)) {
+    if (await this.attempt(modelId, PROBE_LOWER_BOUND) !== "tool_calls") {
       this.logger.info(t("probe.noSupport"));
       return 0;
     }
@@ -98,23 +115,50 @@ export class ToolProbe {
     let lo = PROBE_LOWER_BOUND;
     let hi = this.cfg.probeUpperBound;
     let maxWorking = PROBE_LOWER_BOUND;
+    let timedOut = false;
 
     while (lo <= hi) {
       const mid = Math.floor((lo + hi) / 2);
-      const ok = await this.testWithNTools(modelId, mid);
+      const outcome = await this.attempt(modelId, mid);
 
-      if (ok) {
+      if (outcome === "tool_calls") {
         this.logger.info(t("probe.result.ok", { n: mid }));
         maxWorking = mid;
         lo = mid + 1;
+        continue;
+      }
+
+      if (outcome === "inconclusive") {
+        // We never got an answer, so this says nothing about the model. Treat
+        // it as a ceiling only so the search terminates, and say so out loud —
+        // the reported number is a floor, not the model's real limit.
+        this.logger.info(t("probe.result.timeout", { n: mid }));
+        timedOut = true;
       } else {
         this.logger.info(t("probe.result.fail", { n: mid }));
-        hi = mid - 1;
       }
+      hi = mid - 1;
     }
 
-    this.logger.info(t("probe.detected", { max: maxWorking }));
+    if (timedOut) {
+      this.logger.info(t("probe.detected.capped", { max: maxWorking }));
+    } else if (maxWorking === this.cfg.probeUpperBound) {
+      this.logger.info(t("probe.detected.atBound", { max: maxWorking }));
+    } else {
+      this.logger.info(t("probe.detected", { max: maxWorking }));
+    }
     return maxWorking;
+  }
+
+  /**
+   * Run one probe attempt, retrying once with a longer timeout when the first
+   * try is inconclusive. Only after the retry also fails to produce an answer
+   * do we report `inconclusive` to the search.
+   */
+  private async attempt(modelId: string, n: number): Promise<ProbeOutcome> {
+    const first = await this.testWithNTools(modelId, n, this.cfg.probeTimeout);
+    if (first !== "inconclusive") return first;
+    return this.testWithNTools(modelId, n, this.cfg.probeTimeout * PROBE_RETRY_TIMEOUT_FACTOR);
   }
 
   // ── Private ──────────────────────────────────────────────────────────────
@@ -129,14 +173,14 @@ export class ToolProbe {
    * @param n - Number of dummy tools to include.
    * @returns True if the model produced structured tool calls.
    */
-  private async testWithNTools(modelId: string, n: number): Promise<boolean> {
+  private async testWithNTools(modelId: string, n: number, timeoutMs: number): Promise<ProbeOutcome> {
     const tools = this.generateDummyTools(n);
 
     try {
       const res = await fetch(this.targetUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        signal: AbortSignal.timeout(this.cfg.probeTimeout),
+        signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify({
           model: modelId,
           messages: [{ role: "user", content: PROBE_USER_MESSAGE }],
@@ -147,13 +191,20 @@ export class ToolProbe {
         }),
       });
 
-      if (!res.ok) return false;
+      // A non-2xx says something went wrong on the backend, not that the model
+      // declined to call a tool — the search must not read it as a capability.
+      if (!res.ok) {
+        this.logger.dbg(`[probe] n=${n} HTTP ${res.status} — inconclusive`);
+        return "inconclusive";
+      }
 
       const json = (await res.json()) as any;
       const toolCalls = json.choices?.[0]?.message?.tool_calls;
-      return Array.isArray(toolCalls) && toolCalls.length > 0;
-    } catch {
-      return false;
+      return Array.isArray(toolCalls) && toolCalls.length > 0 ? "tool_calls" : "no_tool_calls";
+    } catch (err) {
+      // Timeout or transport failure. No answer arrived, so we learned nothing.
+      this.logger.dbg(`[probe] n=${n} failed after ${timeoutMs}ms: ${String(err)} — inconclusive`);
+      return "inconclusive";
     }
   }
 

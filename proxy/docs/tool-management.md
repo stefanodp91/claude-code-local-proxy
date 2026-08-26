@@ -272,6 +272,31 @@ Each probe request:
 - **Message**: `"Call probe_tool_0 with x='test'"`
 - **tool_choice**: `"required"` (forces the model to produce a tool call)
 - **max_tokens**: 100 (minimal, for speed)
+- **Timeout**: `PROBE_TIMEOUT` (default 60s), retried once at 3× on no answer
+
+### Three outcomes, not two
+
+An attempt resolves to one of three things, and the difference is load-bearing:
+
+| Outcome | Meaning | Effect on the search |
+|---|---|---|
+| `tool_calls` | model emitted structured calls | N works → search upward |
+| `no_tool_calls` | model replied, but without tool calls | genuine capability limit → search downward |
+| `inconclusive` | timeout, transport error, or non-2xx | **tells us nothing** → retried once, then used as a ceiling only so the search terminates |
+
+Treating `inconclusive` as a plain failure biases the result downward, because a
+larger tool array makes the reply slower — so timeouts cluster precisely at the
+boundary the search is probing. The final log line reflects which case applied:
+
+- `Max tools detected: N` — search completed on genuine answers
+- `Max tools: N — SEARCH WAS CUT SHORT BY A TIMEOUT` — N is a floor, raise `PROBE_TIMEOUT`
+- `Max tools: N — the search hit PROBE_UPPER_BOUND without failing` — raise `PROBE_UPPER_BOUND`
+
+### Choosing PROBE_UPPER_BOUND
+
+The bound must sit above the largest tool count any client will send, or the
+probe reports its own ceiling and `ToolManager` engages `UseTool` overflow for
+nothing. Claude Code CLI sends ~40 tools per request; the default is **64**.
 
 ### Example Trace
 
@@ -285,7 +310,13 @@ Probing tool limit...
 Max tools detected: 7
 ```
 
-The binary search runs ~5 iterations (log2(32) = 5), each taking <1 second. Total probe time: ~3-5 seconds.
+The binary search runs log2(`PROBE_UPPER_BOUND`) iterations — 6 at the default
+64. Cost per iteration is one non-streaming completion, so total probe time is
+governed by the model: a small model answers in well under a second, while a
+27B at 4-bit took 7–12 seconds per step in testing. The whole probe runs
+**before** the HTTP server starts listening, so a cold model delays the first
+connection; the result is cached in `model-cache.json` and later restarts with
+the same model skip it entirely.
 
 ---
 

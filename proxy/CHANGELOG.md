@@ -5,6 +5,61 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — 2026-08-26
+
+### Fixed — Tool probe ceiling was below the tool count that matters
+
+- **`DEFAULT_PROBE_UPPER_BOUND` raised 32 → 64** (`infrastructure/config.ts`).
+  The binary search stopped at 32, so any model able to handle more reported
+  exactly 32 — the probe's own ceiling, not the model's. Claude Code CLI sends
+  ~40 tool definitions per request, so `ToolManager.selectTools()` saw
+  `40 > 32` and engaged the `UseTool` overflow path (31 core tools + meta-tool)
+  on models that never needed it.
+
+  Measured on `qwen/qwen3.8-27b` (MLX 4-bit, 119 552 token context): 32, 40, 48,
+  64 and 96 tools all produce correct structured calls with the right tool
+  selected. The real ceiling was never reached. Override with `PROBE_UPPER_BOUND`.
+
+### Fixed — Probe read timeouts as capability limits
+
+- **`ToolProbe` now triages each attempt** into `tool_calls` / `no_tool_calls` /
+  `inconclusive` instead of collapsing everything into a boolean. The old
+  `catch { return false }` made a timeout, a dropped connection and an HTTP 500
+  indistinguishable from "the model refused to emit a tool call" — and since a
+  larger tool array means a larger prompt and a slower reply, timeouts cluster
+  exactly at the boundary the binary search is trying to find. The search was
+  therefore measuring latency, not capability.
+
+  Observed on `qwen/qwen3.8-27b` (MLX 4-bit) with `PROBE_UPPER_BOUND=64`:
+
+  ```
+  32 tools → ✅      (11s)
+  48 tools → ❌      (30.007s — exactly PROBE_TIMEOUT)
+  40 tools → ✅      (7s)
+  44 tools → ✅      (9s)
+  46 tools → ✅      (11s)
+  47 tools → ✅      (12s)
+  Max tools detected: 47
+  ```
+
+  47 is an artefact. Direct measurement against the same loaded model shows 96
+  tools still produce correct structured calls; n=48 simply did not answer in
+  time, and one slow reply capped the reported ceiling.
+
+- **Inconclusive attempts are retried once** at `PROBE_TIMEOUT × 3` before the
+  search accepts them, and are logged distinctly (`probe.result.timeout`).
+
+- **The final log line now states its own confidence**: `probe.detected.capped`
+  when a timeout truncated the search (the number is a floor, not a limit), and
+  `probe.detected.atBound` when the search reached `PROBE_UPPER_BOUND` without
+  a failure (the model may handle more). Previously all three cases printed the
+  same "Max tools detected: N".
+
+- **`DEFAULT_PROBE_TIMEOUT` raised 30s → 60s.** Probe latency scales with the
+  tool array; at 47 tools a reply already took 12s, leaving little headroom.
+
+---
+
 ## [1.4.0] — 2026-04-12
 
 ### Added — Python execution engine
