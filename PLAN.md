@@ -257,7 +257,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 193 test / ~350 ms, senza GPU e senza rete.
+`npm test` in 212 test / ~400 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`

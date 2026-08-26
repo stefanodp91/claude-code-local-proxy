@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 193 tests, ~350 ms
+npm test          # 212 tests, ~400 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -56,6 +56,7 @@ proxy/test/
   autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
   workspaceActions.test.ts     34 tests — the filesystem and shell backend
   textualAgentLoop.test.ts     17 tests — Path B, the XML-tag loop
+  nativeAgentLoop.test.ts      19 tests — Path A, the native tool-call loop
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -308,6 +309,29 @@ happen — see [Two grammars that had drifted apart](#two-grammars-that-had-drif
 One test now derives the attribute list from the manual and asks `parseActionTag`
 about each one, so they cannot drift again.
 
+### `nativeAgentLoop.test.ts`
+
+Path A, the loop that runs on a model with native tool calls — the one exercised
+every day, and the only suite so far that found nothing. Three properties carry
+the weight:
+
+- **The fallthrough contract.** `run()` returns `"fallthrough"` when the model
+  produced nothing at all on iteration 0, and the caller retries the turn as an
+  ordinary completion. `"handled"` there means the user gets silence;
+  `"fallthrough"` after anything has been written means they get the turn twice.
+  One test asserts the outcome, another asserts the wire stayed *empty*.
+- **Batched execution.** Read-only calls run in parallel, destructive ones
+  strictly in sequence, and the results are reassembled in the order the model
+  asked. Counting prompts proves nothing here — two writes ask twice either way
+  — so the test measures whether a second modal opens while the first is still
+  waiting.
+- **The iteration ceiling.** Asserted as a message the user can read, not just
+  a stream that stops.
+
+Plus plan mode letting only the plan file through, and a JSON body arriving in
+answer to a `stream: true` request, which LM Studio does often enough that
+ignoring it would lose whole turns.
+
 ---
 
 ## Two grammars that had drifted apart
@@ -450,6 +474,9 @@ tests fail — and fail *narrowly*:
 | Drop the separator from `safeResolvePath` | Sibling-prefix test fails | exactly 1 fails |
 | Remove `old_string`/`new_string` from the parser | Edit and grammar tests fail | exactly 2 fail |
 | Stop accepting the body tag form | Manual-form write test fails | exactly 1 fails |
+| Never return `"fallthrough"` | Fallthrough tests fail | exactly 2 fail |
+| Drop the assistant tool_calls turn from the replay | Replay test fails | exactly 1 fails |
+| Run destructive calls in parallel | Overlap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
@@ -506,12 +533,20 @@ fails loudly when the count is zero.
 
 ## Not covered yet
 
-Everything on the original priority list — i18n, the probe, the approval gate,
-the translators, `ToolManager`, the allowlist — is now covered. What remains, in
-priority order:
+Every component has a suite. What is left is not a component but a set of
+*decisions*, recorded in [PLAN.md](../../PLAN.md) rather than left as silent
+gaps:
 
-1. **Path A** — `nativeAgentLoopService`, the loop for models that do have
-   native tool calls. The last uncovered component.
+- `tool_choice: "any"` maps to `auto`, losing Anthropic's "you must call some
+  tool". A test pins the current behaviour and points here.
+- A stream truncated without `[DONE]` emits `message_start`, opens a block and
+  then closes with no `content_block_stop`, `message_delta` or `message_stop`.
+- Path B's `edit` grammar cannot express an `old_string` containing a double
+  quote, because attributes are parsed with `[^"]*` and the manual teaches no
+  escaping.
+
+The remaining risk is not in any one unit but between them — which is what
+`scripts/regression.sh` is for, and why it still earns its place.
 
 Two behaviours are known-uncovered on purpose, both recorded in
 [PLAN.md](../../PLAN.md) as decisions rather than gaps: the `tool_choice: "any"`

@@ -7,6 +7,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Added — Path A test suite (19 tests) — every component now has one
+
+- **`test/nativeAgentLoop.test.ts`** — the loop that runs on a model with native
+  tool calls. The fallthrough contract (both that `run()` returns
+  `"fallthrough"` on a silent iteration 0, and that it wrote nothing to the wire
+  before doing so, since the caller replays the turn); the tool-call round trip
+  including the assistant turn being replayed so the follow-up request stays
+  valid for OpenAI; batched execution; approval scopes; plan mode; the iteration
+  ceiling as a message the user can read; a backend error ending the turn; and a
+  JSON body arriving in answer to a `stream: true` request.
+
+- **No bugs found.** Path A is the path exercised every day, which is the most
+  likely reason.
+
+- One test was rewritten after it passed: "destructive calls are asked about one
+  at a time" originally counted approval prompts, and two writes produce two
+  prompts whether they run in sequence or in parallel. It now measures whether a
+  second modal opens while the first is still waiting, and parallelising the
+  destructive branch makes it fail.
+
+- Negative control: never returning `"fallthrough"` fails exactly 2 tests,
+  dropping the assistant tool_calls turn from the replay fails exactly 1, and
+  running destructive calls in parallel fails exactly 1.
+
+- `npm test` is now 212 tests in ~400 ms. Every component of the proxy has a
+  suite; what remains is recorded in `PLAN.md` as decisions rather than gaps.
+
+
 ### Fixed — Path B could not edit a file, and its documented write form was never executed
 
 `TEXTUAL_TOOL_MANUAL` is the entire instruction set handed to a model without
