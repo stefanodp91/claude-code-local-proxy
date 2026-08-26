@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 308 tests, ~410 ms
+npm test          # 311 tests, ~1.0 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -385,6 +385,36 @@ JSON, and a streamed answer.
 
 ---
 
+## A shell that does not stop the process
+
+`bash` used to run under `spawnSync`, which blocks the Node.js event loop for as
+long as the command takes — up to 30 seconds of nothing else happening: no SSE
+writes to the client, no approval gate, no health probe. `grep` did the same for
+up to 15, and `grep` is one of the read-only actions the agent loop dispatches
+with `Promise.all`, so the parallelism it advertised was a queue.
+
+Both spawn now, through one `runProcess()`. The interesting part of the change is
+what `spawnSync` was doing for free:
+
+| Was free | Now explicit | Covered by |
+|---|---|---|
+| Timeout | `spawn`'s `timeout` signals the child but leaves the promise pending, and a promise that never settles hangs the turn — so the kill is timed here | a `sleep 5` killed at 150 ms |
+| `maxBuffer` | `spawn` has none; collection stops at a cap | the truncation notice only — the collection cap bounds memory and has no observable effect, so nothing asserts it |
+| Exit code | arrives on `close`, and is `null` when a signal ended the process | the existing exit-code and no-output tests |
+
+The property itself is asserted for `bash`, where it is observable: run
+`sleep 0.4`, count the ticks of a 20 ms timer, and require at least five. Under
+`spawnSync` that count is zero. `grep` shares the helper but has no such test —
+a grep fast enough for a test is too fast to observe.
+
+**And a control that lied.** Reverting grep's `exit 1 → "(no matches found)"`
+came back green, which reads as missing coverage. It was not: the `perl`
+substitution had the wrong indentation and never applied. Applied properly, it
+fails exactly one test. Second time in this repo — when a control comes back
+green, check the control first.
+
+---
+
 ## Tool arguments the backend refuses
 
 Found by running the thing, not by reading it — the first end-to-end image test
@@ -693,6 +723,9 @@ tests fail — and fail *narrowly*:
 | Remove the capability guard | Guard test fails | exactly 1 fails |
 | Guess a context budget when metadata is missing | Zero-budget test fails | exactly 1 fails |
 | Pass status 0 through as an HTTP status | Connection-refused test fails | exactly 1 fails |
+| Run bash under `spawnSync` again | Event-loop test fails | exactly 1 fails |
+| Time out without killing the child | Timeout test fails | exactly 1 fails, after waiting the full 5 s |
+| Treat grep's exit 1 as an error | No-matches test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.

@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
-import { executeAction, safeResolvePath, savePlot, saveFigure, type ActionOutcome } from "../src/infrastructure/workspaceActions";
+import { executeAction, safeResolvePath, savePlot, saveFigure, runShell, type ActionOutcome } from "../src/infrastructure/workspaceActions";
 import { WorkspaceAction, type ActionArgs } from "../src/domain/entities/workspaceAction";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -278,6 +278,42 @@ test("a silent success says so rather than returning nothing", async () => {
 
 test("bash without a command is an error", async () => {
   assert.match(await run({ action: WorkspaceAction.Bash }), /'cmd' is required/);
+});
+
+test("bash does not block the event loop while it runs", async () => {
+  // The property, stated as a property: with `spawnSync` this timer cannot
+  // fire, because nothing else in the process runs until the command exits.
+  // Every other bash test passes either way, which is why this one exists.
+  let ticks = 0;
+  const timer = setInterval(() => { ticks++; }, 20);
+
+  try {
+    await run({ action: WorkspaceAction.Bash, cmd: "sleep 0.4" });
+  } finally {
+    clearInterval(timer);
+  }
+
+  assert.equal(ticks >= 5, true, `the event loop was blocked — only ${ticks} tick(s) in 400 ms`);
+});
+
+test("a command that outruns its timeout is killed and says so", async () => {
+  // 30 s is the shipped ceiling and no test can wait for it, so the timeout is
+  // a parameter here. Without a kill the promise never settles and the turn
+  // hangs — the worst shape this failure could take.
+  const started = Date.now();
+  const out = await runShell("sleep 5", ws, 150);
+
+  assert.match(out, /timed out after/);
+  assert.equal(Date.now() - started < 3_000, true, "it waited for the command instead of killing it");
+});
+
+test("output past the cap is truncated, and says it was", async () => {
+  // `spawn` has no maxBuffer: unbounded output is now this code's problem, and
+  // an 8 000-character promise is what the model can actually read.
+  const out = await run({ action: WorkspaceAction.Bash, cmd: "seq 1 200000" });
+
+  assert.match(out, /output truncated/);
+  assert.equal(out.length < 9_000, true, `truncation let ${out.length} chars through`);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

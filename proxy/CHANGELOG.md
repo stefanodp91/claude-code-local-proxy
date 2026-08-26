@@ -7,6 +7,34 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Changed — `bash` and `grep` no longer stop the process
+
+- `spawnSync` blocked the Node.js event loop for as long as the command ran: up
+  to 30 s for `bash`, 15 s for `grep`, during which nothing else happened — no
+  SSE writes to the client, no approval gate, no health probe. `grep` is one of
+  the read-only actions the agent loop dispatches with `Promise.all`, so that
+  parallelism was a queue.
+
+- Both now go through one async `runProcess()`. What `spawnSync` did for free is
+  explicit, and each piece has a test because losing one is silent:
+
+  - **the timeout must kill.** `spawn`'s own `timeout` signals the child and
+    leaves the promise pending — one that never settles hangs the turn;
+  - **`spawn` has no `maxBuffer`**, so collection stops at a cap;
+  - **the exit code** arrives on `close` and is `null` when a signal ended it.
+
+- The property is asserted where it is observable: `sleep 0.4` with a 20 ms
+  timer running, requiring at least five ticks. Under `spawnSync` there are
+  none. `grep` shares the helper; a grep fast enough for a test is too fast to
+  observe, and this says so rather than implying coverage it does not have.
+
+- `npm test` is now 311 in ~1.0 s — the second spent waiting on real processes,
+  which is the price of testing the thing rather than a mock of it. Negative
+  control: `spawnSync` again fails exactly 1, timing out without killing fails
+  exactly 1 (after the full 5 s), grep's `exit 1` treated as an error fails
+  exactly 1 — that last one only after the control was fixed, having first come
+  back green because the substitution never applied.
+
 ### Added — The routing use case has a suite (21 tests)
 
 - `handleChatMessageUseCase` decides which proxy the client is talking to —

@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 308 tests, ~410 ms
+cd proxy && npm test         # 311 tests, ~1.0 s
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -162,7 +162,7 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 308 tests, run locally before every commit and in CI
+deliberately left alone. 311 tests, run locally before every commit and in CI
 on request.
 
 "Every component has a suite" would be an overstatement, and was made once in
@@ -225,8 +225,12 @@ with images: any model emitting an argument-less call would have hit it.
    wrong: parallel read-only dispatch is not *missing* from Path B, it does not
    *apply* — the parser stops at the first complete tag, so there is never a
    second action to dispatch.
-3. **`bash` blocks the event loop**  ← **next** for up to 30s (`spawnSync`). Acceptable for
-   a local single-user proxy — know it, do not fix it now.
+3. ~~**`bash` blocks the event loop**~~ — **done.** `bash` and `grep` now spawn
+   asynchronously through one `runProcess()` helper. The property is asserted
+   directly: a test runs `sleep 0.4` and counts timer ticks, which is zero under
+   `spawnSync`. Killing on timeout has its own test — `spawn`'s `timeout`
+   signals but leaves the promise to settle, and one that never settles hangs
+   the turn.
 
 Three **decisions**, not gaps, also recorded in PLAN.md §5: the
 `tool_choice: "any"` mapping, what a stream truncated without `[DONE]` should
