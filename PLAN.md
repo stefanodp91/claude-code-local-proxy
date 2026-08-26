@@ -108,18 +108,26 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **142 test** a ogni push, e tutti e sei i punti
-dell'ordine d'attacco sono coperti. La fase si chiude qui.
+gira senza GPU accesa. Oggi sono **212 test** a ogni push, e **ogni componente
+del proxy ha una suite**.
 
-Il conto di cosa è costata: **sette bug reali**, nessuno dei quali lanciava
-un'eccezione, scriveva un log o falliva un typecheck. Non è una coincidenza — è
-la forma di guasto di questo progetto, ed è la ragione per cui la fase valeva la
-spesa. Coperto anche `workspaceActions` (34 test, **due bug**: `edit` corrompeva le
-sostituzioni contenenti `$`, e una slash finale nella root del workspace
-rifiutava *ogni* path). Coperto anche Path B (17 test, **due bug**: `edit` non
-funzionava affatto e la forma documentata di `write` veniva stampata all'utente
-invece di essere eseguita — il manuale insegnava al modello una grammatica che il
-parser non accettava). Resta Path A.
+I sei punti dell'ordine d'attacco sono stati coperti per primi; poi i tre che
+erano rimasti fuori:
+
+| Componente | Test | Bug trovati |
+|---|--:|---|
+| `workspaceActions` | 34 | `edit` corrompeva le sostituzioni contenenti `$`; una slash finale nella root rifiutava *ogni* path |
+| Path B (`textualAgentLoop`) | 17 | `edit` non funzionava affatto; la forma documentata di `write` veniva stampata all'utente invece di eseguita |
+| Path A (`nativeAgentLoopService`) | 19 | nessuno — è il percorso esercitato ogni giorno |
+
+**Il conto totale: nove bug reali**, e nessuno dei nove lanciava un'eccezione,
+scriveva un log o falliva un typecheck. Non è una coincidenza: è *la* forma di
+guasto di questo progetto, ed è la ragione per cui la fase valeva la spesa.
+
+Quel che resta non è un componente ma tre **decisioni**, registrate nella Fase 2
+invece che lasciate come buchi silenziosi. E resta il rischio che non sta dentro
+nessuna unità ma *fra* di esse: è ciò per cui esiste `regression.sh`, ed è il
+motivo per cui continua a meritarsi il posto.
 
 Questa è la fase che sblocca tutto il resto. Senza, ogni modifica successiva è
 una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
@@ -306,6 +314,12 @@ Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
   La correzione richiede una scelta: emettere un evento `error`, oppure
   sintetizzare la chiusura — ma con quale `stop_reason`? Presentare un troncamento
   come `end_turn` sarebbe una bugia, ed è la ragione per cui non l'ho deciso io.
+- **Path B non sa esprimere una virgoletta dentro `old_string`.** Gli attributi
+  del tag sono parsati con `[^"]*` e il manuale non insegna nessun escaping,
+  quindi `<action name="edit" old_string="const s = \"hi\"" …/>` si tronca. Per
+  del codice è un limite serio, ma allargarlo significa cambiare la grammatica
+  *e* il manuale insieme: è una decisione, non una svista. Path B resta un
+  fallback dichiarato.
 - **`bash` blocca l'event loop** fino a 30s (`spawnSync` in
   [`workspaceActions.ts`](proxy/src/infrastructure/workspaceActions.ts)).
   Accettabile per un proxy locale monoutente; da sapere, non da correggere ora.
