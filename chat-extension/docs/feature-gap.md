@@ -33,17 +33,17 @@ This means that some features "missing from the chat-extension" are actually **a
 
 | Feature | Where it lives | Evidence |
 |---|---|---|
-| **Dual-path model-agnostic agent loop** | Proxy | [server.ts:289-306](../../proxy/src/infrastructure/server.ts#L289-L306) — routes to Path A (`runNativeAgentLoop`) for `maxTools > 0` or Path B (`runTextualAgentLoop`) for `maxTools == 0`. Both paths emit identical Anthropic SSE. Documented in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md). |
-| **Rich workspace actions: list/read/grep/glob/write/edit/bash** | Proxy | [workspaceActions.ts](../../proxy/src/infrastructure/workspaceActions.ts) — shared backend for all 7 actions. `write`/`edit`/`bash` require user approval before execution. |
-| **Permission gate for destructive actions** | Proxy + Claudio | Proxy emits `event: tool_request_pending` SSE ([server.ts:432-434](../../proxy/src/infrastructure/server.ts#L432-L434)); Claudio intercepts in `chat-session.ts`, forwards to Angular modal; user clicks Allow/Deny; extension POSTs `/approve`. Documented in [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md). |
+| **Dual-path model-agnostic agent loop** | Proxy | [handleChatMessageUseCase.ts:319-335](../../proxy/src/application/useCases/handleChatMessageUseCase.ts#L319-L335) — inside `if (workspaceCwd)`, routes to Path A (`NativeAgentLoopService.run()`) for `maxTools > 0` or Path B (`runTextualAgentLoop`) for `maxTools == 0`. Both paths emit identical Anthropic SSE. Documented in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md). |
+| **Rich workspace actions: list/read/grep/glob/write/edit/bash/python** | Proxy | [workspaceActions.ts](../../proxy/src/infrastructure/workspaceActions.ts) — shared backend for the 8 executable actions in `WorkspaceAction` (a 9th, `exit_plan_mode`, is a signal rather than an action). `write`/`edit`/`bash`/`python` require user approval before execution. |
+| **Permission gate for destructive actions** | Proxy + Claudio | Proxy emits `event: tool_request_pending` SSE ([sseApprovalInteractor.ts:53](../../proxy/src/infrastructure/adapters/sseApprovalInteractor.ts#L53)); Claudio intercepts in `chat-session.ts`, forwards to Angular modal; user clicks Allow/Deny; extension POSTs `/approve`. Documented in [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md). |
 | **Tool approval modal** | Claudio webview | [`tool-approval-modal/tool-approval-modal.component.ts`](../src/webview-ui/src/app/features/chat/tool-approval-modal/tool-approval-modal.component.ts) — standalone Angular component showing action icon, path/command/content preview, Deny/Allow buttons. |
-| **Auto-loaded project context** | Proxy | [server.ts:234-253](../../proxy/src/infrastructure/server.ts#L234-L253) — for `maxTools > 0`: injects `Working directory: <cwd>`; for `maxTools == 0`: adds full `buildWorkspaceContextSummary()` + `TEXTUAL_TOOL_MANUAL`. Documented in [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md). |
+| **Auto-loaded project context** | Proxy | [systemPromptBuilder.ts](../../proxy/src/application/services/systemPromptBuilder.ts) — interpolates `Working directory: {{cwd}} ({{cwdBase}})` into [`prompts/en_US/agent-base.md`](../../proxy/prompts/en_US/agent-base.md); on the textual path (`maxTools == 0`) `appendTextualTail()` adds `buildWorkspaceContextSummary()` + `TEXTUAL_TOOL_MANUAL`. Documented in [proxy/docs/system-prompt-injection.md](../../proxy/docs/system-prompt-injection.md). |
 | **Thinking blocks in streaming** | Proxy + Claudio | [streamTranslator.ts](../../proxy/src/application/streamTranslator.ts) converts `reasoning_content` to Anthropic `thinking` blocks. [proxy-client.ts:54-56](../src/extension/proxy/proxy-client.ts#L54-L56) enables it on the client. Visible as expandable panel in the chat. |
 | **Thinking detection per model** | Proxy | `ThinkingDetector` (dual probe): probe #1 checks `supportsThinking`, probe #2 checks `thinkingCanBeDisabled`. Cached in `model-cache.json`. **The probe measures observable behaviour, which is the right method — but do not read a `true` from it as "the proxy can switch thinking off".** Measured on `qwen/qwen3.8-27b` (MLX 4-bit, 2026-08-26): reasoning is emitted unconditionally. Neither top-level `enable_thinking` (the field the proxy actually sends, [requestTranslator.ts:100](../../proxy/src/application/requestTranslator.ts#L100)), nor `chat_template_kwargs.enable_thinking`, nor the Qwen `/no_think` soft switch suppress it. Every entry in `model-cache.json` so far has `thinkingCanBeDisabled: false`. |
 | **Thinking toggle UI** | Claudio webview | Icona `psychology` in `InputAreaComponent`: visibile se `supportsThinking`, disabilitata se `thinkingCanBeDisabled === false`, interattiva altrimenti. Tooltip contestuale. Sync via `SetEnableThinking` message. |
 | **Tool probe & dynamic management** | Proxy | `toolProbe.ts` binary search for `maxTools`; `toolManager.ts` dynamic selection + `UseTool` meta-tool for overflow; cache in `proxy/model-cache.json`. Documented in [proxy/docs/tool-management.md](../../proxy/docs/tool-management.md). |
-| **Rich slash commands** | Proxy + Claudio | [slashCommandInterceptor.ts](../../proxy/src/application/slashCommandInterceptor.ts) handles 13 proxy-side commands (`/status`, `/version`, `/commit`, `/diff`, `/review`, `/compact`, `/brief`, `/plan`, etc.); [chat-session.ts:347-403](../src/extension/chat-session.ts#L347-L403) handles client-side commands (`/files`, `/copy`, `/branch`, `/commit-push-pr`, etc.). Documented in [slash-commands.md](slash-commands.md). |
-| **Session persistence** | Claudio webview + extension host | [message-store.service.ts:223-232](../src/webview-ui/src/app/core/services/message-store.service.ts#L223-L232) uses `vscodeApi.setState` for the webview's own lifecycle, and `ChatSession` persists `conversation[]` to `context.workspaceState`, restoring it on startup. Sidebar collapse and VS Code reload both survive. |
+| **Rich slash commands** | Proxy + Claudio | [slashCommandInterceptor.ts](../../proxy/src/application/slashCommandInterceptor.ts) handles the 8 proxy-side commands (`/status`, `/version`, `/commit`, `/diff`, `/review`, `/compact`, `/brief`, `/plan`) out of the 15 in `SLASH_COMMAND_REGISTRY`, the single source of truth served via `GET /commands`; [chat-session.ts:551-605](../src/extension/chat-session.ts#L551-L605) handles six of the client-side ones (`/copy`, `/files`, `/simplify`, `/branch`, `/commit-push-pr`, `/pr-comments`), while `/clear` never leaves the webview ([chat-container.component.ts:247](../src/webview-ui/src/app/features/chat/chat-container/chat-container.component.ts#L247)). Documented in [slash-commands.md](slash-commands.md). |
+| **Session persistence** | Claudio webview + extension host | [message-store.service.ts:258-260](../src/webview-ui/src/app/core/services/message-store.service.ts#L258-L260) uses `vscodeApi.setState` for the webview's own lifecycle, and `ChatSession` persists `conversation[]` to `context.workspaceState`, restoring it on startup. Sidebar collapse and VS Code reload both survive. |
 
 ---
 
@@ -51,8 +51,8 @@ This means that some features "missing from the chat-extension" are actually **a
 
 | Feature | Status | Evidence |
 |---|---|---|
-| **Streaming during native agent loop iterations 1+** | FIXED in Path A | [server.ts:465+](../../proxy/src/infrastructure/server.ts#L465) — `runNativeAgentLoop` uses `stream: false` only for iteration 0 (guard); iterations 1+ use `stream: true` and forward text/thinking deltas in real time. |
-| **Automatic context compaction** | PARTIAL | Implemented proxy-side in [handleChatMessageUseCase.ts:250](../../proxy/src/application/useCases/handleChatMessageUseCase.ts#L250): at 80% of the model's context window it summarizes via LLM (`SEMANTIC_COMPACT`), falling back to naive message-dropping. **Limitation:** it runs only on the incoming request. Inside the agent loop, each iteration appends tool results to `messages[]` with no further budget check, so a long Path A run can still overflow mid-loop. Claudio's own `conversation[]` is likewise never trimmed. |
+| **Streaming during native agent loop iterations** | FIXED in Path A | [nativeAgentLoopService.ts:222-236](../../proxy/src/application/services/nativeAgentLoopService.ts#L222-L236) — **every** iteration now uses `stream: true` and forwards text/thinking deltas in real time. Iteration 0 no longer runs as a non-streaming probe; it keeps only the fallback-guard role, returning `"fallthrough"` when the model emits nothing at all. |
+| **Automatic context compaction** | PARTIAL | Implemented proxy-side in [handleChatMessageUseCase.ts:276](../../proxy/src/application/useCases/handleChatMessageUseCase.ts#L276): at 80% of the model's context window it summarizes via LLM (`SEMANTIC_COMPACT`), falling back to naive message-dropping. **Limitation:** it runs only on the incoming request. Inside the agent loop, each iteration appends tool results to `messages[]` with no further budget check, so a long Path A run can still overflow mid-loop. Claudio's own `conversation[]` is likewise never trimmed. |
 | **Cross-session memory** | ABSENT | No `MEMORY.md` or persistent equivalent. The only cross-request state on the proxy side is the `promoted` map in ToolManager, in-memory and reset on restart. |
 | **Plan mode** | PRESENT | `PlanExitModalComponent` gestisce l'uscita da Plan mode; `SetAgentMode` message sincronizza lo stato Ask/Auto/Plan tra webview ed extension host; `ModeSelectorComponent` mostra un dropdown con dot colorati per ogni modalità. |
 | **Visualization of `tool_use` blocks in streaming** | PRESENT | Full pipeline in place: `StreamingService` parses `content_block_start/delta/stop` for `tool_use` blocks → `MessageStoreService` accumulates `rawInput` and parses JSON at completion → `MessageBubbleComponent` renders `<app-tool-use-block>` → `ToolUseBlockComponent` shows icon + label with pulsing animation while pending. |
@@ -63,19 +63,19 @@ This means that some features "missing from the chat-extension" are actually **a
 | **TodoWrite / task tracking** | ABSENT | No structured task list management integrated. |
 | **Web tools** (WebFetch, WebSearch) | ABSENT | Not implemented. |
 | **Worktree isolation** | ABSENT | No git worktree spawn code. |
-| **Real session persistence** | PRESENT | `retainContextWhenHidden: true` set in `activation.ts:56` (sidebar collapse is fine). `ChatSession` now restores `conversation[]` from `context.workspaceState` on startup and persists it after every user message, assistant reply, and `/clear`. VS Code reload → history survives. |
+| **Real session persistence** | PRESENT | `retainContextWhenHidden: true` set in [`activation.ts:72`](../src/extension/activation.ts#L72) and [`chat-panel.ts:29`](../src/extension/webview/chat-panel.ts#L29) (sidebar collapse is fine). `ChatSession` now restores `conversation[]` from `context.workspaceState` on startup and persists it after every user message, assistant reply, and `/clear`. VS Code reload → history survives. |
 
 ---
 
 ## 4. What the Model Can Do Today (Model-Dependent Matrix)
 
-| Capability | Models with native tools (e.g. Nemotron@4bit, `maxTools=32`) | Models without tools (e.g. Qwen 3.5 35B, `maxTools=0`) |
+| Capability | Models with native tool calls (`maxTools > 0`) | Models without them (`maxTools == 0`) |
 |---|---|---|
-| On-demand workspace file reading | ✅ via Path A (`runNativeAgentLoop`) | ✅ via Path B (`runTextualAgentLoop`, XML tags) |
+| On-demand workspace file reading | ✅ via Path A (`NativeAgentLoopService.run()`) | ✅ via Path B (`runTextualAgentLoop`, XML tags) |
 | Grep / glob across workspace | ✅ | ✅ (path B, model compliance required) |
 | Write / edit / bash with approval | ✅ | ✅ (path B, model compliance required) |
-| Streaming of text tokens during loop | ✅ (iter 1+ streamed) | ✅ (all iterations streamed) |
-| Streaming of thinking blocks | ✅ (iter 1+ only) | ✅ (streamed, model-dependent) |
+| Streaming of text tokens during loop | ✅ (all iterations streamed) | ✅ (all iterations streamed) |
+| Streaming of thinking blocks | ✅ (all iterations, model-dependent) | ✅ (streamed, model-dependent) |
 | Thinking toggle (enable/disable) | ✅ (se `thinkingCanBeDisabled=true`) | ✅ (se `thinkingCanBeDisabled=true`) |
 | Visible `tool_use` blocks in chat UI | ✅ (icona + label + pulsing dot) | ✅ (icona + label + pulsing dot) |
 | User approval modal for write/bash | ✅ | ✅ |
@@ -93,7 +93,7 @@ All minimum-gap items are now implemented. The following secondary features are 
 | **Few-shot examples in tool manual** | Proxy | `TEXTUAL_TOOL_MANUAL` includes two worked examples (list→read→answer, grep→answer) to improve Path B compliance on smaller models. |
 | **Auto-approve allowlist** | Proxy | `.claudio/auto-approve.json` with `pathPattern`/`cmdPattern` rules. See [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md). |
 | **Context compaction** | Proxy | Automatic at 80% of the model context, on incoming requests only — see the PARTIAL row in §3 for the in-loop gap. |
-| **Plan mode** | Proxy + Claudio | Shield button in toolbar toggles `POST /plan-mode`. Destructive actions blocked without modal. State synced back via `ConfigUpdate`. |
+| **Plan mode** | Proxy + Claudio | The mode selector posts to `POST /agent-mode` ([proxy-client.ts:194-199](../src/extension/proxy/proxy-client.ts#L194-L199)). Destructive actions blocked without modal. State synced back via `ConfigUpdate`. |
 
 The remaining gaps are full Claude Code parity items (lower priority):
 

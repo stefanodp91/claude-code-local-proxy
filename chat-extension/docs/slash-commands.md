@@ -32,7 +32,7 @@ These commands are sent to the proxy, which intercepts them before any LLM call.
 ```
 Example response:
 ## Proxy Status
-- **Proxy version:** 1.1.0
+- **Proxy version:** 1.4.0
 - **Target URL:** http://127.0.0.1:1234/v1/chat/completions
 - **Port:** 5678
 - **Node.js:** v20.11.0
@@ -51,12 +51,13 @@ Example response:
 
 ```
 Example response:
-**Anthropic-to-OpenAI Proxy** v1.1.0
+**Anthropic-to-OpenAI Proxy** v1.4.0
 ```
 
 - **Handler:** proxy
 - **Result type:** synthetic
 - **Prerequisites:** none
+- **Source of the number:** `version` in [`proxy/package.json`](../../proxy/package.json) — the example above tracks it and may lag a release
 
 ---
 
@@ -283,7 +284,7 @@ To add a new slash command:
 **Client commands** (extension host logic):
 1. Add an entry to `SLASH_COMMAND_REGISTRY` in [proxy/src/application/slashCommandInterceptor.ts](../../proxy/src/application/slashCommandInterceptor.ts) with `handler: "client"`
 2. Add the handler in `handleClientSlashCommand()` in [chat-extension/src/extension/chat-session.ts](../src/extension/chat-session.ts)
-3. Rebuild the extension: `npm run build && npm run package && code --install-extension claudio-0.1.0.vsix`
+3. Rebuild the extension: `npm run build && npm run package && code --install-extension claudio-1.5.0.vsix`
 
 ---
 

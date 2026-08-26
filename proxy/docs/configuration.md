@@ -37,7 +37,11 @@ All configuration is read once at startup by `loadConfig()` in `infrastructure/c
 ```
 MAX_TOOLS unset  →  ToolProbe runs binary search at startup
                     Detects maximum N the model handles
-                    Example: Nemotron = 7, Qwen 3.5 = 15
+                    Do not carry a number over from another model: the
+                    ceiling depends on architecture, chat template and how
+                    the backend parses that specific model. Measured on
+                    qwen/qwen3.8-27b (MLX 4-bit, 2026-08-26): >= 96, i.e.
+                    no failure found below the probe's own bound.
 
 MAX_TOOLS=0      →  No filtering. All tools pass through as-is.
                     Use when the model supports unlimited tools.
@@ -84,14 +88,14 @@ Auto-detection of the model's tool calling limit. Runs once at startup unless `M
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `PROBE_UPPER_BOUND` | int | `32` | Maximum number of tools to test during binary search. |
+| `PROBE_UPPER_BOUND` | int | `64` | Upper bound of the binary search. Must sit above the largest tool count any client sends — Claude Code CLI sends ~40 — or the probe reports its own ceiling instead of the model's. |
 | `PROBE_MAX_TOKENS` | int | `100` | `max_tokens` for each probe request. Keep low for speed. |
-| `PROBE_TIMEOUT` | int | `30000` | Timeout in milliseconds for each individual probe fetch request. If a probe request hangs (e.g. the model is slow to start), it is aborted after this delay. |
+| `PROBE_TIMEOUT` | int | `60000` | Timeout in milliseconds per probe request. A timeout is **inconclusive**, not a failure: the attempt is retried once at 3× this value before the search gives up on that point. Raise it for a large model on a cold start. |
 
 **How the probe works:**
 
 ```
-Binary search: lo=1, hi=32
+Binary search: lo=1, hi=64
 
   Test 16 tools → ❌ (model puts JSON in content text)
   Test  8 tools → ❌

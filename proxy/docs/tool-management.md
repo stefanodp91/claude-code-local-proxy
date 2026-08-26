@@ -252,7 +252,7 @@ detect(modelId):
   │     FAIL → model doesn't support tool calling at all → return 0
   │     PASS → proceed to binary search
   │
-  └── Binary search: lo=1, hi=PROBE_UPPER_BOUND(32)
+  └── Binary search: lo=1, hi=PROBE_UPPER_BOUND(64)
         │
         ├── mid = (lo + hi) / 2
         ├── Send request with mid dummy tools + tool_choice="required"

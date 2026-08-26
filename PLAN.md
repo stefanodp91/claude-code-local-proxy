@@ -72,7 +72,7 @@ né il soft switch Qwen `/no_think`. Quindi `thinkingCanBeDisabled: false` in
 
 ## 3. Fase 0 — fatta
 
-Quattro commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti.
+Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verde.
 
 - **`fix(proxy)`** — Il probe leggeva i timeout come limiti di capacità.
   `catch { return false }` rendeva timeout, errore di rete e "il modello non ha
@@ -89,15 +89,29 @@ Quattro commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti.
   mutua esclusività delle viste che non era mai avvenuta.
 - **`docs`** — Versioni, startup, e quattro auto-contraddizioni di
   `feature-gap.md`.
+- **`test(proxy)`** — Prima suite automatica del repository: `node:test`, 13
+  test, ~160 ms, senza GPU. Vedi la Fase 1 qui sotto.
+- **`ci`** — [`ci.yml`](.github/workflows/ci.yml): typecheck e test su ogni push
+  e ogni PR. È il commit che rende i test una barriera invece che un'abitudine.
+- **`docs`** (secondo giro) — `proxy/README.md` descriveva ancora un server Bun
+  a file singolo con `start.sh` e `start_claude_code.sh`: requisiti, quick start,
+  script e struttura file riscritti sul codice reale. Nuovo
+  [`proxy/docs/testing.md`](proxy/docs/testing.md), tre doc del proxy che non
+  erano linkate da nessun indice, gli anchor di riga di `feature-gap.md`
+  ricalcolati, e il docstring di `nativeAgentLoopService.ts` che contraddiceva
+  il proprio codice sullo streaming di iter-0.
 
 ---
 
 ## 4. Fase 1 — rete di sicurezza  ← **in corso**
 
-**Zero test automatici. Zero CI.** L'unico strumento è
+**Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa.
+gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 13 test su i18n e
+`ToolProbe`, eseguiti a ogni push — ma **la copertura è ancora agli inizi**: il
+gate di approvazione, i traduttori e `ToolManager` non sono coperti, ed è lì che
+la fase si chiude davvero.
 
 Questa è la fase che sblocca tutto il resto. Senza, ogni modifica successiva è
 una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
@@ -157,7 +171,7 @@ test del proxy, typecheck dell'estensione. Nessuna GPU, ed è il motivo per cui
 Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
 
 - **Compaction assente dentro il loop.** Scatta solo sulla richiesta in
-  ingresso ([`handleChatMessageUseCase.ts:250`](proxy/src/application/useCases/handleChatMessageUseCase.ts#L250)).
+  ingresso ([`handleChatMessageUseCase.ts:276`](proxy/src/application/useCases/handleChatMessageUseCase.ts#L276)).
   Dentro il loop ogni iterazione fa `messages.push()` senza ricontrollare il
   budget: con 40 iterazioni e `read` che tronca a 50 KB, un turno lungo può
   saturare il contesto a metà. È il gap più affilato rimasto.

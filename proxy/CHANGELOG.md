@@ -7,6 +7,46 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Documentation — README reconciled with the code it describes
+
+- **`README.md` still described a Bun single-file server.** Requirements asked
+  for Bun >= 1.0 and named `bun-types` as the only dependency; Quick Start ran
+  `bun install` and `./start.sh`; the Scripts section documented `start.sh` and
+  `start_claude_code.sh`, both deleted in v1.1.0; the File Structure block
+  listed a `proxy/server.ts` of "~500 lines" built on `Bun.serve()`. The proxy
+  has been Node + `tsx` with a hexagonal `src/` tree for several releases. All
+  four sections rewritten against the source, plus a real file map and a note on
+  where the layering rule is actually honoured and where it is not.
+
+- **Three docs were unreachable from any index.** `agent-loop.md`,
+  `permission-protocol.md` and `system-prompt-injection.md` existed but were
+  linked from neither README. Added to both.
+
+- **New [`docs/testing.md`](docs/testing.md)** — how to run the suites, why
+  `node:test` over a framework, what each suite locks down, the negative-control
+  results, the `pretest` guard, and the uncovered surface in priority order.
+
+- **`docs/configuration.md`**: `PROBE_UPPER_BOUND` documented as `32` and
+  `PROBE_TIMEOUT` as `30000` — both raised (64 / 60000) in this same release.
+  The `MAX_TOOLS` example quoted per-model tool ceilings measured by the
+  pre-fix probe, i.e. numbers produced by the latency bug; replaced with the
+  measured `>= 96` on `qwen/qwen3.8-27b` and an explicit warning not to carry a
+  ceiling across models.
+
+- **`docs/architecture.md`**: header said v1.2.0; `server.ts` was called the
+  composition root at "280 lines" when it is the HTTP router at 416 and
+  `main.ts` is the composition root; the domain box listed a `ports.ts` holding
+  `ILogger` instead of the seven-port directory. `thinkingProbe`,
+  `thinkingDetector`, `pythonExecutor`, `prompts/` and `test/` were missing from
+  the file map.
+
+- **`nativeAgentLoopService.ts` docstring contradicted its own code**, still
+  describing iteration 0 as a non-streaming probe. Every iteration has used
+  `stream: true` since streaming was extended to the whole loop; iteration 0
+  keeps only the fallback-guard role. The comment 200 lines below said so
+  correctly, which is the kind of split that outlives whoever remembers it.
+
+
 ### Fixed — Tool probe ceiling was below the tool count that matters
 
 - **`DEFAULT_PROBE_UPPER_BOUND` raised 32 → 64** (`infrastructure/config.ts`).

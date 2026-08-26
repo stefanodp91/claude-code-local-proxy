@@ -27,12 +27,16 @@ Claude Code (Anthropic SDK)
 
 ## Documentation
 
+- [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
 - [Architecture](docs/architecture.md) — hexagonal structure, request flow, SSE state machine, slash commands, workspace tool
 - [Configuration](docs/configuration.md) — complete reference for all environment variables
-- [Lifecycle](docs/lifecycle.md) — multi-instance architecture and port discovery
-- [Quick Setup](docs/quick-setup.md) — minimum configuration to get up and running
-- [Startup Scripts](docs/startup-scripts.md) — start_agent_cli.sh internals
+- [Agent Loop](docs/agent-loop.md) — Path A (native tool calls) and Path B (textual tags)
+- [Permission Protocol](docs/permission-protocol.md) — approval gate and the `tool_request_pending` SSE handshake
+- [System Prompt Injection](docs/system-prompt-injection.md) — what the proxy prepends, and when
 - [Tool Management](docs/tool-management.md) — scoring algorithm, UseTool, promotion, probe, persistent cache
+- [Testing](docs/testing.md) — automated suites, how to run them, what is not covered yet
+- [Lifecycle](docs/lifecycle.md) — multi-instance architecture and port discovery
+- [Startup Scripts](docs/startup-scripts.md) — start_agent_cli.sh internals
 
 ---
 
@@ -45,8 +49,9 @@ Claude Code (Anthropic SDK)
     - [.env.claude — Claude Code settings](#envclaude--claude-code-settings)
     - [Port map](#port-map)
 4.  [Scripts](#scripts)
-    - [start.sh](#startsh)
-    - [start_claude_code.sh](#start_claude_codesh)
+    - [npm scripts](#npm-scripts)
+    - [start_agent_cli.sh](#start_agent_clish)
+    - [scripts/regression.sh](#scriptsregressionsh)
 5.  [Design Principles](#design-principles)
 6.  [Sandbox Mode](#sandbox-mode)
 7.  [Architecture](#architecture)
@@ -63,9 +68,10 @@ Claude Code (Anthropic SDK)
 9.  [Verified Edge Cases](#verified-edge-cases)
 10. [Known Limitations](#known-limitations)
 11. [Model Compatibility](#model-compatibility)
-12. [Manual Testing](#manual-testing)
-13. [Troubleshooting](#troubleshooting)
-14. [File Structure](#file-structure)
+12. [Tests](#tests)
+13. [Manual Smoke Tests](#manual-smoke-tests)
+14. [Troubleshooting](#troubleshooting)
+15. [File Structure](#file-structure)
 
 ---
 
@@ -73,12 +79,18 @@ Claude Code (Anthropic SDK)
 
 | Requirement | Minimum version | Notes |
 |-------------|----------------|-------|
-| [Bun](https://bun.sh) | >= 1.0 | TypeScript runtime; powers `Bun.serve` |
+| [Node.js](https://nodejs.org) | >= 18 | Runs the proxy; CI builds on 24 |
 | Local LLM server | any | Must expose `POST /v1/chat/completions` |
-| Claude Code | any | The Anthropic CLI you want to connect |
+| Claude Code | any | The Anthropic CLI you want to connect — only needed for the CLI path |
 
-The only dependency is `bun-types` (dev-only, for IDE type checking). The proxy
-itself uses only Bun built-ins (`Bun.serve`, `fetch`, `ReadableStream`, `crypto`).
+**`dependencies` is empty and stays empty.** The proxy uses nothing but Node
+built-ins: `node:http`, `fetch`, `node:fs`, `node:crypto`. The four
+`devDependencies` (`tsx`, `tsup`, `typescript`, `@types/node`) never reach a
+running process — they type-check, run TypeScript sources directly, and bundle.
+
+That property is worth defending. It is what makes deployment a file copy, and
+what let the test suite be written against real objects instead of a mock
+framework.
 
 ---
 
@@ -87,10 +99,10 @@ itself uses only Bun built-ins (`Bun.serve`, `fetch`, `ReadableStream`, `crypto`
 ### 1. Install dependencies
 
 ```bash
-cd proxy && bun install
+cd proxy && npm install
 ```
 
-This installs `bun-types` (dev-only, needed for IDE type checking). Only required once.
+Installs the dev toolchain only — `dependencies` is empty. Required once.
 
 ### 2. Make sure your local LLM is running
 
@@ -100,34 +112,55 @@ Verify with:
 curl -s http://127.0.0.1:1234/v1/models | python3 -m json.tool
 ```
 
+Load the model **before** starting the proxy. The proxy probes the model's tool
+ceiling and thinking behaviour before it begins listening, so a cold model makes
+`/health` unreachable for a minute or more — which looks exactly like a hung
+proxy. See [Probe-before-listen](#probe-before-listen) below.
+
 ### 3. Run everything
 
 From the **repository root**:
 
 ```bash
-./start.sh
+sh start_agent_cli.sh
 ```
 
 The script will:
 
-1. Check that `bun` is installed and the LLM server is reachable
-2. Start the proxy in the background on port 5678
-3. Wait for the proxy health check to pass
-4. If no model is configured, query the LLM server and let you pick one interactively
-5. Launch `claude` with the right environment variables
-6. When you exit Claude Code, automatically shut down the proxy
+1. Find a free port, starting from `PROXY_PORT` (5678) and walking upward
+2. Check that `node` is installed and that the LLM server answers `/v1/models`
+3. Spawn the proxy in the background on the port it found, logging to `proxy.log`
+4. Poll `GET /health` until the proxy answers (30 attempts, 1s apart)
+5. If no model is configured, list the available models and let you pick one
+6. `exec claude` with the right environment variables
+7. Kill the proxy on exit, via a trap on `EXIT`/`INT`/`TERM`
 
-That's it. One command.
+Because the port is discovered per invocation, several agents can run side by
+side without colliding. Details in [Startup Scripts](docs/startup-scripts.md)
+and [Lifecycle](docs/lifecycle.md).
 
-### Alternative: run components separately
+### Alternative: run the proxy on its own
 
 ```bash
-# Terminal 1 — start proxy only
-bun run proxy/server.ts
+# Fixed port, foreground, no Claude Code
+cd proxy && npm start
 
-# Terminal 2 — start Claude Code only (proxy must be running)
-./start_claude_code.sh
+# Same, with a watcher that restarts on source changes
+cd proxy && npm run dev
 ```
+
+Claudio (the VS Code extension) needs none of this: it spawns and supervises its
+own proxy instance when the project folder opens.
+
+#### Probe-before-listen
+
+`main.ts` awaits model info and both probes — tool limit and thinking — and only
+then calls `start()`. Nothing answers on the port until probing finishes. This is
+deliberate (a request served before the tool ceiling is known would be routed on
+a guess), but it means "connection refused" during the first minute after launch
+is normal rather than a failure. A model already resident in LM Studio removes
+the delay almost entirely; `model-cache.json` removes the tool probe on every
+subsequent start with the same model.
 
 ---
 
@@ -140,9 +173,14 @@ All configuration lives in two `.env` files. Environment variables set in the sh
 
 | Variable | Default | Required | Description |
 |----------|---------|:--------:|-------------|
-| `PROXY_PORT` | `5678` | No | Port the proxy listens on |
+| `PROXY_PORT` | `5678` | No | Port the proxy listens on. The launchers walk upward from here to find a free one |
 | `TARGET_URL` | `http://127.0.0.1:1234/v1/chat/completions` | No | Full URL of the OpenAI-compatible endpoint |
 | `DEBUG` | `0` | No | Set to `1` for verbose SSE event logging |
+
+These three are the ones you are likely to touch. There are about twenty more — tool
+limits and probe bounds, scoring weights, agent iteration tiers, compaction
+thresholds — all parsed in one place by `loadConfig()` and documented in
+[Configuration](docs/configuration.md). No module reads `process.env` directly.
 
 ### .env.claude — Claude Code settings
 
@@ -175,37 +213,41 @@ Jenkins, etc.) and to stay away from the LLM server ports listed above.
 
 ## Scripts
 
-### start.sh
+### npm scripts
 
-**Orchestrator** — starts everything in the right order and cleans up on exit.
+| Script | Command | What it does |
+|---|---|---|
+| `npm start` | `node --import tsx src/main.ts` | Runs the proxy from TypeScript sources, no build step |
+| `npm run dev` | `tsx --watch src/main.ts` | Same, restarting on source changes |
+| `npm run build` | `tsup … --outDir dist` | Bundles an ESM build targeting Node 18 |
+| `npm run typecheck` | `tsc --noEmit` | Type-checks `src/` **and** `test/` |
+| `npm test` | `node --import tsx --test "test/**/*.test.ts"` | Runs the automated suites — see [Tests](#tests) |
 
-```
-1. Load .env.proxy
-2. Verify bun is installed
-3. Verify the LLM server is reachable
-4. Check that PROXY_PORT is available
-5. Start the proxy in the background (bun run proxy/server.ts)
-6. Wait for the proxy health check (GET /health, retry with timeout)
-7. Call ./start_claude_code.sh in the foreground
-8. On exit (EXIT/INT/TERM), kill the proxy process
-```
+`npm test` is preceded by a `pretest` guard that fails the run when the glob
+matches no files. `node --test` exits 0 on an empty run, so without it a broken
+glob would report success while verifying nothing.
 
-### start_claude_code.sh
+### start_agent_cli.sh
 
-**Claude Code launcher** — can also be called standalone when the proxy is already
-running (useful for restarting Claude Code without restarting the proxy).
+Lives at the **repository root**, not in `proxy/`. One command that finds a free
+port, spawns a proxy, waits for its health check, offers an interactive model
+picker, launches Claude Code, and tears the proxy down on exit. The flow is
+listed under [Quick Start](#3-run-everything) and dissected in
+[Startup Scripts](docs/startup-scripts.md).
 
-```
-1. Load proxy/.env.proxy (for PROXY_PORT)
-2. Load proxy/.env.claude
-3. If ANTHROPIC_MODEL is empty:
-   a. GET /v1/models from the LLM server
-   b. Display a numbered list of available models (excluding embeddings)
-   c. Prompt the user to pick one
-4. Resolve ${PROXY_PORT} in ANTHROPIC_BASE_URL
-5. Export all variables
-6. exec claude (replaces the shell process)
-```
+> The earlier `start.sh` and `start_claude_code.sh` pair no longer exists. The
+> CLI half became `start_agent_cli.sh`; the supervision half became
+> `ProxyManager` inside Claudio.
+
+### scripts/regression.sh
+
+A curl-driven snapshot of proxy behaviour against a **live** backend: it needs
+the proxy running, LM Studio up, and a model loaded. That makes it useful before
+a release and unusable as a merge gate — it cannot run on CI, which has no GPU.
+
+It is not a substitute for `npm test`, and the two should not be conflated: one
+checks that the translation logic is correct, the other checks that a particular
+model still behaves the way it did last week.
 
 ---
 
@@ -261,8 +303,8 @@ The startup scripts enable **sandbox mode** (`CLAUDE_CODE_SIMPLE=1`, also known 
 | LSP / skill scanning | **Skipped** — reduces startup overhead |
 | Authentication | **API key only** — uses `ANTHROPIC_API_KEY` from `.env.claude` |
 
-This is controlled by three environment variables in `.env.claude` (and enforced by
-`start_claude_code.sh`):
+This is controlled by three environment variables in `.env.claude`, exported by
+`start_agent_cli.sh` before it execs `claude`:
 
 ```env
 CLAUDE_CODE_SIMPLE=1       # Core sandbox — ~30 gates across the codebase
@@ -580,7 +622,50 @@ model-specific logic.
 
 ---
 
-## Manual Testing
+## Tests
+
+```bash
+cd proxy && npm test
+```
+
+13 tests, ~160 ms, no GPU, no LM Studio, no model loaded, no network. That is
+the property that matters: it is why these can gate a pull request while
+`scripts/regression.sh` cannot.
+
+| Suite | Covers |
+|---|---|
+| [`test/i18n.test.ts`](test/i18n.test.ts) | Every key passed to `t()` exists in every locale; every locale is a *flat* map of strings; locales do not drift apart |
+| [`test/toolProbe.test.ts`](test/toolProbe.test.ts) | `ToolProbe` outcome triage — a refusal searches downward, a timeout is retried rather than believed, an HTTP error is not read as a capability, a persistent timeout caps the search and says so |
+
+Both suites exist because the bug they describe actually happened. `t()` returns
+the key itself when a lookup misses and locale files arrive through `JSON.parse`,
+so a *nested* key type-checks perfectly and reaches the user as the raw string
+`tools.unsupportedByModel`. The probe collapsed every failure into `false`, so a
+slow reply at 48 tools was indistinguishable from a model that could not handle
+48 tools — and since more tools means a longer prompt and a slower reply, the
+timeouts clustered exactly on the boundary the binary search was looking for.
+
+Tests are covered by `npm run typecheck`, and both suites were verified by
+negative control: reintroducing the nested locale key fails 2 of the 5 i18n
+tests, and restoring `catch { return false }` fails exactly the 4 triage tests
+and nothing else. A test that does not fail when the bug returns is decoration.
+
+`LlmClientPort` and `SseWriterPort` are already ports, so they are fake-able
+without a mock framework — the hexagonal architecture is paid for, it just has
+to be used. `ToolProbe` still reaches for global `fetch` and the test stubs it;
+if it ever becomes a port, that test gets simpler on its own.
+
+What is **not** covered yet, in the order it is worth covering: the approval
+gate, the request/response translators and the SSE state machine, then
+`ToolManager` scoring and overflow. See [Testing](docs/testing.md) and
+[PLAN.md](../PLAN.md).
+
+---
+
+## Manual Smoke Tests
+
+The curl calls below exercise the paths the automated suites do not reach yet.
+They need a running proxy and a loaded model.
 
 ### Health check
 
@@ -768,8 +853,11 @@ Anthropic SDK requires this variable to be present.
 
 ### Port already in use
 
-If you see "Port 5678 is already in use", either:
-- Another proxy instance is running — kill it first
+`start_agent_cli.sh` and Claudio both walk upward from `PROXY_PORT` until they
+find a free port, so a busy 5678 is not normally fatal. You only see this when
+starting the proxy directly with `npm start`, which honours `PROXY_PORT` exactly:
+
+- Another proxy instance is running — kill it, or let the launcher pick a port
 - Another service uses that port — change `PROXY_PORT` in `.env.proxy`
 
 ### Verbose debugging
@@ -777,10 +865,12 @@ If you see "Port 5678 is already in use", either:
 To see every translated SSE event and full request/response bodies:
 
 ```bash
-DEBUG=1 bun run proxy/server.ts
+cd proxy && DEBUG=1 npm start
 ```
 
-Or set `DEBUG=1` in `.env.proxy`.
+Or set `DEBUG=1` in `.env.proxy`. When the proxy was launched by
+`start_agent_cli.sh` the output is in `proxy.log` at the repository root; when it
+was launched by Claudio, in the extension's output channel.
 
 ---
 
@@ -788,16 +878,61 @@ Or set `DEBUG=1` in `.env.proxy`.
 
 ```
 ./
-  start.sh                 Orchestrator: proxy + health check + Claude Code + cleanup
-  start_claude_code.sh     Claude Code launcher with interactive model selection
+  start_agent_cli.sh       Port discovery + proxy spawn + model picker + claude, with cleanup trap
+  .github/workflows/ci.yml Typecheck & tests on push and pull request (no GPU required)
   proxy/
-    server.ts              Server proxy (~500 lines TypeScript)
-                             translateRequest()    — Anthropic to OpenAI (sync, pure)
-                             translateResponse()   — OpenAI to Anthropic (non-streaming)
-                             translateStream()     — OpenAI SSE to Anthropic SSE (state machine)
-                             handleMessages()      — main POST /v1/messages handler
-                             Bun.serve()           — HTTP routing
-    .env.proxy             Proxy configuration (port, target URL, debug)
-    .env.claude            Claude Code configuration (model, API key, base URL)
+    src/
+      main.ts              Composition root: loads config, builds adapters, probes, then listens
+      domain/              Pure types, entities and ports. No I/O, no Node imports
+        types.ts             Anthropic/OpenAI shapes, SSE event names, enums
+        i18n.ts              t() — flat key lookup, returns the key on a miss
+        entities/            workspaceAction, existingPlan
+        ports/               llmClient, sseWriter, logger, clock, approvalInteractor,
+                             planFileRepository, promptRepository
+      application/         Translation and orchestration. Depends on ports only
+        requestTranslator.ts   Anthropic → OpenAI (sync, pure)
+        responseTranslator.ts  OpenAI → Anthropic (non-streaming)
+        streamTranslator.ts    OpenAI SSE → Anthropic SSE (state machine)
+        toolManager.ts         Scoring, selection, UseTool overflow, promotion decay
+        slashCommandInterceptor.ts  Handles /commit, /diff, /plan … before the LLM
+        workspaceTool.ts       list/read/grep/glob/write/edit/bash/python definitions
+        textualAgentLoop.ts    Path B — XML-tag actions for models with no tool support
+        services/              nativeAgentLoopService (Path A), approvalGateService,
+                               systemPromptBuilder
+        useCases/              handleChatMessage (the routing decision), resolveApproval
+      infrastructure/      Everything that touches the outside world
+        server.ts              node:http routing: /v1/messages, /v1/messages/:id/approve,
+                               /v1/exec-python, /health, /config, /commands, /agent-mode
+        config.ts              loadConfig() — the only reader of process.env
+        modelInfo.ts           LM Studio /api/v0/models metadata
+        toolProbe.ts           Binary search for the model's tool ceiling
+        toolLimitDetector.ts   Probe orchestration + cache read/write
+        thinkingProbe.ts       Detects whether reasoning is emitted and suppressible
+        pythonExecutor.ts      Auto-managed venv for the python action
+        workspaceActions.ts    Filesystem and shell execution
+        persistentCache.ts     model-cache.json
+        adapters/              fetchLlmClient, nodeSseWriter, sseApprovalInteractor,
+                               fsPlanFileRepository, fsPromptRepository, systemClock,
+                               autoApproveConfig
+    test/                  node:test suites — see [Tests](#tests)
+    docs/                  Long-form documentation (see [Documentation](#documentation))
+    locales/               en_US.json — flat map, one level, strings only
+    prompts/en_US/         agent-base, plan-mode, existing-plan-section
+    scripts/regression.sh  Live-backend snapshot; needs a GPU, cannot run on CI
+    model-cache.json       Per-model maxTools, written after a successful probe
+    .env.proxy             Proxy configuration (git-ignored)
+    .env.claude            Claude Code configuration (git-ignored)
     README.md              This file
 ```
+
+The dependency rule points one way and is enforced by review, not by tooling:
+`domain` imports nothing outside itself, `application` depends on `domain` and
+its ports, `infrastructure` depends on both and owns every adapter.
+
+The rule is fully honoured in `domain/`. In `application/` there are three known
+exceptions, all predating the hexagonal refactor: `workspaceTool.ts` reads the
+filesystem through `node:fs`, `slashCommandInterceptor.ts` shells out through
+`node:child_process`, and `approvalGateService.ts` resolves paths with
+`node:path`. They are listed here so the gap is visible rather than discovered —
+each is a candidate for a port, and each would make the corresponding test
+simpler if it became one.

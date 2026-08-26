@@ -4,14 +4,15 @@
  * Orchestrates multi-iteration LLM ↔ workspace interaction for models that
  * support native tool_call syntax (maxTools > 0). Each turn proceeds as:
  *
- *   Iter-0: non-streaming probe (stream:false) — acts as a fallback guard.
- *     - If the model returns nothing: delegates to normal streaming (returns "fallthrough").
- *     - If the model returns text only: emits it and ends.
- *     - If the model calls tools: executes them and continues to iter-1+.
+ *   Every iteration streams (stream:true): thinking and text deltas are
+ *     forwarded to the client as they arrive, tool calls are accumulated, and
+ *     at [DONE] the tool_use blocks are emitted and the calls executed before
+ *     the loop repeats.
  *
- *   Iter-1+: streaming (stream:true) — forwards thinking/text deltas live and
- *     accumulates tool calls. When [DONE] is received, tool_use blocks are
- *     emitted and tool calls are executed, then the loop repeats.
+ *   Iter-0 additionally acts as a fallback guard: if the model produces no
+ *     output at all — no text, no thinking, no tool calls — `run()` returns
+ *     "fallthrough" and the caller retries as a plain streaming completion
+ *     without the workspace-tool constraint.
  *
  * Depends only on domain ports and `ApprovalGateService`. Has no direct
  * dependency on `node:http`, `node:fs`, or `fetch`.
