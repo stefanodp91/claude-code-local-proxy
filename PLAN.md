@@ -108,10 +108,10 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 33 test su i18n,
-`ToolProbe` e il gate di approvazione, eseguiti a ogni push — ma **la copertura
-non è ancora completa**: i traduttori e `ToolManager` restano scoperti, ed è lì
-che la fase si chiude davvero.
+gira senza GPU accesa. Oggi l'infrastruttura c'è ed è verde — 97 test
+eseguiti a ogni push — e i quattro punti più esposti sono coperti. Resta
+`ToolManager`, più il predicato dell'allowlist: **la fase non è chiusa**, ma da
+qui in avanti ogni modifica ha qualcosa che la guarda.
 
 Questa è la fase che sblocca tutto il resto. Senza, ogni modifica successiva è
 una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
@@ -144,16 +144,50 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
    troppo dà fastidio, un gate che smette di chiedere è il guasto vero e non lo
    segnala nessuno. Ha fatto emergere un bug reale — vedi sotto. Verificato per
    negativo su tre fronti: 1, 2 e 1 test falliti, esattamente quelli attesi.
-4. **Traduttori**  ← **prossimo** — request, response, e la macchina a stati SSE
-   di [`streamTranslator.ts`](proxy/src/application/streamTranslator.ts). È il
-   percorso che *entrambe* le superfici attraversano sempre.
-5. **`ToolManager`** — scoring, overflow `UseTool`, decadimento delle
-   promozioni.
+4. ~~**Traduttori**~~ — **fatto.** 64 test su tre file: request (25), response
+   (16) e la macchina a stati SSE (23). È il percorso che *entrambe* le
+   superfici attraversano sempre. Hanno trovato **tre bug**, nessuno dei quali
+   lanciava un errore o falliva un typecheck — vedi sotto. Verificato per
+   negativo: 3, 1 e 1 test falliti, esattamente quelli attesi.
+5. **`ToolManager`**  ← **prossimo** — scoring, overflow `UseTool`, decadimento
+   delle promozioni. Le suite dei traduttori lo sostituiscono con un fake,
+   quindi il suo comportamento resta non verificato — e il bug dell'overflow qui
+   sotto mostra quanto costi.
 6. **`checkAutoApprove()`** — il predicato dell'allowlist. I test del gate lo
    sostituiscono con un fake, quindi il matching `pathPattern` / `cmdPattern` in
    [`autoApproveConfig.ts`](proxy/src/infrastructure/adapters/autoApproveConfig.ts)
    resta non verificato: è l'unico punto dove un pattern troppo generoso allarga
    in silenzio ciò che gira senza chiedere.
+
+> **I tre bug dei traduttori.** Nessuno alzava un errore, e per questo erano
+> ancora lì.
+>
+> 1. **Gli argomenti di `UseTool` venivano accumulati due volte.** Alla
+>    registrazione della tool call il campo `arguments` veniva inizializzato col
+>    primo frammento, che l'accumulatore subito sotto ri-appendeva. I tool
+>    normali non leggono quel campo — inoltrano `tc.function.arguments` così
+>    com'è — quindi il danno era tutto su `UseTool`, dove quella stringa è ciò
+>    che `rewriteUseToolCall()` deve parsare. Una chiamata che arriva intera in
+>    un solo delta, cioè il caso comune, produceva
+>    `{"tool":"Grep"}{"tool":"Grep"}`: parse fallito, rewrite null, e al client
+>    arrivava un blocco `UseTool` ineseguibile. **Il percorso di overflow era
+>    rotto**, in silenzio, e solo sui modelli con pochi tool — gli unici che ne
+>    hanno bisogno.
+> 2. **Il blocco thinking era inchiodato all'indice 0.** Il reasoning arriva
+>    quasi sempre per primo, quindi quasi sempre andava bene; un backend che
+>    emette una riga di testo *prima* del reasoning si ritrovava un blocco
+>    thinking aperto sopra il blocco testo vivo, e i delta successivi finivano su
+>    un indice mai aperto.
+> 3. **Gli spazi di padding aprivano comunque un blocco di testo.** La guardia
+>    esistente scarta il contenuto whitespace-only quando una tool call è già
+>    nota, ma l'ordine tipico è l'opposto: il modello emette `"\n\n"` e *poi*
+>    chiama il tool. Il README dichiarava il caso gestito; in streaming non lo
+>    era.
+>
+> Il primo è quello che i test hanno quasi mancato: il test iniziale su `UseTool`
+> asserviva sul *nome riscritto*, che il fake restituisce comunque, e passava
+> contro il bug. L'ha preso il test di fallback, dove gli argomenti grezzi
+> finiscono sul filo. Ora il fake registra ogni stringa che riceve.
 
 > **Il bug che i test hanno trovato.** Il gate registrava una concessione
 > `scope: "file"` con `full.startsWith(workspaceCwd)`. Non è un test di
@@ -167,7 +201,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 33 test / ~160 ms, senza GPU e senza rete.
+`npm test` in 97 test / ~165 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -201,6 +235,21 @@ Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
   parallelo delle azioni read-only. Con un modello che supporta i tool, Path B
   è un fallback: **non serve portarlo alla pari, serve che smetta di mentire** e
   sia marcato come degradato.
+- **`tool_choice: "any"` viene mappato su `auto`.** In Anthropic `any` significa
+  *"devi chiamare un tool, scegli tu"*; l'equivalente OpenAI è `required`, che
+  questo backend supporta — il probe stesso lo usa. Mapparlo su `auto` lascia il
+  modello libero di rispondere in prosa quando il client aveva chiesto una tool
+  call. Non l'ho cambiato: forzare una chiamata è esattamente il tipo di
+  pressione che alcuni modelli locali gestiscono male, e il compromesso è una
+  decisione da prendere, non da dedurre. Un test lo fissa al comportamento
+  attuale e rimanda qui.
+- **Uno stream troncato non si chiude.** Se l'upstream cade senza `[DONE]` né
+  `finish_reason`, il proxy emette `message_start`, apre il blocco e poi chiude
+  il controller: niente `content_block_stop`, niente `message_delta`, niente
+  `message_stop` (misurato, non dedotto). Il client resta con un blocco aperto.
+  La correzione richiede una scelta: emettere un evento `error`, oppure
+  sintetizzare la chiusura — ma con quale `stop_reason`? Presentare un troncamento
+  come `end_turn` sarebbe una bugia, ed è la ragione per cui non l'ho deciso io.
 - **`bash` blocca l'event loop** fino a 30s (`spawnSync` in
   [`workspaceActions.ts`](proxy/src/infrastructure/workspaceActions.ts)).
   Accettabile per un proxy locale monoutente; da sapere, non da correggere ora.

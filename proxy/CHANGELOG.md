@@ -7,6 +7,77 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Fixed — UseTool arguments were accumulated twice, breaking tool overflow
+
+- **`streamTranslator` seeded a streamed tool call's `arguments` with the first
+  delta's fragment**, which the accumulator on the next line then appended
+  again. Normal tools never read that field — they forward
+  `tc.function.arguments` untouched — so the damage fell entirely on `UseTool`,
+  where the accumulated string is what `rewriteUseToolCall()` must `JSON.parse`.
+
+  A call arriving whole in a single delta, which is the common shape, produced
+  `{"tool":"Grep"}{"tool":"Grep"}`. The parse threw, the rewrite returned null,
+  and the client received a `UseTool` block it cannot execute. The tool overflow
+  path was broken — silently, with nothing logged — and only on models with a low
+  enough tool ceiling to need it in the first place.
+
+### Fixed — Thinking block pinned to index 0
+
+- **`handleReasoning()` set `contentIndex = 0` unconditionally.** Reasoning
+  almost always arrives first, so this was almost always right; a backend that
+  emits a line of text *before* its reasoning got a thinking block opened on top
+  of the live text block, and every text delta after it landed on an index that
+  was never started — malformed for the Anthropic SDK, which is a parser. It now
+  closes an open text block first, mirroring what `handleContent()` already did
+  in the other direction, and remembers which index it used.
+
+### Fixed — Whitespace padding still opened a text block while streaming
+
+- **The existing guard only drops whitespace-only content once a tool call is
+  known about**, but the usual order is the reverse: the model emits `"\n\n"`
+  and *then* calls the tool, so by the time the padding could be recognised the
+  block was open and the client was already rendering an empty bubble. The
+  README described this case as handled; in streaming it was not. Whitespace
+  that would open a text block is now held back — flushed ahead of the next real
+  text, discarded if a tool call arrives instead.
+
+### Added — Translator test suites (64 tests)
+
+- **`test/requestTranslator.test.ts`** (25) — system prompt shapes, the two
+  orderings that matter on the wire (tool results before the user text that
+  follows them, image parts before their caption), tool and `tool_choice`
+  mapping, `max_tokens` capping, and the explicit `enable_thinking` true/false.
+
+- **`test/responseTranslator.test.ts`** (16) — block order, UseTool rewriting,
+  stop-reason mapping including tool_use blocks outranking a backend that
+  reports `"stop"`, and the never-empty content array the SDK requires.
+
+- **`test/streamTranslator.test.ts`** (23) — the state machine. Every test also
+  asserts one structural invariant, `assertWellFormed()`: each delta sits inside
+  a start/stop pair for its own index and nothing is left open. Two of the three
+  bugs above were caught by that helper rather than by the assertion the test
+  was written for.
+
+  The suite drives explicit chunk boundaries, because the boundaries are half
+  the behaviour: a `data:` line split across two reads has to survive, and a
+  usage-only chunk arriving after `finish_reason` still has to reach the final
+  `message_delta`.
+
+- **`test/fakes.ts`** — shared doubles. Not collected by the runner's glob, but
+  included in `tsconfig.json`, so a fake that drifts out of shape with the
+  interface it stands in for fails the typecheck. It records every argument
+  string handed to `rewriteUseToolCall()`, which is what the UseTool regression
+  test asserts on — the earlier version checked only the rewritten name, which a
+  fake supplies regardless, and passed against the bug.
+
+- Negative control on each fix: re-seeding the arguments fails exactly 3 tests,
+  pinning thinking to index 0 fails exactly 1, dropping the whitespace buffer
+  fails exactly 1.
+
+- `npm test` is now 97 tests in ~165 ms, still with no GPU, no LM Studio and no
+  model loaded.
+
+
 ### Fixed — Approval gate treated a sibling directory as inside the workspace
 
 - **`ApprovalGateService` recorded `scope: "file"` grants** with

@@ -505,8 +505,14 @@ Anthropic SDK treats them as opaque strings, so they work fine.
 ### Spurious content with tool calls
 
 The model often produces `content: "\n\n"` even when making tool calls. The proxy
-filters out empty/whitespace-only content when tool_calls are present, preventing
-empty text blocks in the Anthropic response.
+drops empty/whitespace-only content when tool_calls are present, preventing empty
+text blocks in the Anthropic response.
+
+Streaming needs a second mechanism for it. The usual order is padding *first* and
+the tool call second, so at the moment the whitespace arrives nothing yet knows a
+call is coming. Whitespace that would open a text block is therefore held back:
+flushed ahead of the next real text, and discarded if a tool call turns up
+instead. Covered by [`test/streamTranslator.test.ts`](test/streamTranslator.test.ts).
 
 ### Streaming order with tool calls
 
@@ -628,7 +634,7 @@ model-specific logic.
 cd proxy && npm test
 ```
 
-33 tests, ~160 ms, no GPU, no LM Studio, no model loaded, no network. That is
+97 tests, ~165 ms, no GPU, no LM Studio, no model loaded, no network. That is
 the property that matters: it is why these can gate a pull request while
 `scripts/regression.sh` cannot.
 
@@ -637,6 +643,9 @@ the property that matters: it is why these can gate a pull request while
 | [`test/i18n.test.ts`](test/i18n.test.ts) | Every key passed to `t()` exists in every locale; every locale is a *flat* map of strings; locales do not drift apart |
 | [`test/toolProbe.test.ts`](test/toolProbe.test.ts) | `ToolProbe` outcome triage — a refusal searches downward, a timeout is retried rather than believed, an HTTP error is not read as a capability, a persistent timeout caps the search and says so |
 | [`test/approvalGate.test.ts`](test/approvalGate.test.ts) | The `write`/`edit`/`bash`/`python` gate — precedence of plan mode, auto mode, trusted files and the allowlist; which approval scopes persist and which must not; workspace containment of a `scope: "file"` grant |
+| [`test/requestTranslator.test.ts`](test/requestTranslator.test.ts) | Anthropic → OpenAI — system prompt shapes, tool-result and image ordering, tool and tool_choice mapping, `max_tokens` capping, explicit `enable_thinking` |
+| [`test/responseTranslator.test.ts`](test/responseTranslator.test.ts) | OpenAI → Anthropic, non-streaming — block order, UseTool rewriting, stop-reason mapping, the never-empty content array |
+| [`test/streamTranslator.test.ts`](test/streamTranslator.test.ts) | The SSE state machine — block lifecycle and indices, split and merged chunk boundaries, deferred UseTool emission, usage arriving after `finish_reason` |
 
 Both suites exist because the bug they describe actually happened. `t()` returns
 the key itself when a lookup misses and locale files arrive through `JSON.parse`,
@@ -656,10 +665,9 @@ without a mock framework — the hexagonal architecture is paid for, it just has
 to be used. `ToolProbe` still reaches for global `fetch` and the test stubs it;
 if it ever becomes a port, that test gets simpler on its own.
 
-What is **not** covered yet, in the order it is worth covering: the
-request/response translators and the SSE state machine, then `ToolManager`
-scoring and overflow, then the allowlist predicate itself — the gate's tests
-fake it. See [Testing](docs/testing.md) and [PLAN.md](../PLAN.md).
+What is **not** covered yet: `ToolManager` scoring and overflow, and the
+allowlist predicate itself — the gate's tests fake it. See
+[Testing](docs/testing.md) and [PLAN.md](../PLAN.md).
 
 ---
 
