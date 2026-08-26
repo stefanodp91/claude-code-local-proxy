@@ -222,13 +222,26 @@ export class ChatSession implements vscode.Disposable {
     this.healthChecker.start();
   }
 
-  /** Detach current view without disposing the session itself. */
+  /**
+   * Detach the current view, closing it from our side when that is possible.
+   *
+   * `activeViewDisposeFn` used to be assigned and then dropped without ever
+   * being called, so the mutual exclusivity promised by `attachView()` never
+   * happened: opening the panel while the sidebar was attached left the old
+   * view on screen with a dead bridge behind it.
+   *
+   * The handle is cleared *before* being invoked: disposing a WebviewPanel
+   * fires its own `onDidDispose`, which calls back into this method, and
+   * clearing first is what stops that from recursing.
+   */
   detachView(): void {
     if (this.bridge) {
       this.bridge.dispose();
       this.bridge = null;
     }
+    const disposeFn = this.activeViewDisposeFn;
     this.activeViewDisposeFn = null;
+    disposeFn?.();
   }
 
   dispose(): void {

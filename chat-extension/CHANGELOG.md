@@ -5,6 +5,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — 2026-08-26
+
+### Fixed — View mutual exclusivity never actually happened
+
+- **`ChatSession.detachView()`** now invokes `activeViewDisposeFn` instead of
+  discarding it. The field was assigned in `attachView()` and nulled in
+  `detachView()` without ever being called, so the "close previous view"
+  behaviour promised by both docstrings did not exist: opening the panel while
+  the sidebar was attached left the old view on screen with a dead bridge
+  behind it. The handle is cleared before being invoked — disposing a
+  `WebviewPanel` fires its own `onDidDispose`, which re-enters `detachView()`.
+
+- **`SidebarProvider`** passed `() => webviewView.dispose()`, but
+  `vscode.WebviewView` has no `dispose()` — a view in the Activity Bar cannot
+  be closed programmatically. This was the repository's only `tsc --noEmit`
+  error. It now passes a documented no-op.
+
+---
+
 ## [1.5.0] — 2026-04-12
 
 ### Changed — Python execution moved to proxy
