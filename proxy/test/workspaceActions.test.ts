@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { executeAction, safeResolvePath } from "../src/infrastructure/workspaceActions";
+import { executeAction, safeResolvePath, type ActionOutcome } from "../src/infrastructure/workspaceActions";
 import { WorkspaceAction, type ActionArgs } from "../src/domain/entities/workspaceAction";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,8 +34,13 @@ let ws: string;
 beforeEach(() => { ws = mkdtempSync(join(tmpdir(), "claudio-actions-")); });
 afterEach(() => { rmSync(ws, { recursive: true, force: true }); });
 
-/** Run an action against the temp workspace. */
-function run(args: Partial<ActionArgs>): Promise<string> {
+/** Run an action against the temp workspace and read the text it produced. */
+async function run(args: Partial<ActionArgs>): Promise<string> {
+  return (await runOutcome(args)).text;
+}
+
+/** The full outcome — text plus any image. */
+function runOutcome(args: Partial<ActionArgs>): Promise<ActionOutcome> {
   return executeAction(args as ActionArgs, ws);
 }
 
@@ -286,9 +291,9 @@ test("an unknown action lists the ones that exist", async () => {
   assert.match(out, /read/, "the model needs to be told what it may use instead");
 });
 
-test("every failure comes back as a string the model can act on", async () => {
+test("every failure comes back as text the model can act on", async () => {
   // The contract executeAction documents. A throw here propagates into the
-  // agent loop and ends the turn, where a string is just another observation.
+  // agent loop and ends the turn, where text is just another observation.
   const attempts: Partial<ActionArgs>[] = [
     { action: WorkspaceAction.Read, path: "missing" },
     { action: WorkspaceAction.Read, path: "/etc/passwd" },
@@ -301,7 +306,19 @@ test("every failure comes back as a string the model can act on", async () => {
   ];
 
   for (const args of attempts) {
-    const out = await run(args);
-    assert.equal(typeof out, "string", `${JSON.stringify(args)} did not return a string`);
+    const out = await runOutcome(args);
+    assert.equal(typeof out.text, "string", `${JSON.stringify(args)} did not return text`);
+    assert.equal(out.image, undefined, `${JSON.stringify(args)} produced an image`);
   }
+});
+
+test("an action that draws nothing carries no image", async () => {
+  // The picture is the exception, not the shape of every result: only a python
+  // figure sets it, and a caller that finds one attaches it to the model.
+  put("a.txt", "hello");
+
+  const out = await runOutcome({ action: WorkspaceAction.Read, path: "a.txt" });
+
+  assert.equal(out.text, "hello");
+  assert.equal(out.image, undefined);
 });

@@ -193,7 +193,11 @@ NativeAgentLoopService.run(writer, openaiReq, workspaceCwd, thinkingEnabled):
 
 **Destructive actions remain sequential**: the approval gate presents one modal at a time. If the user approves with `scope="turn"`, all remaining destructive actions in that turn are auto-approved via `state.allowAllThisTurn`.
 
-**Python execution** (`action="python"`): classified as destructive (approval gate required). The `cmd` parameter contains Python source code. The proxy runs it in a per-workspace venv at `<workspaceCwd>/<PYTHON_VENV_DIR>`. Missing packages are auto-installed; `plt.show()` is intercepted and the plot returned as base64 PNG.
+**Python execution** (`action="python"`): classified as destructive (approval gate required). The `cmd` parameter contains Python source code. The proxy runs it in a per-workspace venv at `<workspaceCwd>/<PYTHON_VENV_DIR>`. Missing packages are auto-installed; `plt.show()` is intercepted and the plot captured as a PNG.
+
+**A figure goes to the model as an image, not as base64 text.** `executeAction` returns an `ActionOutcome` — `text` for the model to read, plus an optional `image`. Where that image can travel is decided by the wire format: `role: "tool"` takes a string, and every tool result of an assistant turn must follow that turn with nothing wedged between, so Path A appends all tool results first and then one user message carrying the images the batch produced. Path B has no tool messages at all — its `<observation>` already is a user turn, so the image rides inside it. Both go through [`services/actionOutcome.ts`](../src/application/services/actionOutcome.ts).
+
+The image is attached only when the loaded model reports `type: "vlm"`. On a text-only model the result says an image was produced and was not attached, and suggests saving the figure to a file — silence there would leave the model answering about a picture it never received.
 
 ---
 

@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 261 tests, ~370 ms
+npm test          # 275 tests, ~390 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -359,6 +359,38 @@ a pair every time.
 
 ---
 
+## Where an action's image goes
+
+### `actionOutcome.test.ts`
+
+13 tests on the one question a `python` figure raises: where does the picture go?
+
+Until now it went nowhere — its base64 *was* the tool-result string, so the model
+paid tens of thousands of tokens for text it cannot read. The answer is decided
+by the wire format rather than by preference:
+
+- `role: "tool"` takes a **string**; an image part there is rejected.
+- Every tool result of an assistant turn must follow that turn with nothing in
+  between, so the image cannot even go straight after the result that produced
+  it — Path A appends every tool result first, then one user message carrying
+  the batch's images.
+- Path B has no tool messages: its `<observation>` already is a user turn, so
+  the image goes inside it, and the content stays a plain string when there is
+  no image to carry.
+
+A text-only model is told an image was produced and is not sent it. Both halves
+matter: attaching to a text model is a rejected request, and saying nothing
+leaves the model describing a picture it never received.
+
+Two of the 13 read the **shipped source** instead of a fake, because the failure
+they guard is the one this project keeps meeting — a helper that is correct,
+tested, and called by nobody. One asserts neither loop pushes a `role: "tool"`
+message of its own; the other asserts both call sites resolve vision capability
+from the loaded model. A `visionCapable` that is never wired type-checks
+perfectly and quietly attaches nothing.
+
+---
+
 ## An image counted as prose
 
 `estimateTokens()` scores a conversation at 4 characters per token. That is right
@@ -566,6 +598,12 @@ tests fail — and fail *narrowly*:
 | Skip compaction between loop iterations | Mid-turn growth test fails | exactly 1 fails per loop |
 | Measure image payloads as prose again | Estimator and screenshot tests fail | exactly 2 fail |
 | Embed the payload in the summary prompt | Summariser payload test fails | exactly 1 fails |
+| Attach each image right after its own tool result | Ordering tests fail | exactly 2 fail |
+| Return the payload as result text again | Every notice and payload test fails | exactly 5 fail |
+| Attach images to a text-only model too | Text-only test fails | exactly 1 fails |
+| Never carry an image in a Path B observation | Path B image test fails | exactly 1 fails |
+| Shape tool results inside the loop again | Wiring test fails | exactly 1 fails |
+| Drop the `vlm` resolution in `server.ts` | Vision-wiring test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.

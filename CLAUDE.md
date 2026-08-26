@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 261 tests, ~370 ms
+cd proxy && npm test         # 275 tests, ~390 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -154,7 +154,7 @@ in step by hand. If you change one, grep for the others.
 ## Current state, and what is next
 
 Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 261 tests on every push.
+deliberately left alone. 275 tests on every push.
 
 "Every component has a suite" would be an overstatement, and was made once in
 this repo's own docs before being counted: the routing use case, the slash
@@ -174,11 +174,14 @@ through. Two silent problems came out of looking:
   keeps the first message and the last two, so the image survived and the history
   did not: attaching a picture reset the conversation, with no error anywhere.
   Images now cost a flat nominal amount in both message shapes.
-- **Open, and a decision rather than a bug** — a `python` action that draws a
-  plot returns the PNG's base64 *as the tool result string*
-  ([`workspaceActions.ts:128`](proxy/src/infrastructure/workspaceActions.ts#L128)).
-  The three options are in PLAN.md §6.2; they differ in what the user sees and
-  one of them changes `executeAction`'s return type.
+- **Fixed** — a `python` action that drew a plot returned the PNG's base64 *as
+  the tool result string*. `executeAction` now returns an `ActionOutcome` (`text`
+  plus an optional `image`) and the loops hand that image to the model as an
+  image part, through [`services/actionOutcome.ts`](proxy/src/application/services/actionOutcome.ts).
+  Where it can go is a wire-format constraint, not a preference: `role: "tool"`
+  takes a string, and nothing may sit between an assistant turn and its tool
+  results — so Path A appends all results first, then one user message with the
+  batch's images. Attached only when the model reports `type: "vlm"`.
 
 The end-to-end leg — does the model actually see the picture — is still the one
 thing the suites cannot do: it needs LM Studio with a VLM loaded. Cover what you

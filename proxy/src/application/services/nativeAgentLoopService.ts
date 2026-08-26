@@ -22,6 +22,7 @@
 
 import { sseEvent, msgId } from "../../domain/utils";
 import type { ContextCompactor } from "./contextCompactor";
+import { appendNativeToolResults, type ToolCallOutcome } from "./actionOutcome";
 import {
   AgentMode,
   ApprovalScope,
@@ -39,6 +40,7 @@ import {
   WORKSPACE_TOOL_DEF,
   WorkspaceAction,
   type ActionArgs,
+  type ActionOutcome,
 } from "../../infrastructure/workspaceActions";
 import { t } from "../../domain/i18n";
 import type {
@@ -151,6 +153,16 @@ export class NativeAgentLoopService {
      * metadata. Resolved per turn for the same reason as the iteration limit.
      */
     private readonly contextBudgetResolver: () => number,
+    /**
+     * Whether the loaded model can see images. Resolved per turn like the
+     * others, since the model can be swapped underneath a running proxy.
+     *
+     * This one trusts backend metadata, which the project otherwise does not.
+     * The trade is deliberate: a model wrongly declared `vlm` makes the backend
+     * reject the request, which is loud, and the alternative — never attaching
+     * — is the silent failure this whole change exists to remove.
+     */
+    private readonly visionCapableResolver: () => boolean = () => false,
     /**
      * Relative path (from workspaceCwd) to the Python virtual environment.
      * Forwarded to executeAction() for action='python'.
@@ -299,9 +311,7 @@ export class NativeAgentLoopService {
           workspaceCwd, openaiReq.messages, state,
         );
         if (toolResults === null) return "handled"; // exit_plan_mode or denial
-        for (const { id, result } of toolResults) {
-          messages.push({ role: "tool", tool_call_id: id, content: result });
-        }
+        appendNativeToolResults(messages, toolResults, this.visionCapableResolver());
         continue;
       }
 
@@ -376,9 +386,7 @@ export class NativeAgentLoopService {
         workspaceCwd, openaiReq.messages, state,
       );
       if (nsToolResults === null) return "handled";
-      for (const { id, result } of nsToolResults) {
-        messages.push({ role: "tool", tool_call_id: id, content: result });
-      }
+      appendNativeToolResults(messages, nsToolResults, this.visionCapableResolver());
     }
 
     // Max iterations reached without a final text response.
@@ -398,9 +406,10 @@ export class NativeAgentLoopService {
    *   approval gate presents one modal at a time and `allowAllThisTurn` state
    *   propagates correctly.
    *
-   * Returns the ordered array of `{ id, result }` pairs (same order as input)
-   * ready to be pushed as `role:"tool"` messages, or `null` when the loop
-   * should exit immediately (exit_plan_mode or approval denial with exitLoop).
+   * Returns the ordered array of `{ id, outcome }` pairs (same order as input)
+   * for `appendNativeToolResults` to turn into messages, or `null` when the
+   * loop should exit immediately (exit_plan_mode or approval denial with
+   * exitLoop).
    */
   private async executeBatchedToolCalls(
     toolCalls: Array<{ id: string; name: string; arguments: string }>,
@@ -410,7 +419,7 @@ export class NativeAgentLoopService {
     workspaceCwd: string,
     originalMessages: any[],
     state: LoopState,
-  ): Promise<Array<{ id: string; result: string }> | null> {
+  ): Promise<ToolCallOutcome[] | null> {
     // 1. Check for exit_plan_mode — intercept before any batching
     for (const tc of toolCalls) {
       let args: ActionArgs;
@@ -443,40 +452,40 @@ export class NativeAgentLoopService {
     // 3. Execute read-only calls in parallel
     const readOnlyResults = await Promise.all(
       readOnlyTcs.map(async (tc) => {
-        const { result } = await this.processToolCall(
+        const { outcome } = await this.processToolCall(
           writeSSE, emitTextBlock, endMessage,
           tc.id, tc.arguments,
           workspaceCwd, originalMessages, state,
         );
-        return { id: tc.id, result };
+        return { id: tc.id, outcome };
       }),
     );
 
     // 4. Execute destructive calls sequentially (approval gate is one-at-a-time)
-    const destructiveResults: Array<{ id: string; result: string }> = [];
+    const destructiveResults: ToolCallOutcome[] = [];
     for (const tc of destructiveTcs) {
-      const { result, exitLoop } = await this.processToolCall(
+      const { outcome, exitLoop } = await this.processToolCall(
         writeSSE, emitTextBlock, endMessage,
         tc.id, tc.arguments,
         workspaceCwd, originalMessages, state,
       );
       if (exitLoop) return null;
-      destructiveResults.push({ id: tc.id, result });
+      destructiveResults.push({ id: tc.id, outcome });
     }
 
     // 5. Reassemble in original order (OpenAI requires tool results to match tool_calls order)
-    const resultMap = new Map<string, string>([
-      ...readOnlyResults.map(r => [r.id, r.result] as [string, string]),
-      ...destructiveResults.map(r => [r.id, r.result] as [string, string]),
+    const resultMap = new Map<string, ActionOutcome>([
+      ...readOnlyResults.map(r => [r.id, r.outcome] as [string, ActionOutcome]),
+      ...destructiveResults.map(r => [r.id, r.outcome] as [string, ActionOutcome]),
     ]);
-    const ordered: Array<{ id: string; result: string }> = [];
+    const ordered: ToolCallOutcome[] = [];
     for (const tc of toolCalls) {
       let action: string;
       try { action = (JSON.parse(tc.arguments) as ActionArgs).action; }
       catch { action = WorkspaceAction.List; }
       if (action === WorkspaceAction.ExitPlanMode) continue;
-      const result = resultMap.get(tc.id);
-      if (result !== undefined) ordered.push({ id: tc.id, result });
+      const outcome = resultMap.get(tc.id);
+      if (outcome !== undefined) ordered.push({ id: tc.id, outcome });
     }
     return ordered;
   }
@@ -495,8 +504,9 @@ export class NativeAgentLoopService {
    * @param workspaceCwd  - absolute path to the workspace root.
    * @param originalMessages - original request messages (for lastUserMessageText).
    * @param state         - mutable loop state (allowAllThisTurn, planFileWritten).
-   * @returns `{ result, exitLoop }` — result string for the tool-result message;
-   *          exitLoop=true means the caller should return "handled" immediately.
+   * @returns `{ outcome, exitLoop }` — what the action produced, for the
+   *          tool-result message and any image beside it; exitLoop=true means
+   *          the caller should return "handled" immediately.
    */
   private async processToolCall(
     writeSSE: (frame: string) => void,
@@ -507,7 +517,7 @@ export class NativeAgentLoopService {
     workspaceCwd: string,
     originalMessages: any[],
     state: LoopState,
-  ): Promise<{ result: string; exitLoop: boolean }> {
+  ): Promise<{ outcome: ActionOutcome; exitLoop: boolean }> {
     let args: ActionArgs;
     try { args = JSON.parse(argsRaw); }
     catch { args = { action: WorkspaceAction.List, path: "." } as ActionArgs; }
@@ -527,11 +537,11 @@ export class NativeAgentLoopService {
           : t("planMode.exitSuggestion.noPlan"),
       );
       endMessage();
-      return { result: "", exitLoop: true };
+      return { outcome: { text: "" }, exitLoop: true };
     }
 
     // ── Destructive action: gate through ApprovalGateService ───────────────
-    let result: string;
+    let outcome: ActionOutcome;
     if (ACTION_CLASSIFICATION[args.action] === ActionClass.Destructive) {
       let approved: boolean;
       if (state.allowAllThisTurn) {
@@ -554,18 +564,18 @@ export class NativeAgentLoopService {
 
       if (!approved) {
         this.logger.dbg(`[workspace] ${args.action} denied by user`);
-        result = `Action '${args.action}' was denied by the user.`;
+        outcome = { text: `Action '${args.action}' was denied by the user.` };
       } else {
-        result = await executeAction(args, workspaceCwd, this.venvDir);
+        outcome = await executeAction(args, workspaceCwd, this.venvDir);
         if (emitPlanFileCreated(args, writeSSE, this.planFiles)) state.planFileWritten = true;
       }
     } else {
       // Read-only action: execute without gating.
-      result = await executeAction(args, workspaceCwd, this.venvDir);
+      outcome = await executeAction(args, workspaceCwd, this.venvDir);
     }
 
-    this.logger.dbg(`[workspace] ${args.action} "${(args as any).path ?? ""}" → ${result.slice(0, 120)}`);
-    return { result, exitLoop: false };
+    this.logger.dbg(`[workspace] ${args.action} "${(args as any).path ?? ""}" → ${outcome.text.slice(0, 120)}`);
+    return { outcome, exitLoop: false };
   }
 
   /**

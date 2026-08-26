@@ -112,7 +112,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **261 test** a ogni push.
+gira senza GPU accesa. Oggi sono **275 test** a ogni push.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -275,7 +275,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 261 test / ~370 ms, senza GPU e senza rete.
+`npm test` in 275 test / ~390 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -381,18 +381,32 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
    traduzione), perché la compaction gira su entrambi i lati. Quattro test, con
    controllo negativo.
 
-   **Da decidere — il grafico di `python` torna al modello come base64.**
-   [`workspaceActions.ts:128`](proxy/src/infrastructure/workspaceActions.ts#L128)
-   restituisce `result.data` così com'è, e per un plot matplotlib quel campo è un
-   PNG in base64: il modello riceve decine di migliaia di token di stringa
-   illeggibile come *tool result*, e quel testo — essendo testo e non un blocco
-   immagine — viene contato per intero anche dopo la correzione qui sopra. Le
-   opzioni sono tre e non sono equivalenti: un marcatore corto al posto del
-   payload (l'immagine si perde, il costo sparisce), salvare il PNG nel workspace
-   e restituirne il path (visibile all'utente, ma è una scrittura su disco che
-   non passa dal gate), oppure restituire un vero blocco immagine al VLM (è la
-   cosa giusta, e cambia il contratto `Promise<string>` di `executeAction` in
-   entrambi i loop). Il percorso SSE `/python` verso Claudio è invece corretto:
+   **Fatto — il grafico di `python` arriva al modello come immagine.**
+   `executeAction` restituiva `result.data` così com'era, e per un plot
+   matplotlib quel campo è un PNG in base64: decine di migliaia di token di
+   stringa illeggibile come *tool result*, contati per intero perché testo e non
+   immagine. Delle tre opzioni (marcatore corto / salvare su disco / blocco
+   immagine vero) è stata scelta la terza. `executeAction` ora restituisce un
+   `ActionOutcome` — `text` più un `image` opzionale — e la forma del messaggio
+   non è una preferenza ma un vincolo del formato: `role: "tool"` accetta una
+   stringa, e ogni tool result deve seguire il proprio turno assistant senza
+   niente in mezzo. Quindi Path A accoda **prima** tutti i tool result e **poi**
+   un solo messaggio user con le immagini del batch; Path B, che di messaggi
+   `tool` non ne ha, se la porta dentro l'`<observation>`, che è già un turno
+   user. Tutto passa da
+   [`services/actionOutcome.ts`](proxy/src/application/services/actionOutcome.ts).
+
+   L'immagine si allega solo se il modello dichiara `type: "vlm"`. È l'unico
+   punto del progetto in cui ci si fida dei metadata del backend, e la ragione è
+   il modo in cui sbaglia: un modello dichiarato `vlm` per errore fa rifiutare la
+   richiesta — rumoroso — mentre non allegare mai è il fallimento silenzioso che
+   la modifica serviva a togliere. Su un modello di solo testo il risultato dice
+   che un'immagine c'è stata e non è allegata, e suggerisce di salvarla su file:
+   tacere lascerebbe il modello a descrivere una figura che non ha mai ricevuto.
+
+   Tredici test, due dei quali leggono il **sorgente spedito** invece di un
+   fake — un helper che nessuno chiama supera il typecheck — e controllo negativo
+   su sei fronti. Il percorso SSE `/python` verso Claudio era ed è corretto:
    `server.ts` inoltra l'oggetto `{type:"image"}` intero.
 
    **Resta la prova end-to-end**: che il modello *veda* davvero l'immagine non lo

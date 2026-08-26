@@ -15,7 +15,14 @@
 import { sseEvent, msgId } from "../domain/utils";
 import type { ContextCompactor } from "./services/contextCompactor";
 import { SseEventType, StopReason, ContentBlockType, DeltaType } from "../domain/types";
-import { executeAction, ACTION_CLASSIFICATION, ActionClass, type ActionArgs } from "../infrastructure/workspaceActions";
+import {
+  executeAction,
+  ACTION_CLASSIFICATION,
+  ActionClass,
+  type ActionArgs,
+  type ActionOutcome,
+} from "../infrastructure/workspaceActions";
+import { buildObservationMessage } from "./services/actionOutcome";
 import type { ILogger, LlmClientPort, SseWriterPort } from "../domain/ports";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -130,6 +137,8 @@ export interface TextualLoopOptions {
   contextBudget?: number;
   /** Iteration ceiling for this turn. Defaults to {@link DEFAULT_MAX_ITERATIONS}. */
   maxIterations?: number;
+  /** Whether the loaded model can see images. Omitted, none are attached. */
+  visionCapable?: boolean;
 }
 
 export type TextualApprovalGate = (
@@ -187,6 +196,7 @@ export async function runTextualAgentLoop(
     compactor,
     contextBudget = 0,
     maxIterations = DEFAULT_MAX_ITERATIONS,
+    visionCapable = false,
   } = opts;
 
   // Strip any tool-related fields — this model cannot use them.
@@ -345,7 +355,7 @@ export async function runTextualAgentLoop(
     contentIndex++;
 
     const actionArgs = result.actionArgs;
-    let actionResult: string;
+    let actionResult: ActionOutcome;
     if (ACTION_CLASSIFICATION[actionArgs.action] === ActionClass.Destructive && approvalGate) {
       if (allowAllThisTurn) {
         logger.dbg(`[workspace/textual] ${actionArgs.action} auto-approved (allowAllThisTurn)`);
@@ -357,7 +367,7 @@ export async function runTextualAgentLoop(
         }
         if (!approval.approved) {
           logger.dbg(`[workspace/textual] ${actionArgs.action} denied by user`);
-          actionResult = `Action '${actionArgs.action}' was denied by the user.`;
+          actionResult = { text: `Action '${actionArgs.action}' was denied by the user.` };
         } else {
           actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
         }
@@ -366,18 +376,20 @@ export async function runTextualAgentLoop(
       actionResult = await executeAction(actionArgs, workspaceCwd, venvDir);
     }
     logger.dbg(
-      `[workspace/textual] ${actionArgs.action} "${actionArgs.path ?? ""}" → ${actionResult.slice(0, 120)}`,
+      `[workspace/textual] ${actionArgs.action} "${actionArgs.path ?? ""}" → ${actionResult.text.slice(0, 120)}`,
     );
 
     // Re-inject as assistant (text before action + the action tag itself) and
     // user (the observation).  The observation is plain text — non-tool models
-    // cannot parse a structured tool_result, so we embed it inline.
+    // cannot parse a structured tool_result, so we embed it inline. An image the
+    // action produced rides in that same user turn, since there is no tool
+    // message here to keep it out of — see services/actionOutcome.ts.
     const assistantContent = result.textBeforeAction
       ? `${result.textBeforeAction}\n${result.actionTag}`
       : result.actionTag;
 
     messages.push({ role: "assistant", content: assistantContent });
-    messages.push({ role: "user", content: `<observation>\n${actionResult}\n</observation>` });
+    messages.push(buildObservationMessage(actionResult, visionCapable));
   }
 
   // Max iterations reached without a final answer.

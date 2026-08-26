@@ -18,8 +18,14 @@
  *
  * Output contract
  * ──────────────────────────────────────────────────────────────────
- *   executeAction() always returns a string.  Callers convert that string into
- *   a tool_result or <observation> as appropriate for their path.
+ *   executeAction() always returns an ActionOutcome: `text` for the model,
+ *   plus an optional `image` when the action produced one (today only a
+ *   matplotlib figure from action='python').  Callers turn the text into a
+ *   tool_result or an <observation>, and hand the image to the model as an
+ *   image part — see application/services/actionOutcome.ts.  The image is kept
+ *   out of `text` deliberately: its base64 used to *be* the result string, and
+ *   an unreadable payload the model pays full price for is worse than no
+ *   picture at all.
  *
  * @module infrastructure/workspaceActions
  */
@@ -78,9 +84,15 @@ export {
   ACTION_CLASSIFICATION,
   WORKSPACE_TOOL_DEF,
   type ActionArgs,
+  type ActionImage,
+  type ActionOutcome,
 } from "../domain/entities/workspaceAction";
 
-import { WorkspaceAction, type ActionArgs } from "../domain/entities/workspaceAction";
+import {
+  WorkspaceAction,
+  type ActionArgs,
+  type ActionOutcome,
+} from "../domain/entities/workspaceAction";
 
 /**
  * Async callback the agent loops use to request human approval before
@@ -93,46 +105,52 @@ import { WorkspaceAction, type ActionArgs } from "../domain/entities/workspaceAc
 export type ApprovalGate = (action: string, args: ActionArgs) => Promise<boolean>;
 
 /**
- * Execute a workspace action and return the result as a string.
+ * Execute a workspace action.
  *
  * @param args         - action name plus action-specific parameters
  * @param workspaceCwd - absolute path to the workspace root
  * @param venvDir      - relative path (from workspaceCwd) to the Python venv;
  *                       only used for action='python'. Defaults to the proxy
  *                       config default `.claudio/python-venv`.
- * @returns            - a string result, never throws
+ * @returns            - an {@link ActionOutcome}, never throws. Every failure
+ *                       is text the model can act on, not an exception.
  */
 export async function executeAction(
   args: ActionArgs,
   workspaceCwd: string,
   venvDir = ".claudio/python-venv",
-): Promise<string> {
+): Promise<ActionOutcome> {
   try {
     switch (args.action) {
       case WorkspaceAction.List:
-        return actionList(args, workspaceCwd);
+        return { text: actionList(args, workspaceCwd) };
       case WorkspaceAction.Read:
-        return actionRead(args, workspaceCwd);
+        return { text: actionRead(args, workspaceCwd) };
       case WorkspaceAction.Grep:
-        return actionGrep(args, workspaceCwd);
+        return { text: actionGrep(args, workspaceCwd) };
       case WorkspaceAction.Glob:
-        return actionGlob(args, workspaceCwd);
+        return { text: actionGlob(args, workspaceCwd) };
       case WorkspaceAction.Write:
-        return actionWrite(args, workspaceCwd);
+        return { text: actionWrite(args, workspaceCwd) };
       case WorkspaceAction.Edit:
-        return actionEdit(args, workspaceCwd);
+        return { text: actionEdit(args, workspaceCwd) };
       case WorkspaceAction.Bash:
-        return actionBash(args, workspaceCwd);
+        return { text: actionBash(args, workspaceCwd) };
       case WorkspaceAction.Python: {
-        if (!args.cmd) return "Error: 'cmd' is required for action='python'";
+        if (!args.cmd) return { text: "Error: 'cmd' is required for action='python'" };
         const result = await executePythonCode(args.cmd, workspaceCwd, venvDir, () => {});
-        return result.type === "error" ? `Error: ${result.data}` : result.data;
+        // A figure comes back instead of stdout, never alongside it — see
+        // executePythonCode. It leaves here as an image, not as base64 text.
+        if (result.type === "image") {
+          return { text: "", image: { media_type: "image/png", data: result.data } };
+        }
+        return { text: result.type === "error" ? `Error: ${result.data}` : result.data };
       }
       default:
-        return `Error: unknown action '${args.action}'. Valid actions: ${Object.values(WorkspaceAction).join(", ")}`;
+        return { text: `Error: unknown action '${args.action}'. Valid actions: ${Object.values(WorkspaceAction).join(", ")}` };
     }
   } catch (err) {
-    return `Error executing action '${args.action}': ${String(err)}`;
+    return { text: `Error executing action '${args.action}': ${String(err)}` };
   }
 }
 

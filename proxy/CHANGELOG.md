@@ -7,6 +7,55 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Changed — A `python` figure reaches the model as an image
+
+- **`executeAction` now returns an `ActionOutcome`** — `text` for the model plus
+  an optional `image` — instead of a bare string. The one action that produced a
+  picture, `python` with a matplotlib figure, was returning the PNG's **base64 as
+  the tool-result string**: tens of thousands of tokens of unreadable text,
+  counted in full, teaching the model nothing.
+
+- **Where the image can go is decided by the wire format**, not by preference,
+  and both constraints are easy to get silently wrong:
+
+  - `role: "tool"` takes a string, so the image cannot ride in the result;
+  - every tool result of an assistant turn must follow that turn with nothing
+    wedged between, so the image cannot go straight after the result that
+    produced it either.
+
+  Path A therefore appends every tool result first and then **one** user message
+  carrying the batch's images. Path B has no tool messages at all — its
+  `<observation>` already is a user turn, so the image goes inside it, and the
+  content stays a plain string when there is none. Both go through the new
+  `application/services/actionOutcome.ts`.
+
+- **Only when the model says it can see.** The image is attached when the loaded
+  model reports `type: "vlm"`, resolved per turn like the iteration limit and the
+  context budget. This trusts backend metadata, which this project otherwise
+  refuses to do; the trade is deliberate, because a model wrongly declared `vlm`
+  produces a rejected request — loud — while never attaching is the silent
+  failure the change exists to remove. On a text-only model the result says an
+  image was produced and was not attached, and suggests having the script save
+  the figure to a file. Saying nothing would leave the model describing a picture
+  it never received.
+
+- Together with the estimator fix below, an attached image is now also *counted*
+  as an image rather than as prose.
+
+- 13 tests in `actionOutcome.test.ts`; `npm test` is now 275 in ~390 ms. Two of
+  them read the shipped source rather than a fake — a helper nobody calls
+  type-checks perfectly — asserting that neither loop shapes its own tool result
+  and that both call sites resolve vision capability. Negative control: attaching
+  each image next to its own result fails exactly 2, returning the payload as
+  text fails exactly 5, attaching on a text-only model fails exactly 1, dropping
+  the Path B attachment fails exactly 1, and reverting either wiring site fails
+  exactly 1.
+
+- Known residue: if compaction drops the assistant turn a batch answered, the
+  repair removes the orphaned tool messages and the image user-message survives
+  on its own. It is a valid request and a small waste, not a break.
+
+
 ### Fixed — An attached image threw the conversation away
 
 - **`estimateTokens()` measured base64 payloads as prose.** At 4 characters per

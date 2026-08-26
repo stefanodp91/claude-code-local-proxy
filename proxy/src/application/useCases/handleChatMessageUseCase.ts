@@ -217,6 +217,7 @@ export class HandleChatMessageUseCase {
             compactor:      this.compactor,
             contextBudget:  modelInfo?.loadedContextLength ?? 0,
             maxIterations:  this.maxIterationsResolver(),
+            visionCapable:  modelInfo?.type === "vlm",
           },
         );
         return { type: "handled", llmReachable: null };

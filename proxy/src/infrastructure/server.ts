@@ -105,6 +105,7 @@ export class ProxyServer {
       () => this.computeMaxIterations(),
       this.compactor,
       () => this.modelInfo?.loadedContextLength ?? 0,
+      () => this.modelInfo?.type === "vlm",
       this.config.pythonVenvDir,
     );
   }

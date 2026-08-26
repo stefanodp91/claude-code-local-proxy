@@ -79,6 +79,32 @@ export interface ActionArgs {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Action results
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A base64 image an action produced — today only a `python` plot. */
+export interface ActionImage {
+  /** MIME type, e.g. `image/png`. */
+  media_type: string;
+  /** The payload, base64, without the `data:` prefix. */
+  data: string;
+}
+
+/**
+ * What an action gives back.
+ *
+ * `text` is what the model reads; it is always present, because every caller
+ * needs something to put in a tool result or an `<observation>`. `image` is
+ * the picture itself, kept out of `text` on purpose: base64 in a text field is
+ * tens of thousands of tokens the model cannot read and pays for anyway, which
+ * is exactly what this type exists to stop.
+ */
+export interface ActionOutcome {
+  text: string;
+  image?: ActionImage;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // OpenAI tool schema
 // ─────────────────────────────────────────────────────────────────────────────
 

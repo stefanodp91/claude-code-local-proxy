@@ -191,7 +191,7 @@ from it, and it is never modified.
 ### Tests and CI
 
 ```bash
-cd proxy && npm test        # 261 tests, ~370 ms, no GPU and no model required
+cd proxy && npm test        # 275 tests, ~390 ms, no GPU and no model required
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
