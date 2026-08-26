@@ -295,6 +295,12 @@ test("optional parameters appear only when the client sent them", () => {
 });
 
 test("streaming is on by default and usage is always requested", () => {
+  // A decision with a client-visible edge, confirmed against the running proxy:
+  // a request that omits `stream` comes back as SSE, not JSON, because the
+  // default is applied here and the response path follows it. Every client this
+  // proxy serves streams, so the default is the useful one — but a client that
+  // omits the field expecting a JSON body gets an event stream. Documented in
+  // docs/architecture.md rather than left to be discovered.
   const { request } = translate({});
   assert.equal(request.stream, true);
   assert.deepEqual(request.stream_options, { include_usage: true });
