@@ -635,7 +635,7 @@ model-specific logic.
 cd proxy && npm test
 ```
 
-212 tests, ~400 ms, no GPU, no LM Studio, no model loaded, no network. That is
+236 tests, ~410 ms, no GPU, no LM Studio, no model loaded, no network. That is
 the property that matters: it is why these can gate a pull request while
 `scripts/regression.sh` cannot.
 
@@ -652,6 +652,7 @@ the property that matters: it is why these can gate a pull request while
 | [`test/workspaceActions.test.ts`](test/workspaceActions.test.ts) | The filesystem and shell backend — `safeResolvePath` containment, every action's success and failure strings, literal replacement in `edit`, output limits |
 | [`test/textualAgentLoop.test.ts`](test/textualAgentLoop.test.ts) | Path B — tag parsing across chunk boundaries, both documented tag forms, approval scopes, the iteration ceiling, and agreement between the tool manual and the parser |
 | [`test/nativeAgentLoop.test.ts`](test/nativeAgentLoop.test.ts) | Path A — the fallthrough contract, batched execution and its ordering, approval scopes, plan mode, the iteration ceiling, and a JSON reply to a streaming request |
+| [`test/contextCompactor.test.ts`](test/contextCompactor.test.ts) | Trimming a conversation to fit the window — both strategies, the timeout, and tool-call pairing surviving the trim in both message shapes |
 
 Both suites exist because the bug they describe actually happened. `t()` returns
 the key itself when a lookup misses and locale files arrive through `JSON.parse`,
@@ -912,7 +913,7 @@ was launched by Claudio, in the extension's output channel.
         workspaceTool.ts       list/read/grep/glob/write/edit/bash/python definitions
         textualAgentLoop.ts    Path B — XML-tag actions for models with no tool support
         services/              nativeAgentLoopService (Path A), approvalGateService,
-                               systemPromptBuilder
+                               systemPromptBuilder, contextCompactor
         useCases/              handleChatMessage (the routing decision), resolveApproval
       infrastructure/      Everything that touches the outside world
         server.ts              node:http routing: /v1/messages, /v1/messages/:id/approve,

@@ -32,6 +32,7 @@ import { SlashCommandInterceptor, SLASH_COMMAND_REGISTRY } from "../application/
 import { SystemPromptBuilder } from "../application/services/systemPromptBuilder";
 import { ApprovalGateService } from "../application/services/approvalGateService";
 import { NativeAgentLoopService } from "../application/services/nativeAgentLoopService";
+import { ContextCompactor } from "../application/services/contextCompactor";
 import { HandleChatMessageUseCase } from "../application/useCases/handleChatMessageUseCase";
 import { ResolveApprovalUseCase } from "../application/useCases/resolveApprovalUseCase";
 import { FsPromptRepository } from "./adapters/fsPromptRepository";
@@ -54,6 +55,7 @@ export class ProxyServer {
   private readonly modelCache: PersistentCache<ModelCapabilities>;
   private modelInfo: LoadedModelInfo | null = null;
   private toolManager!: ToolManager;
+  private readonly compactor: ContextCompactor;
   private requestTranslator!: RequestTranslator;
   private responseTranslator!: ResponseTranslator;
   private streamTranslator!: StreamTranslator;
@@ -89,10 +91,17 @@ export class ProxyServer {
       this.approvalInteractor, this.planFiles, this.logger,
       loadOldContent, checkAutoApprove,
     );
+    this.compactor = new ContextCompactor(this.llm, this.logger, {
+      semanticEnabled:  this.config.semanticCompact,
+      summaryMaxTokens: this.computeSummaryMaxTokens(),
+      summaryTimeout:   this.config.summaryTimeout,
+    });
     this.nativeLoop = new NativeAgentLoopService(
       this.llm, this.approvalGate, this.planFiles, this.logger,
       () => this.modelInfo?.id ?? "unknown",
       () => this.computeMaxIterations(),
+      this.compactor,
+      () => this.modelInfo?.loadedContextLength ?? 0,
       this.config.pythonVenvDir,
     );
   }
@@ -155,7 +164,7 @@ export class ProxyServer {
       this.requestTranslator, this.responseTranslator, this.streamTranslator,
       this.slashInterceptor, this.logger,
       () => this.modelInfo, () => this.maxTools, this.config.targetUrl,
-      this.config.semanticCompact, this.computeSummaryMaxTokens(), this.config.summaryTimeout,
+      this.compactor,
       this.config.pythonVenvDir,
     );
     this.resolveApprovalUseCase = new ResolveApprovalUseCase(this.approvalInteractor);

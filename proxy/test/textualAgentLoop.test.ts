@@ -26,7 +26,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runTextualAgentLoop, type TextualApprovalGate } from "../src/application/textualAgentLoop";
 import { silentLogger } from "./fakes";
-import type { LlmClientPort, SseWriterPort } from "../src/domain/ports";
+import { ContextCompactor } from "../src/application/services/contextCompactor";
+import type { LlmClientPort, LoggerPort, SseWriterPort } from "../src/domain/ports";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Harness
@@ -99,7 +100,7 @@ function parse(raw: string): Event[] {
 }
 
 /** Run the loop over a scripted conversation. Approves everything by default. */
-async function drive(turns: string[][], gate?: TextualApprovalGate) {
+async function drive(turns: string[][], gate?: TextualApprovalGate, contextBudget = 0) {
   const { writer, events } = collectingWriter();
   const scripted = scriptedLlm(turns);
   const approve: TextualApprovalGate = gate ?? (async () => ({ approved: true, scope: "once" }));
@@ -113,6 +114,11 @@ async function drive(turns: string[][], gate?: TextualApprovalGate) {
     "local-model",
     silentLogger,
     approve,
+    undefined,
+    new ContextCompactor(scripted.llm, silentLogger as unknown as LoggerPort, {
+      semanticEnabled: false, summaryMaxTokens: 128, summaryTimeout: 50,
+    }),
+    contextBudget,
   );
 
   return { events: events(), sentToModel: scripted.seen, turns: scripted.turns };
@@ -259,6 +265,26 @@ test("what the model is taught and what the parser accepts do not drift apart", 
       `the manual teaches ${attr}="…" but parseActionTag never reads it`,
     );
   }
+});
+
+test("a Path B turn that outgrows the window is compacted mid-flight", async () => {
+  // Path B is a documented fallback, but a fallback that dies halfway through
+  // is worse than one that answers briefly.
+  writeFileSync(join(ws, "big.ts"), "z".repeat(40_000));
+
+  const { sentToModel } = await drive(
+    [
+      ['<action name="read" path="big.ts"/>'],
+      ['<action name="read" path="big.ts"/>'],
+      ['<action name="read" path="big.ts"/>'],
+      ["done"],
+    ],
+    undefined,
+    12_000,
+  );
+
+  const sizes = sentToModel.map((m) => JSON.stringify(m).length);
+  assert.equal(Math.max(...sizes) < 12_000 * 4, true, `history kept growing: ${sizes.join(", ")}`);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

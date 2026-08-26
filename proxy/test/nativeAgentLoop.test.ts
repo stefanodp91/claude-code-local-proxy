@@ -29,6 +29,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { NativeAgentLoopService } from "../src/application/services/nativeAgentLoopService";
 import { ApprovalGateService } from "../src/application/services/approvalGateService";
+import { ContextCompactor } from "../src/application/services/contextCompactor";
 import { AgentMode, ApprovalScope } from "../src/domain/types";
 import { silentLogger } from "./fakes";
 import type {
@@ -159,10 +160,18 @@ function gate(answer: Answer) {
   return { service, planFiles, asked };
 }
 
+/** A real compactor over a fake summariser — the loop's own history is trimmed. */
+function compactorFor(llm: LlmClientPort) {
+  return new ContextCompactor(llm, silentLogger as unknown as LoggerPort, {
+    semanticEnabled: false, summaryMaxTokens: 128, summaryTimeout: 50,
+  });
+}
+
 async function drive(turns: Turn[], opts: {
   maxIterations?: number;
   answer?: Answer;
   mode?: AgentMode;
+  contextBudget?: number;
 } = {}) {
   const { writer, events } = collectingWriter();
   const scripted = scriptedLlm(turns);
@@ -172,6 +181,7 @@ async function drive(turns: Turn[], opts: {
   const loop = new NativeAgentLoopService(
     scripted.llm, g.service, g.planFiles, silentLogger as unknown as LoggerPort,
     () => "local-model", () => opts.maxIterations ?? 10,
+    compactorFor(scripted.llm), () => opts.contextBudget ?? 0,
   );
 
   const outcome = await loop.run(
@@ -210,6 +220,7 @@ test("nothing is written to the wire before falling through", async () => {
   const loop = new NativeAgentLoopService(
     scripted.llm, g.service, g.planFiles, silentLogger as unknown as LoggerPort,
     () => "local-model", () => 10,
+    compactorFor(scripted.llm), () => 0,
   );
 
   const outcome = await loop.run(writer, { model: "m", messages: [] }, ws, false);
@@ -450,6 +461,7 @@ test("a backend error ends the turn instead of hanging the client", async () => 
   const loop = new NativeAgentLoopService(
     llm, g.service, g.planFiles, silentLogger as unknown as LoggerPort,
     () => "local-model", () => 10,
+    compactorFor(llm), () => 0,
   );
 
   const outcome = await loop.run(writer, { model: "m", messages: [] }, ws, false);
@@ -458,6 +470,82 @@ test("a backend error ends the turn instead of hanging the client", async () => 
   const out = events();
   assert.equal(out.at(-1)?.type, "message_stop");
   assert.match(JSON.stringify(out), /503|unloaded/i);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compaction inside the turn
+// ─────────────────────────────────────────────────────────────────────────────
+
+test("a turn that outgrows the window is compacted mid-flight", async () => {
+  // Compaction on the incoming request cannot help here: the request was small
+  // and the *turn* is what grew. Each iteration appends an assistant turn plus
+  // a tool result, and `read` truncates at 50 KB, so a handful of large reads
+  // crosses the window — and the backend answers 400 rather than continuing,
+  // after the user has already watched half a reply arrive.
+  writeFileSync(join(ws, "big.ts"), "z".repeat(40_000));
+
+  const { sentToModel, outcome } = await drive(
+    [
+      { calls: [{ id: "c1", args: { action: "read", path: "big.ts" } }] },
+      { calls: [{ id: "c2", args: { action: "read", path: "big.ts" } }] },
+      { calls: [{ id: "c3", args: { action: "read", path: "big.ts" } }] },
+      { text: "done" },
+    ],
+    { contextBudget: 12_000 },
+  );
+
+  assert.equal(outcome, "handled");
+
+  const sizes = sentToModel.map((m) => JSON.stringify(m).length);
+  assert.equal(
+    Math.max(...sizes) < 12_000 * 4,
+    true,
+    `the history kept growing past the window: ${sizes.join(", ")}`,
+  );
+});
+
+test("mid-turn compaction leaves the history valid for the backend", async () => {
+  // The whole reason the compactor repairs pairing. This history is nothing but
+  // tool calls and their results, so trimming by position is almost guaranteed
+  // to cut through a pair — and an orphan on either side is a 400.
+  writeFileSync(join(ws, "big.ts"), "z".repeat(40_000));
+
+  const { sentToModel } = await drive(
+    [
+      { calls: [{ id: "c1", args: { action: "read", path: "big.ts" } }] },
+      { calls: [{ id: "c2", args: { action: "read", path: "big.ts" } }] },
+      { calls: [{ id: "c3", args: { action: "read", path: "big.ts" } }] },
+      { text: "done" },
+    ],
+    { contextBudget: 12_000 },
+  );
+
+  for (const messages of sentToModel) {
+    const opened = new Set<string>();
+    const answered = new Set<string>();
+    for (const m of messages) {
+      for (const tc of m.tool_calls ?? []) opened.add(tc.id);
+      if (m.role === "tool") {
+        assert.equal(opened.has(m.tool_call_id), true, `tool ${m.tool_call_id} answers nothing`);
+        answered.add(m.tool_call_id);
+      }
+    }
+    for (const id of opened) assert.equal(answered.has(id), true, `call ${id} unanswered`);
+  }
+});
+
+test("a turn well inside the window is never compacted", async () => {
+  writeFileSync(join(ws, "a.ts"), "small");
+
+  const { sentToModel } = await drive(
+    [
+      { calls: [{ id: "c1", args: { action: "read", path: "a.ts" } }] },
+      { text: "done" },
+    ],
+    { contextBudget: 100_000 },
+  );
+
+  assert.equal(JSON.stringify(sentToModel[1]).includes("removed to fit"), false);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -86,6 +86,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Application** | `src/application/services/nativeAgentLoopService.ts` | Path A agent loop (native tool_calls). Every iteration streams; iteration 0 additionally acts as the fallback guard |
 | **Application** | `src/application/services/approvalGateService.ts` | Approval state machine: ask / auto / plan modes, trusted-file tracking, auto-approve allowlist |
 | **Application** | `src/application/services/systemPromptBuilder.ts` | System prompt construction via `PromptRepositoryPort` + `PlanFileRepositoryPort` |
+| **Application** | `src/application/services/contextCompactor.ts` | Trims the conversation to fit the context window: semantic summary, naive drop, and the tool-pairing repair both leave behind |
 | **Application** | `src/application/useCases/handleChatMessageUseCase.ts` | Full `POST /v1/messages` orchestration: slash intercept → system prompt → compaction → translate → route → stream |
 | **Application** | `src/application/useCases/resolveApprovalUseCase.ts` | `POST /v1/messages/:id/approve` — parse scope, delegate to `ApprovalInteractorPort` |
 | **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash/python, path safety, bash timeout |

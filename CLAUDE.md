@@ -35,7 +35,7 @@ Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 212 tests, ~400 ms
+cd proxy && npm test         # 236 tests, ~410 ms
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -143,17 +143,18 @@ in step by hand. If you change one, grep for the others.
 
 ## Current state, and what is next
 
-Phase 1 (the safety net) is **closed**: 212 tests on every push, every component
-of the proxy has a suite.
+Phase 1 (the safety net) is **closed**: every component of the proxy has a suite.
+Phase 2 is under way — 236 tests on every push.
 
-**Next: Phase 2 — known correctness.** In order, from PLAN.md §5:
+**Phase 2 — known correctness**, from PLAN.md §5:
 
-1. **Compaction is absent inside the agent loop** — the sharpest remaining gap.
-   It fires only on the incoming request
-   (`handleChatMessageUseCase.ts:276`); inside the loop every iteration does
-   `messages.push()` with no further budget check, so a long tool-heavy turn can
-   still overflow the window mid-flight.
-2. **Path B lies about its own limits** — `MAX_ITERATIONS = 10` is hardcoded
+1. ~~Compaction absent inside the agent loop~~ — **done**. It now runs between
+   iterations in both loops, through `services/contextCompactor.ts`. Extracting
+   it surfaced a second problem: trimming by position cuts through `tool_use` /
+   `tool_result` pairs, and an orphan on either side makes the backend reject the
+   request — in long conversations only, which is to say exactly when compaction
+   runs. `repairToolPairing()` handles both message shapes.
+2. **Path B lies about its own limits**  ← **next** — `MAX_ITERATIONS = 10` is hardcoded
    while the changelog claims the configurable limit replaced it. It does not
    need to reach parity; it needs to stop overstating itself.
 3. **`bash` blocks the event loop** for up to 30s (`spawnSync`). Acceptable for

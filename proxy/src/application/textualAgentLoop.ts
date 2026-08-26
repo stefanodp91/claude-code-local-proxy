@@ -13,6 +13,7 @@
  */
 
 import { sseEvent, msgId } from "../domain/utils";
+import type { ContextCompactor } from "./services/contextCompactor";
 import { SseEventType, StopReason, ContentBlockType, DeltaType } from "../domain/types";
 import { executeAction, ACTION_CLASSIFICATION, ActionClass, type ActionArgs } from "../infrastructure/workspaceActions";
 import type { ILogger, LlmClientPort, SseWriterPort } from "../domain/ports";
@@ -156,6 +157,10 @@ export async function runTextualAgentLoop(
   logger: ILogger,
   approvalGate?: TextualApprovalGate,
   venvDir = ".claudio/python-venv",
+  /** Optional: trims `messages` between iterations. Omitted, the loop behaves as before. */
+  compactor?: ContextCompactor,
+  /** The loaded model's context window, or 0 when unknown. */
+  contextBudget = 0,
 ): Promise<void> {
   // Strip any tool-related fields — this model cannot use them.
   const baseReq = { ...openaiReq, tools: undefined, tool_choice: undefined };
@@ -231,6 +236,20 @@ export async function runTextualAgentLoop(
   // ── Agent loop ─────────────────────────────────────────────────────────────
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
+    // Same reasoning as Path A: each iteration appends an assistant turn and an
+    // <observation>, and a `read` truncates at 50 KB, so the turn can outgrow
+    // the window even when the request that started it was small. Path B is a
+    // fallback, but a fallback that dies halfway through is worse than one that
+    // answers briefly.
+    if (i > 0 && compactor) {
+      const outcome = await compactor.compact(messages, contextBudget);
+      if (outcome.compacted) {
+        logger.info(
+          `[agent] compacted mid-turn at iteration ${i} (${outcome.strategy}, ${outcome.removed} message(s))`,
+        );
+      }
+    }
+
     const llmResp = await llm.chat({ body: { ...baseReq, messages }, stream: true });
     if (!llmResp.ok) {
       emitTextBlock(`Error from LLM: ${llmResp.errorText ?? `HTTP ${llmResp.status}`}`);

@@ -7,6 +7,53 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Fixed — Compaction could produce a conversation the backend rejects
+
+- **Trimming by position cuts through `tool_use` / `tool_result` pairs.** After
+  translation those become an assistant turn carrying `tool_calls` and the `tool`
+  messages answering it, and an OpenAI-compatible backend rejects the request
+  outright when either half has lost its partner — a result answering nothing, or
+  a call the backend is still waiting on.
+
+  Compaction runs exactly when a conversation has grown long, which in this proxy
+  means exactly when it is mostly tool calls and their results. So the failure
+  arrives only in long sessions: the ones where losing the turn costs most.
+
+  `repairToolPairing()` now runs after every trim, drops whichever half was
+  orphaned, keeps any text that shared the message with it, and understands both
+  message shapes — Anthropic content blocks for the incoming request, and
+  `tool_calls` / `role: "tool"` for the loops trimming their own history.
+
+### Added — Compaction inside the agent loops
+
+- **`services/contextCompactor.ts`** — extracted from `handleChatMessageUseCase`,
+  which was the only caller. Both agent loops now compact between iterations.
+
+  Compaction on the incoming request cannot help with a turn that grows *after*
+  it starts: each iteration appends an assistant turn and one tool result per
+  call, and `read` truncates at 50 KB, so a handful of large reads crosses the
+  window. The old behaviour was a 400 from the backend mid-turn, after the user
+  had already watched half a reply arrive.
+
+  Path B gets it too. It is a documented fallback, but a fallback that dies
+  halfway through is worse than one that answers briefly.
+
+- **`test/contextCompactor.test.ts`** (20 tests) — both strategies, the summary
+  timeout, the unknown-window case, and the pairing invariant in both shapes.
+  Plus three tests in the loop suites for mid-turn compaction.
+
+- One test was rewritten after it passed: the first version built evenly-sized
+  call/result pairs, so messages dropped two at a time and the pairing survived
+  by arithmetic rather than by the code being right — it passed against the bug.
+  It now makes the call enormous and its answer tiny, so exactly one message
+  drops and the cut lands mid-pair every time.
+
+- Negative control: disabling `repairToolPairing` fails exactly 5 tests, and
+  skipping compaction between iterations fails exactly 1 in each loop suite.
+
+- `npm test` is now 236 tests in ~410 ms.
+
+
 ### Added — Path A test suite (19 tests) — every component now has one
 
 - **`test/nativeAgentLoop.test.ts`** — the loop that runs on a model with native

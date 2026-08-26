@@ -112,7 +112,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **212 test** a ogni push, e **ogni componente
+gira senza GPU accesa. Oggi sono **236 test** a ogni push, e **ogni componente
 del proxy ha una suite**.
 
 I sei punti dell'ordine d'attacco sono stati coperti per primi; poi i tre che
@@ -269,7 +269,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 212 test / ~400 ms, senza GPU e senza rete.
+`npm test` in 236 test / ~410 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -291,12 +291,21 @@ test del proxy, typecheck dell'estensione. Nessuna GPU, ed è il motivo per cui
 
 Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
 
-- **Compaction assente dentro il loop.** Scatta solo sulla richiesta in
-  ingresso ([`handleChatMessageUseCase.ts:276`](proxy/src/application/useCases/handleChatMessageUseCase.ts#L276)).
-  Dentro il loop ogni iterazione fa `messages.push()` senza ricontrollare il
-  budget: con 40 iterazioni e `read` che tronca a 50 KB, un turno lungo può
-  saturare il contesto a metà. È il gap più affilato rimasto.
-- **Path B è di serie B.** `MAX_ITERATIONS = 10` hardcoded a
+- ~~**Compaction assente dentro il loop.**~~ — **fatta.** Estratta in
+  [`services/contextCompactor.ts`](proxy/src/application/services/contextCompactor.ts)
+  e chiamata fra un'iterazione e l'altra in *entrambi* i loop: la richiesta in
+  ingresso poteva essere piccola ed era il *turno* a crescere, con `read` che
+  tronca a 50 KB e fino a 40 iterazioni.
+
+  Estrarla ha fatto emergere un secondo problema, più serio del primo:
+  **tagliare per posizione spezza le coppie `tool_use` / `tool_result`**. Dopo la
+  traduzione diventano un turno assistant con `tool_calls` e i messaggi `tool`
+  che gli rispondono, e al backend basta che manchi una delle due metà per
+  rifiutare la richiesta. Succede solo nelle conversazioni lunghe — cioè
+  esattamente quelle in cui la compaction gira. `repairToolPairing()` ripara
+  entrambe le forme di messaggio, perché la compaction ora gira su entrambi i
+  lati della traduzione.
+- **Path B è di serie B.**  ← **prossimo** `MAX_ITERATIONS = 10` hardcoded a
   [`textualAgentLoop.ts:85`](proxy/src/application/textualAgentLoop.ts#L85),
   mentre il CHANGELOG 1.3.0 dichiara che il limite configurabile "replaces the
   hardcoded limit of 10" — è arrivato solo in Path A. Manca anche il dispatch

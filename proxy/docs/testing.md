@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 212 tests, ~400 ms
+npm test          # 236 tests, ~410 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -56,7 +56,8 @@ proxy/test/
   autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
   workspaceActions.test.ts     34 tests — the filesystem and shell backend
   textualAgentLoop.test.ts     17 tests — Path B, the XML-tag loop
-  nativeAgentLoop.test.ts      19 tests — Path A, the native tool-call loop
+  nativeAgentLoop.test.ts      22 tests — Path A, the native tool-call loop
+  contextCompactor.test.ts     20 tests — trimming a conversation to fit the window
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -332,6 +333,43 @@ Plus plan mode letting only the plan file through, and a JSON body arriving in
 answer to a `stream: true` request, which LM Studio does often enough that
 ignoring it would lose whole turns.
 
+### `contextCompactor.test.ts`
+
+Trimming a conversation to fit the model's window. The property under test is
+not "the conversation got shorter" but "**it got shorter and is still a valid
+conversation**", because compaction runs exactly when a conversation is long,
+which in this proxy means exactly when it is full of tool calls and their
+results — see [Trimming that breaks the conversation](#trimming-that-breaks-the-conversation).
+
+Both message shapes are covered, since compaction now runs on both sides of the
+translation: the incoming Anthropic request, and each agent loop trimming its own
+OpenAI history between iterations.
+
+One test in this suite was rewritten after it passed. The first version built a
+history of evenly-sized call/result pairs, so messages dropped two at a time and
+the pairing survived by arithmetic rather than by the code being right — it
+passed against the bug. The version that ships makes the call enormous and its
+answer tiny, so exactly one message is dropped and the cut lands in the middle of
+a pair every time.
+
+---
+
+## Trimming that breaks the conversation
+
+Compaction removes messages by position. That is fine for prose and wrong for
+this proxy, where a long conversation is mostly `tool_use` / `tool_result` pairs.
+After translation those become an assistant turn carrying `tool_calls` and the
+`tool` messages answering it, and an OpenAI-compatible backend rejects the whole
+request when either half has lost its partner:
+
+- a result with no preceding call is a `tool` message answering nothing;
+- a call with no result is one the backend is still waiting on.
+
+Either way the user gets a 400 instead of a reply, and only ever in a long
+session — which is to say the one where losing the turn costs most. `repairToolPairing()`
+runs after every trim, drops whichever half was orphaned, and keeps any text that
+shared the message with it.
+
 ---
 
 ## Two grammars that had drifted apart
@@ -477,6 +515,8 @@ tests fail — and fail *narrowly*:
 | Never return `"fallthrough"` | Fallthrough tests fail | exactly 2 fail |
 | Drop the assistant tool_calls turn from the replay | Replay test fails | exactly 1 fails |
 | Run destructive calls in parallel | Overlap test fails | exactly 1 fails |
+| Disable `repairToolPairing` | Pairing tests fail | exactly 5 fail |
+| Skip compaction between loop iterations | Mid-turn growth test fails | exactly 1 fails per loop |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.

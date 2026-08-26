@@ -52,7 +52,7 @@ This means that some features "missing from the chat-extension" are actually **a
 | Feature | Status | Evidence |
 |---|---|---|
 | **Streaming during native agent loop iterations** | FIXED in Path A | [nativeAgentLoopService.ts:222-236](../../proxy/src/application/services/nativeAgentLoopService.ts#L222-L236) — **every** iteration now uses `stream: true` and forwards text/thinking deltas in real time. Iteration 0 no longer runs as a non-streaming probe; it keeps only the fallback-guard role, returning `"fallthrough"` when the model emits nothing at all. |
-| **Automatic context compaction** | PARTIAL | Implemented proxy-side in [handleChatMessageUseCase.ts:276](../../proxy/src/application/useCases/handleChatMessageUseCase.ts#L276): at 80% of the model's context window it summarizes via LLM (`SEMANTIC_COMPACT`), falling back to naive message-dropping. **Limitation:** it runs only on the incoming request. Inside the agent loop, each iteration appends tool results to `messages[]` with no further budget check, so a long Path A run can still overflow mid-loop. Claudio's own `conversation[]` is likewise never trimmed. |
+| **Automatic context compaction** | PRESENT | [`services/contextCompactor.ts`](../../proxy/src/application/services/contextCompactor.ts): at 80% of the model's context window it summarizes via LLM (`SEMANTIC_COMPACT`), falling back to dropping messages, and trims down to 65%. Runs on the incoming request **and between iterations of both agent loops**, so a turn that grows past the window mid-flight is handled rather than rejected by the backend. Tool-call pairing is repaired after any trim. **Remaining limitation:** Claudio's own `conversation[]` is never trimmed — the proxy trims what it sends, the extension keeps everything. |
 | **Cross-session memory** | ABSENT | No `MEMORY.md` or persistent equivalent. The only cross-request state on the proxy side is the `promoted` map in ToolManager, in-memory and reset on restart. |
 | **Plan mode** | PRESENT | `PlanExitModalComponent` gestisce l'uscita da Plan mode; `SetAgentMode` message sincronizza lo stato Ask/Auto/Plan tra webview ed extension host; `ModeSelectorComponent` mostra un dropdown con dot colorati per ogni modalità. |
 | **Visualization of `tool_use` blocks in streaming** | PRESENT | Full pipeline in place: `StreamingService` parses `content_block_start/delta/stop` for `tool_use` blocks → `MessageStoreService` accumulates `rawInput` and parses JSON at completion → `MessageBubbleComponent` renders `<app-tool-use-block>` → `ToolUseBlockComponent` shows icon + label with pulsing animation while pending. |
@@ -92,7 +92,7 @@ All minimum-gap items are now implemented. The following secondary features are 
 |---|---|---|
 | **Few-shot examples in tool manual** | Proxy | `TEXTUAL_TOOL_MANUAL` includes two worked examples (list→read→answer, grep→answer) to improve Path B compliance on smaller models. |
 | **Auto-approve allowlist** | Proxy | `.claudio/auto-approve.json` with `pathPattern`/`cmdPattern` rules. See [proxy/docs/permission-protocol.md](../../proxy/docs/permission-protocol.md). |
-| **Context compaction** | Proxy | Automatic at 80% of the model context, on incoming requests only — see the PARTIAL row in §3 for the in-loop gap. |
+| **Context compaction** | Proxy | Automatic at 80% of the model context, on incoming requests *and* between agent-loop iterations — see the row in §3. |
 | **Plan mode** | Proxy + Claudio | The mode selector posts to `POST /agent-mode` ([proxy-client.ts:194-199](../src/extension/proxy/proxy-client.ts#L194-L199)). Destructive actions blocked without modal. State synced back via `ConfigUpdate`. |
 
 The remaining gaps are full Claude Code parity items (lower priority):
@@ -105,7 +105,7 @@ Everything else (skills, MCP, hooks, sub-agents, todo, web tools, cross-session 
 
 **Full Claude Code parity** (lower priority): cross-session memory, hooks, skills, MCP, sub-agents, TodoWrite, web tools, worktree isolation.
 
-The sharpest remaining gap is in-loop context compaction: compaction fires when a request arrives, but not between agent iterations, so a long tool-heavy turn can still saturate the window (see §3).
+In-loop compaction, previously the sharpest gap here, now runs in both loops. What is left on the Claudio side is that its own `conversation[]` grows without bound.
 
 The full target architecture is in [proxy/docs/agent-loop.md](../../proxy/docs/agent-loop.md).
 

@@ -21,6 +21,7 @@
  */
 
 import { sseEvent, msgId } from "../../domain/utils";
+import type { ContextCompactor } from "./contextCompactor";
 import {
   AgentMode,
   ApprovalScope,
@@ -143,6 +144,13 @@ export class NativeAgentLoopService {
      * changes detected by the server's poll loop.
      */
     private readonly maxIterationsResolver: () => number,
+    /** Trims `messages` between iterations — see the note in the loop below. */
+    private readonly compactor: ContextCompactor,
+    /**
+     * The loaded model's context window, or 0 when the backend exposes no
+     * metadata. Resolved per turn for the same reason as the iteration limit.
+     */
+    private readonly contextBudgetResolver: () => number,
     /**
      * Relative path (from workspaceCwd) to the Python virtual environment.
      * Forwarded to executeAction() for action='python'.
@@ -231,6 +239,24 @@ export class NativeAgentLoopService {
     // workspace-tool constraint.
 
     for (let i = 0; i < maxIterations; i++) {
+
+      // Compaction on the incoming request is not enough. Each iteration below
+      // appends an assistant turn and one tool result per call, and a `read`
+      // truncates at 50 KB — so a long tool-heavy turn could cross the context
+      // window halfway through and get a 400 from the backend instead of an
+      // answer, having already streamed half a reply to the user.
+      //
+      // The compactor repairs tool-call pairing afterwards, which matters more
+      // here than upstream: this history is nothing *but* calls and results.
+      const budget = this.contextBudgetResolver();
+      if (i > 0) {
+        const outcome = await this.compactor.compact(messages, budget);
+        if (outcome.compacted) {
+          this.logger.info(
+            `[agent] compacted mid-turn at iteration ${i} (${outcome.strategy}, ${outcome.removed} message(s))`,
+          );
+        }
+      }
 
       const llmResp = await this.llm.chat({
         body: { ...agentReq, tool_choice: currentToolChoice(), messages },
