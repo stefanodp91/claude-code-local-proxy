@@ -114,8 +114,10 @@ dell'ordine d'attacco sono coperti. La fase si chiude qui.
 Il conto di cosa è costata: **sette bug reali**, nessuno dei quali lanciava
 un'eccezione, scriveva un log o falliva un typecheck. Non è una coincidenza — è
 la forma di guasto di questo progetto, ed è la ragione per cui la fase valeva la
-spesa. Restano scoperti i due loop d'agente e `workspaceActions`: la superficie
-più grande, ma anche l'unica dove `regression.sh` prende ancora qualcosa.
+spesa. Coperto anche `workspaceActions` (34 test, **due bug**: `edit` corrompeva le
+sostituzioni contenenti `$`, e una slash finale nella root del workspace
+rifiutava *ogni* path). Restano i due loop d'agente: la superficie più grande, e
+l'unica dove `regression.sh` prende ancora qualcosa.
 
 Questa è la fase che sblocca tutto il resto. Senza, ogni modifica successiva è
 una scommessa — e la Fase 0 ha prodotto due prove dirette del perché:
@@ -253,7 +255,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 142 test / ~200 ms, senza GPU e senza rete.
+`npm test` in 176 test / ~250 ms, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`

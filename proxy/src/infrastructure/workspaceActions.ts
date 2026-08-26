@@ -33,7 +33,7 @@ import {
   mkdirSync,
 } from "node:fs";
 import { execSync, spawnSync } from "node:child_process";
-import { resolve, join, relative, dirname } from "node:path";
+import { resolve, join, relative, dirname, sep } from "node:path";
 import { executePythonCode } from "./pythonExecutor";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -394,7 +394,15 @@ function actionEdit(args: ActionArgs, workspaceCwd: string): string {
   }
 
   // Replace only the first occurrence to match Claude Code behaviour.
-  const newContent = content.replace(args.old_string, args.new_string);
+  //
+  // The replacement goes through a function on purpose. Passing the string
+  // directly makes `$$`, `$&`, `` $` `` and `$'` inside it *replacement
+  // patterns* rather than text: "$$" collapsed to "$", "$&" expanded to the
+  // text being replaced, "$'" to everything after it. An edit inserting shell
+  // or Makefile source therefore wrote something other than what was asked,
+  // reported success, and left no trace. A replacer function is inserted
+  // literally.
+  const newContent = content.replace(args.old_string, () => args.new_string as string);
 
   try {
     writeFileSync(safe, newContent, "utf-8");
@@ -475,8 +483,13 @@ export function safeResolvePath(
   // Reject obviously absolute or home-relative paths before resolve()
   if (relativePath.startsWith("/") || relativePath.startsWith("~")) return null;
 
-  const resolved = resolve(workspaceCwd, relativePath);
-  if (resolved !== workspaceCwd && !resolved.startsWith(workspaceCwd + "/")) {
+  // Normalise the root first. The comparison below appends a separator, so a
+  // root arriving with a trailing slash (from the X-Workspace-Root header) was
+  // compared against "/ws//" and every path in the workspace read as an escape:
+  // total failure, reported as "outside the workspace root".
+  const root = resolve(workspaceCwd);
+  const resolved = resolve(root, relativePath);
+  if (resolved !== root && !resolved.startsWith(root + sep)) {
     return null;
   }
   return resolved;

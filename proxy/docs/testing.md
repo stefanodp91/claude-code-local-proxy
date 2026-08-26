@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 142 tests, ~200 ms
+npm test          # 176 tests, ~250 ms
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -54,6 +54,7 @@ proxy/test/
   streamTranslator.test.ts     23 tests — the SSE state machine
   toolManager.test.ts          23 tests — selection, overflow, promotion decay
   autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
+  workspaceActions.test.ts     34 tests — the filesystem and shell backend
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -262,6 +263,36 @@ described this as handled; in streaming it was not. Whitespace that would open a
 text block is now held: flushed ahead of the next real text, dropped if a tool
 call arrives instead.
 
+### `workspaceActions.test.ts`
+
+Where the model's intentions become changes on disk. Two properties carry the
+weight: `safeResolvePath()` is the real containment boundary — the one that was
+*right* both times the check was wrong elsewhere — and `executeAction()` promises
+never to throw, because every failure is a string the model reads and reacts to,
+while a thrown error ends the turn. The last test walks eight failing calls and
+asserts only that each came back as a string.
+
+It found two bugs, in [Two ways an edit went wrong](#two-ways-an-edit-went-wrong).
+
+---
+
+## Two ways an edit went wrong
+
+**A dollar sign in the replacement was not a dollar sign.**
+`content.replace(old_string, new_string)` treats `$$`, `$&`, `` $` `` and `$'`
+inside the *replacement* as patterns rather than text: `$$` collapses to `$`,
+`$&` expands to the text being replaced, `$'` to everything after it. An edit
+inserting Makefile or shell source therefore wrote something other than what was
+asked for, reported `Replaced 1 occurrence`, and left no trace. Passing a
+replacer function inserts the string literally.
+
+**A trailing slash on the workspace root locked the model out entirely.** The
+containment test appends a separator — `resolved.startsWith(root + sep)` — so a
+root arriving as `/ws/` from the `X-Workspace-Root` header was compared against
+`/ws//` and *every* path in the workspace read as an escape. Every action would
+have failed with "outside the workspace root", which is about as confusing as a
+correct-sounding error gets. `resolve()` on the root normalises it.
+
 ---
 
 ## Fail closed
@@ -360,6 +391,9 @@ tests fail — and fail *narrowly*:
 | Treat an unevaluable constraint as satisfied | Fail-closed tests fail | exactly 2 fail |
 | Let an unusable regex propagate | Bad-pattern tests fail | exactly 2 fail |
 | `startsWith` containment in `loadOldContent` | Sibling-prefix test fails | exactly 1 fails |
+| Pass `new_string` to `replace()` directly | Dollar-sign test fails | exactly 1 fails |
+| Skip `resolve()` on the workspace root | Trailing-slash test fails | exactly 1 fails |
+| Drop the separator from `safeResolvePath` | Sibling-prefix test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
@@ -422,11 +456,7 @@ priority order:
 
 1. **The two agent loops** — `nativeAgentLoopService` (Path A) and
    `textualAgentLoop` (Path B). The largest remaining surface, and the one a
-   live-backend snapshot still catches best, which is why it sits here rather
-   than at the top.
-2. **`workspaceActions`** — the filesystem and shell backend. `safeResolvePath()`
-   deserves the same treatment the two containment bugs above got, from the other
-   direction: it is the check that was *right* both times, and nothing pins it.
+   live-backend snapshot still catches best.
 
 Two behaviours are known-uncovered on purpose, both recorded in
 [PLAN.md](../../PLAN.md) as decisions rather than gaps: the `tool_choice: "any"`

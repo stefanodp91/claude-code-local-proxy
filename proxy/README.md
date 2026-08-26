@@ -634,7 +634,7 @@ model-specific logic.
 cd proxy && npm test
 ```
 
-142 tests, ~200 ms, no GPU, no LM Studio, no model loaded, no network. That is
+176 tests, ~250 ms, no GPU, no LM Studio, no model loaded, no network. That is
 the property that matters: it is why these can gate a pull request while
 `scripts/regression.sh` cannot.
 
@@ -648,6 +648,7 @@ the property that matters: it is why these can gate a pull request while
 | [`test/streamTranslator.test.ts`](test/streamTranslator.test.ts) | The SSE state machine — block lifecycle and indices, split and merged chunk boundaries, deferred UseTool emission, usage arriving after `finish_reason` |
 | [`test/toolManager.test.ts`](test/toolManager.test.ts) | Which ~6 of ~40 tools the model is offered — scoring, the reserved UseTool slot, overflow reachability, tie stability, promotion and its decay |
 | [`test/autoApproveConfig.test.ts`](test/autoApproveConfig.test.ts) | `.claudio/auto-approve.json` — rule matching, constraints that fail closed, unusable patterns, and the workspace containment of the diff preview read |
+| [`test/workspaceActions.test.ts`](test/workspaceActions.test.ts) | The filesystem and shell backend — `safeResolvePath` containment, every action's success and failure strings, literal replacement in `edit`, output limits |
 
 Both suites exist because the bug they describe actually happened. `t()` returns
 the key itself when a lookup misses and locale files arrive through `JSON.parse`,
@@ -667,10 +668,9 @@ without a mock framework — the hexagonal architecture is paid for, it just has
 to be used. `ToolProbe` still reaches for global `fetch` and the test stubs it;
 if it ever becomes a port, that test gets simpler on its own.
 
-Every component on the [priority list](docs/testing.md#not-covered-yet) is now
-covered. What remains uncovered is the largest surface and the one a live-backend
-snapshot still catches best: the two agent loops and the workspace actions. See
-[Testing](docs/testing.md) and [PLAN.md](../PLAN.md).
+What remains uncovered is the two agent loops — the largest surface, and the one
+a live-backend snapshot still catches best. See [Testing](docs/testing.md) and
+[PLAN.md](../PLAN.md).
 
 ---
 

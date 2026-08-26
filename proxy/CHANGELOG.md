@@ -7,6 +7,51 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-26
 
+### Fixed — `edit` corrupted replacements containing a dollar sign
+
+- **`actionEdit` passed `new_string` straight to `String.prototype.replace`**,
+  which treats `$$`, `$&`, `` $` `` and `$'` inside the replacement as patterns
+  rather than text. `$$` collapsed to `$`, `$&` expanded to the text being
+  replaced, `$'` to everything after it.
+
+  An edit inserting Makefile or shell source therefore wrote something other than
+  what the model asked for, returned `Replaced 1 occurrence`, and left no trace
+  anywhere. Now goes through a replacer function, which inserts the string
+  literally.
+
+### Fixed — A trailing slash on the workspace root refused every path
+
+- **`safeResolvePath()` compared against `workspaceCwd + "/"`** without
+  normalising the root first, so a root arriving as `/ws/` from the
+  `X-Workspace-Root` header was tested against `/ws//` and every path inside the
+  workspace resolved as an escape. Every action would have failed with "outside
+  the workspace root". The root now goes through `resolve()`, and the separator
+  comes from `node:path` rather than a hardcoded `/`.
+
+### Added — Workspace actions test suite (34 tests)
+
+- **`test/workspaceActions.test.ts`** — `safeResolvePath` containment from every
+  direction (absolute, `~`, `..`, sibling prefix, the root itself), each action's
+  success and failure strings, `read` truncation, `write` creating parent
+  directories, `edit` replacing only the first occurrence, glob traversal and
+  brace alternation, and bash's stderr labelling, exit codes and empty output.
+
+  `safeResolvePath` is the check that two *other* places in this codebase got
+  wrong on this branch, and both times this one was right. Nothing pinned it,
+  which was the only reason to be nervous about it.
+
+- The final test walks eight failing calls and asserts only that each returned a
+  string. `executeAction` documents that it never throws, and the difference
+  matters: a string is an observation the model can react to, an exception ends
+  the turn.
+
+- Negative control: passing `new_string` to `replace()` directly fails exactly 1
+  test, skipping `resolve()` on the root fails exactly 1, and dropping the
+  separator from the containment check fails exactly 1.
+
+- `npm test` is now 176 tests in ~250 ms.
+
+
 ### Fixed — An allowlist rule could approve far more than it said
 
 - **A constraint that does not apply to the action was treated as satisfied.**
