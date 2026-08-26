@@ -225,6 +225,32 @@ export class HandleChatMessageUseCase {
       if (last) last.content = intercept.newContent;
     }
 
+    // ── 1b. Tool-calling capability guard ─────────────────────────────────
+    // `maxTools === 0` means the probe found the model cannot emit structured
+    // tool calls at all. Two different consumers read that 0 very differently:
+    //   - routing below treats it as "use the textual Path B loop", which only
+    //     works when `workspaceCwd` is set (i.e. the client is Claudio);
+    //   - `ToolManager.selectTools()` treats `maxTools <= 0` as "filtering
+    //     disabled" and passes every tool through untouched.
+    // Without this guard a tool-carrying client that sends no X-Workspace-Root
+    // (Claude Code CLI) would have all ~40 of its tools forwarded verbatim to a
+    // model that failed a single-tool probe — producing garbage rather than an
+    // error. Fail loudly instead.
+    const requestedTools = Array.isArray(body.tools) ? body.tools.length : 0;
+    if (maxTools === 0 && !workspaceCwd && requestedTools > 0) {
+      const message = t("tools.unsupportedByModel", {
+        model: modelInfo?.id ?? body.model ?? "unknown",
+        count: requestedTools,
+      });
+      this.logger.error(message);
+      return {
+        type:         "json",
+        status:       400,
+        body:         { type: "error", error: { type: "invalid_request_error", message } },
+        llmReachable: null,
+      };
+    }
+
     // ── 2. System prompt injection ────────────────────────────────────────
     // Injects workspace context + agent instructions. When agentMode=plan,
     // appends an additional block that instructs the model to write its plan

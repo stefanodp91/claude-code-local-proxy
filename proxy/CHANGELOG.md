@@ -58,6 +58,23 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **`DEFAULT_PROBE_TIMEOUT` raised 30s → 60s.** Probe latency scales with the
   tool array; at 47 tools a reply already took 12s, leaving little headroom.
 
+### Added — Tool-calling capability guard
+
+- **`HandleChatMessageUseCase`** now rejects, with HTTP 400 and an explicit
+  message, any request that carries tool definitions when `maxTools == 0` and
+  no `X-Workspace-Root` header is present.
+
+  `0` had three incompatible readings: `ToolProbe.detect()` returns it for
+  "this model cannot do tool calling"; the agent-loop routing reads it as
+  "use the textual Path B loop" (which needs `workspaceCwd`); and
+  `ToolManager.selectTools()` reads `maxTools <= 0` as "filtering disabled,
+  forward everything". A tool-carrying client without the header — i.e. Claude
+  Code CLI — therefore had all ~40 of its tools forwarded verbatim to a model
+  that had just failed a single-tool probe, producing garbage instead of an
+  error. The collision is now documented at the `selectTools()` call site.
+
+- New locale key `tools.unsupportedByModel` (`locales/en_US.json`).
+
 ---
 
 ## [1.4.0] — 2026-04-12

@@ -143,7 +143,15 @@ export class ToolManager {
     messages: any[],
     forcedToolName?: string,
   ): ToolSelection {
-    // No filtering needed if within the limit or filtering is disabled
+    // No filtering needed if within the limit or filtering is disabled.
+    //
+    // NOTE: `maxTools <= 0` means "filtering disabled, pass everything" HERE,
+    // but the probe emits 0 to mean "this model cannot do tool calling at all"
+    // (`ToolProbe.detect()`). The two readings are opposite. Requests that
+    // would hit that contradiction are rejected upstream by the capability
+    // guard in HandleChatMessageUseCase, so by the time we get here a 0 can
+    // only come from an explicit MAX_TOOLS override, where "no limit" is the
+    // intended meaning.
     if (this.maxTools <= 0 || allTools.length <= this.maxTools) {
       return { tools: allTools, overflow: [], useToolDef: null };
     }

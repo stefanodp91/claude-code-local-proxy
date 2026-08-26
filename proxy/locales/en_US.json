@@ -28,6 +28,7 @@
 
   "tools.filtered": "Tools: {{from}}→{{to}} (core: {{coreList}} + UseTool)",
   "tools.noFiltering": "Tools: {{count}} (no filtering needed)",
+  "tools.unsupportedByModel": "Model '{{model}}' does not support tool calling (tool probe returned 0), but this request carries {{count}} tool definition(s) and no X-Workspace-Root header, so the proxy cannot substitute its own textual agent loop. Load a model that supports tools, or set MAX_TOOLS to override the probe.",
 
   "request.incoming": "→ {{model}} | {{msgs}} msgs | {{tools}} tools | stream={{stream}} | thinking={{thinking}} | max_tokens={{from}}→{{to}}",
   "request.invalidJson": "Invalid JSON in request body",
