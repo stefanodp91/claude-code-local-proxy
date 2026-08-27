@@ -62,3 +62,14 @@ desktop.ini
 
 .claude/
 .claudio/
+# …except the demo workspace's, which exists to be read: the skill and the hook
+# in it are the thing being demonstrated, and a demo whose contents are ignored
+# demonstrates nothing.
+!demo-workspace/.claudio/
+!demo-workspace/.claudio/**
+
+# Which workspaces have had their hooks trusted, and the hash that trust was for.
+# Local state with absolute paths in it, like model-cache.json is for probes —
+# and it was committed by accident once, in a repository whose whole design is
+# that trust is granted on this machine, by this person, for this content.
+proxy/hooks-trust.json

@@ -1212,6 +1212,35 @@ mapping, and what a stream that ends without `[DONE]` should send.
 
 ---
 
+## One command for all of it
+
+[`verify-all.sh`](../../verify-all.sh) at the repository root runs the three
+kinds of check in the order their cost demands: the suites first (no model, no
+network), then the end-to-end scripts if a backend is reachable — starting and
+stopping its own proxy — and finally it prints the checklist for the part only a
+person can do, against [`demo-workspace/`](../../demo-workspace/), which ships a
+skill and a hook so there is something to demonstrate.
+
+It exists because the commands were scattered across three directories and the
+instructions for running them were, honestly, unusable: "run this" without
+saying where.
+
+**Writing it reproduced the orphan bug for the third time.** The script started
+its proxy as a background subshell without `set -m`, so the job was not a process
+group leader and the group kill reached nothing: the subshell died, `npm` and
+`node` survived, the port stayed held, and the CLI check then failed because the
+launcher's own proxy could not bind. Same fault as `ProxyManager` and
+`start_agent_cli.sh` had, in a script written after both were fixed. A background
+job that must be killable needs its own group, and that sentence is now a comment
+in all three places.
+
+**And the harness hid it.** The first version of `check()` wrote every command's
+output to one shared file and printed its last five lines — which, for the failing
+check, happened to be passes. Each check keeps its own log now and prints the
+path. A diagnostic that truncates is a diagnostic that lies.
+
+---
+
 ## The two surfaces, checked by hand
 
 Neither of these can run in CI, and both answer a question no suite can.
