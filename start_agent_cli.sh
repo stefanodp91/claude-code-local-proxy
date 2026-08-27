@@ -43,7 +43,9 @@ cleanup() {
   if [[ -n "$PROXY_PID" ]] && kill -0 "$PROXY_PID" 2>/dev/null; then
     echo ""
     yellow "Stopping proxy (PID $PROXY_PID)…"
-    kill "$PROXY_PID" 2>/dev/null || true
+    # The *group*, not the pid: PROXY_PID belongs to npm, and the proxy is the
+    # node process underneath it. See proxy/src/infrastructure/lifecycle.ts.
+    lifecycle kill-group "$PROXY_PID" >/dev/null 2>&1 || true
     wait "$PROXY_PID" 2>/dev/null || true
     green "Proxy stopped."
   fi
@@ -72,17 +74,23 @@ load_env() {
 load_env "$SCRIPT_DIR/proxy/.env.proxy"
 load_env "$SCRIPT_DIR/proxy/.env.claude"
 
-# ── Port discovery ─────────────────────────────────────────────────────────
-# Find the first free TCP port starting from PROXY_PORT (default 5678).
-# Each invocation gets its own port → multiple parallel agents are supported.
+# ── Lifecycle rules ────────────────────────────────────────────────────────
+# Port discovery, killing a proxy and waiting for health all live in the proxy
+# itself — `proxy/src/cli/lifecycle.ts` — and this script calls them.
+#
+# They used to be written twice, here in bash and again in TypeScript inside
+# Claudio's ProxyManager, and the second copy is where the cost showed: both
+# killed the proxy by the pid of `npm`, which on Linux leaves the node process
+# it wrapped still running and still holding the port. It was fixed on the
+# Claudio side and not here, because nothing connected the two.
 
-find_free_port() {
-  local port="${1:-5678}"
-  while lsof -i :"$port" &>/dev/null 2>&1; do ((port++)); done
-  echo "$port"
+# Run from inside proxy/ so `tsx` resolves: it is a devDependency of the proxy,
+# not of the repository root.
+lifecycle() {
+  (cd "$SCRIPT_DIR/proxy" && node --import tsx src/cli/lifecycle.ts "$@")
 }
 
-PROXY_PORT="$(find_free_port "${PROXY_PORT:-5678}")"
+PROXY_PORT="$(lifecycle find-port "${PROXY_PORT:-5678}")"
 TARGET_URL="${TARGET_URL:-http://127.0.0.1:1234/v1/chat/completions}"
 TARGET_BASE="${TARGET_URL%/v1/chat/completions}"
 
@@ -99,30 +107,27 @@ curl -sf "$TARGET_BASE/v1/models" &>/dev/null \
 PROXY_LOG="$SCRIPT_DIR/proxy/proxy.log"
 bold "Starting proxy on port ${PROXY_PORT}... (log: $PROXY_LOG)"
 
+# `set -m` gives the background job its own process group, which is what makes
+# the group kill in cleanup() reach the proxy and not just the npm wrapper.
+set -m
 PROXY_PORT="${PROXY_PORT}" npm --prefix "$SCRIPT_DIR/proxy" run start \
   > "$PROXY_LOG" 2>&1 &
 PROXY_PID=$!
+set +m
 
 # ── Wait for proxy health ──────────────────────────────────────────────────
 
-HEALTH_URL="http://127.0.0.1:${PROXY_PORT}/health"
-for i in $(seq 1 30); do
-  if curl -sf "$HEALTH_URL" &>/dev/null; then
-    green "Proxy ready (PID $PROXY_PID, port $PROXY_PORT)"
-    break
-  fi
-  kill -0 "$PROXY_PID" 2>/dev/null \
-    || die "Proxy exited unexpectedly. Check $PROXY_LOG"
-  if [[ $i -eq 30 ]]; then
-    yellow "WARNING: Proxy did not respond within 30s."
-    yellow "The proxy probes the model before it starts listening, so a cold or"
-    yellow "large model can push first response past this timeout. Loading the"
-    yellow "model in LM Studio before launching avoids it."
-    yellow "Claude Code will connect once the proxy is ready."
-    break
-  fi
-  sleep 1
-done
+if lifecycle wait-health "$PROXY_PORT" 30 "$PROXY_PID" >/dev/null; then
+  green "Proxy ready (PID $PROXY_PID, port $PROXY_PORT)"
+elif ! kill -0 "$PROXY_PID" 2>/dev/null; then
+  die "Proxy exited unexpectedly. Check $PROXY_LOG"
+else
+  yellow "WARNING: Proxy did not respond within 30s."
+  yellow "The proxy probes the model before it starts listening, so a cold or"
+  yellow "large model can push first response past this timeout. Loading the"
+  yellow "model in LM Studio before launching avoids it."
+  yellow "Claude Code will connect once the proxy is ready."
+fi
 
 # ── Configure Claude Code environment ─────────────────────────────────────
 

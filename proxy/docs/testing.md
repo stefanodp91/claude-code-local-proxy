@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 381 tests, ~1.1 s
+npm test          # 396 tests, ~4 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -54,6 +54,7 @@ proxy/test/
   toolProbe.test.ts             8 tests — probe outcome triage
   workspaceTool.test.ts         9 tests — the static summary Path B leans on
   planExitInjection.test.ts    12 tests — handing an approved plan back to the model
+  lifecycle.test.ts            15 tests — starting and stopping a proxy, for both surfaces
   startupDetectors.test.ts     21 tests — what the model can do, decided once at startup
   systemPromptBuilder.test.ts  12 tests — what every request is prefixed with
   actionOutcome.test.ts        15 tests — where an action's image goes
@@ -388,6 +389,36 @@ backend exposes no metadata — a guess would be worse), and the four ways the
 backend's answer comes back: an error with its status, a connection that never
 opened (502, never status 0), a backend that ignores `stream: true` and replies
 JSON, and a streamed answer.
+
+---
+
+## One rule, one home
+
+`lifecycle.ts` exists because its rules existed twice: in TypeScript inside
+Claudio's `ProxyManager`, and in bash inside `start_agent_cli.sh`. Both found a
+free port, both wrote a PID file, both killed the proxy by that pid — and both
+were wrong the same way, because `npm run start` makes node a *grandchild*. One
+copy was fixed when CI hung on it; the other kept the bug, because nothing
+connected them.
+
+Now the rules live in the proxy and both surfaces call them: Claudio imports the
+module, and the launcher shells out to `src/cli/lifecycle.ts`. What each surface
+still owns is what it really owns — Claudio pipes the proxy's output into a VS
+Code channel and raises banners, the launcher writes a log file and prints
+colours.
+
+The suite covers what a rule has to get right: an occupied port is stepped over,
+a PID file is named after the directory it belongs to (one shared file would have
+two windows killing each other's proxy), a group kill takes the grandchild, a
+stale or unreadable PID file is cleared rather than obeyed, and a health wait
+ends the moment the process it is waiting for is known to be dead.
+
+That last one has a measurable cost attached: reverting it makes the test take
+its full thirty seconds, which is exactly what the user used to spend watching a
+spinner for a proxy that had already exited.
+
+`ProxyManager` lost 57 lines to this, and its suite got faster — the shared wait
+polls twice a second where the private copy polled once.
 
 ---
 
@@ -933,6 +964,9 @@ tests fail — and fail *narrowly*:
 | Read the cached thinking flags by truthiness | Cached-false and partial-cache tests fail | exactly 2 fail |
 | Make `merge` replace instead of merge | Write-back tests fail | exactly 3 fail |
 | Run the second thinking probe unconditionally | No-reasoning test fails | exactly 1 fails |
+| Signal the pid instead of the process group | Grandchild test fails | exactly 1 fails |
+| Poll health for a process known to be dead | Give-up test fails | exactly 1 fails, after the full 30 s |
+| One PID file for every workspace | Per-directory test fails | exactly 1 fails |
 | List every top-level entry again | Listing-cap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here

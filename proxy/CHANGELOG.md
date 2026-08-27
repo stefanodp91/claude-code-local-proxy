@@ -148,6 +148,33 @@ The two findings underneath were worth more.
   exactly 1 — that last one only after the control was fixed, having first come
   back green because the substitution never applied.
 
+### Changed — The proxy owns its own lifecycle, for both surfaces
+
+- **The rules existed twice**: in TypeScript inside Claudio's `ProxyManager`, and
+  in bash inside `start_agent_cli.sh`. Both found a free port, both wrote a PID
+  file, both killed the proxy by that pid — and both were wrong the same way,
+  because `npm run start` makes node a grandchild. One copy was fixed when CI
+  hung on it; **the launcher kept the bug**, because nothing connected them.
+
+- `infrastructure/lifecycle.ts` is now the single home for port discovery, PID
+  file naming, orphan cleanup, group kill and the health wait. Claudio imports
+  it; the launcher shells out to `src/cli/lifecycle.ts`. Each surface keeps what
+  it actually owns — Claudio pipes output into a VS Code channel and raises
+  banners, the launcher writes a log and prints colours.
+
+- `ProxyManager` lost 57 lines, and its suite got faster: the shared wait polls
+  twice a second where the private copy polled once. The launcher also stopped
+  reimplementing port discovery with `lsof` in a loop.
+
+- 15 tests; `npm test` is now 396. Negative control: signalling the pid instead
+  of the group fails exactly 1, polling a process known to be dead fails exactly
+  1 after the full thirty seconds, and one shared PID file for every workspace
+  fails exactly 1.
+
+- This is the first thing built to the principle now recorded in PLAN.md §7:
+  **the intelligence lives in the proxy.** Where a rule is written twice, the
+  second copy is a bug waiting to be found separately.
+
 ### Added — Startup probing has a suite (21 tests)
 
 - `ToolLimitDetector` and `ThinkingDetector` each ask a question that costs real
