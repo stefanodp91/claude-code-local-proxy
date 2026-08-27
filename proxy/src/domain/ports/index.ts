@@ -11,7 +11,12 @@
 export type { LlmClientPort, LlmChatRequest, LlmChatResponse } from "./llmClientPort";
 export type { SseWriterPort } from "./sseWriterPort";
 export type { PlanFileRepositoryPort } from "./planFileRepositoryPort";
-export type { MemoryRepositoryPort, TodoRepositoryPort } from "./memoryRepositoryPort";
+export type {
+  MemoryRepositoryPort,
+  TodoRepositoryPort,
+  SkillRepositoryPort,
+  SkillSummaryView,
+} from "./memoryRepositoryPort";
 export type { PromptRepositoryPort } from "./promptRepositoryPort";
 export { PromptKey } from "./promptRepositoryPort";
 export type { ApprovalInteractorPort, ApprovalRequestParams } from "./approvalInteractorPort";

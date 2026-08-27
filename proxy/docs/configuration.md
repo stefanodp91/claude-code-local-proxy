@@ -186,6 +186,8 @@ These variables control the Python execution engine used by the `python` workspa
 |---|---|---|---|
 | `PYTHON_VENV_DIR` | string | `.claudio/python-venv` | Directory (relative to the workspace root) where the proxy creates and manages the Python virtual environment. Each workspace gets its own isolated venv. |
 | `TODO_FILE` | string | `.claudio/TODO.md` | Workspace-relative task list the model keeps for itself with `action="todo"`, injected into the prompt when it has content. Empty disables the action entirely. Capped at 4 KB when injected — it is re-read on every turn and should stay a list, not a document. |
+| `SKILLS_DIR` | string | `.claudio/skills` | Workspace-relative directory of project skills — one subdirectory per skill, each with a `SKILL.md`. Their names and descriptions are listed in every prompt; the bodies are loaded on demand with `action="skill"`. Empty disables project skills. |
+| `GLOBAL_SKILLS_DIR` | string | *(empty)* | Absolute directory of skills shared across workspaces. A project skill of the same name wins. Empty means none. |
 | `PYTHON_PLOT_DIR` | string | `.claudio/plots` | Directory (relative to the workspace root) where a figure produced by `action="python"` is written, as `plot-YYYYMMDD-HHMMSS.png`. The image itself goes to the model inside the conversation; this file is the copy a person can open. Empty disables saving. Files are never overwritten and never pruned — the directory is worth adding to `.gitignore`. |
 
 The proxy creates the venv on first use, installs base packages (`matplotlib`, `numpy`, `pandas`, `scipy`), and auto-installs any missing imports before each execution.

@@ -41,6 +41,7 @@ import {
 import { spawn } from "node:child_process";
 import { resolve, join, relative, dirname, sep } from "node:path";
 import { executePythonCode } from "./pythonExecutor";
+import { FsSkillRepository } from "./adapters/fsSkillRepository";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -57,6 +58,7 @@ const MAX_BASH_OUTPUT = 8_000;
 const DEFAULT_VENV_DIR = ".claudio/python-venv";
 const DEFAULT_PLOT_DIR = ".claudio/plots";
 const DEFAULT_TODO_FILE = ".claudio/TODO.md";
+const DEFAULT_SKILLS_DIR = ".claudio/skills";
 
 // Directories that are never useful to search or list for an LLM agent.
 const PRUNE_DIRS = new Set([
@@ -132,6 +134,8 @@ export async function executeAction(
     venvDir = DEFAULT_VENV_DIR,
     plotDir = DEFAULT_PLOT_DIR,
     todoFile = DEFAULT_TODO_FILE,
+    skillsDir = DEFAULT_SKILLS_DIR,
+    globalSkillsDir = "",
   } = env;
   try {
     switch (args.action) {
@@ -151,6 +155,8 @@ export async function executeAction(
         return { text: await actionBash(args, workspaceCwd) };
       case WorkspaceAction.Todo:
         return { text: actionTodo(args, workspaceCwd, todoFile) };
+      case WorkspaceAction.Skill:
+        return { text: actionSkill(args, workspaceCwd, skillsDir, globalSkillsDir) };
       case WorkspaceAction.Python: {
         if (!args.cmd) return { text: "Error: 'cmd' is required for action='python'" };
         const result = await executePythonCode(args.cmd, workspaceCwd, venvDir, () => {});
@@ -171,6 +177,48 @@ export async function executeAction(
   } catch (err) {
     return { text: `Error executing action '${args.action}': ${String(err)}` };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action: skill
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Load one skill's instructions, and tell the model what else that skill brought.
+ *
+ * The files are named rather than sent: a skill's script or template is read
+ * with `read` or run with `bash`/`python` when it is actually needed, and those
+ * actions pass the approval gate as usual. A skill executing anything by itself
+ * would be a second route with nobody watching it.
+ *
+ * A name that matches nothing answers with the names that do, so a model that
+ * guessed can recover inside the same turn instead of giving up on the feature.
+ */
+function actionSkill(
+  args: ActionArgs,
+  workspaceCwd: string,
+  skillsDir: string,
+  globalSkillsDir: string,
+): string {
+  if (!args.skill_name) return "Error: 'skill_name' is required for action='skill'";
+
+  const repo = new FsSkillRepository(skillsDir, globalSkillsDir);
+  const skill = repo.load(workspaceCwd, args.skill_name);
+
+  if (!skill) {
+    const available = repo.list(workspaceCwd).map((s) => s.name);
+    return available.length > 0
+      ? `Skill '${args.skill_name}' not found. Available: ${available.join(", ")}.`
+      : `Skill '${args.skill_name}' not found, and this workspace has no skills.`;
+  }
+
+  const resources = skill.files.length > 0
+    ? `\n\nThis skill also ships: ${skill.files.join(", ")} — in '${skill.location}'. ` +
+      `Read one with action='read', run one with action='bash' or action='python' ` +
+      `(those still ask the user, as always).`
+    : "";
+
+  return `# Skill: ${skill.name}\n\n${skill.body}${resources}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -482,21 +530,34 @@ function matchGlob(pattern: string, filePath: string): boolean {
     );
   }
 
-  // Convert glob to regex
+  // `**/` is "zero or more directories", including none — so `**/util.js` has to
+  // match `util.js` in the root as well as `src/util.js`. Splitting on `**`
+  // alone leaves that slash literal, and a model asking for `**/*.ts` in a flat
+  // project is told nothing matched. It asked; it was told; it believed it.
+  const segments = p.split("**/");
   const regexStr =
     "^" +
-    p
-      .split("**")
-      .map((segment) =>
-        segment
-          .split("*")
-          .map((s) => s.split("?").map(escapeRegex).join("."))
-          .join("[^/]*"),
-      )
-      .join(".*") +
+    segments
+      .map(segmentToRegex)
+      // Each `**/` becomes "any number of directories, or none at all".
+      .join("(?:[^/]*/)*") +
     "$";
 
   return new RegExp(regexStr).test(f);
+}
+
+/** One glob segment — no `**` in it — as a regex fragment. */
+function segmentToRegex(segment: string): string {
+  return segment
+    // A bare `**` (not followed by a slash) still crosses directories.
+    .split("**")
+    .map((part) =>
+      part
+        .split("*")
+        .map((s) => s.split("?").map(escapeRegex).join("."))
+        .join("[^/]*"),
+    )
+    .join(".*");
 }
 
 function escapeRegex(s: string): string {

@@ -61,6 +61,11 @@ export const TEXTUAL_TOOL_MANUAL = [
   "     Your own task list, replaced whole each time and read back to you next",
   "     turn. Keep one for anything longer than two steps.",
   "",
+  "  <action name=\"skill\" skill_name=\"commit-style\"/>",
+  "     Loads instructions someone wrote for this workspace. The names on offer",
+  "     are listed in your instructions above; load one when the task is what it",
+  "     describes.",
+  "",
   "An attribute value cannot contain a double quote — the tag ends at the first",
   "one, and both old_string and new_string would arrive truncated. When the text",
   "you need to replace contains a double quote, rewrite the whole file with",
@@ -723,7 +728,9 @@ export function parseActionTag(tag: string): ActionArgs | null {
   // and nothing said so. `test/textualAgentLoop.test.ts` now derives the list
   // from the manual and asks this function about each one, so the two cannot
   // drift apart again.
-  for (const attr of ["path", "pattern", "include", "cmd", "old_string", "new_string", "content"]) {
+  for (const attr of [
+    "path", "pattern", "include", "cmd", "old_string", "new_string", "content", "skill_name",
+  ]) {
     const m = tag.match(new RegExp(`${attr}="([^"]*)"`));
     if (m) args[attr] = m[1];
   }

@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 412 tests, ~4 s
+npm test          # 432 tests, ~4 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -57,7 +57,8 @@ proxy/test/
   lifecycle.test.ts            15 tests — starting and stopping a proxy, for both surfaces
   startupDetectors.test.ts     21 tests — what the model can do, decided once at startup
   todo.test.ts                 13 tests — the list the model keeps for itself
-  systemPromptBuilder.test.ts  15 tests — what every request is prefixed with
+  skills.test.ts               15 tests — instructions the model loads when it needs them
+  systemPromptBuilder.test.ts  17 tests — what every request is prefixed with
   actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
   approvalGate.test.ts         20 tests — the write/edit/bash/python gate
@@ -70,7 +71,7 @@ proxy/test/
   contextCompactor.test.ts     24 tests — trimming a conversation to fit the window
   requestTranslator.test.ts    25 tests — Anthropic → OpenAI
   nativeAgentLoop.test.ts      29 tests — Path A, the native tool-call loop
-  workspaceActions.test.ts     46 tests — the filesystem and shell backend
+  workspaceActions.test.ts     49 tests — the filesystem and shell backend
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -393,6 +394,42 @@ JSON, and a streamed answer.
 
 ---
 
+## Instructions the model asks for
+
+A skill is prompt the model *requests*. What every turn pays for is an index —
+one name and one line each — and the body arrives only when the model calls
+`skill`. A skill that were always injected would just be a longer prompt, and on
+these models the window is the scarce resource.
+
+Three decisions, pinned rather than argued:
+
+- **The model chooses**, with no keyword triggers. The evidence for trusting it
+  is `todo`: it reached for that on a six-step task and not on a three-step one.
+  If skills turn out never to be loaded, that is a measurement to act on, not a
+  mechanism to add in advance.
+- **A skill's scripts run through the ordinary actions.** The skill ships the
+  file and names it; the model runs it with `bash` or `python`, and those pass
+  the approval gate as always. A private execution channel would be a second
+  route with nobody watching it — the same argument that keeps memory writes on
+  the ordinary gated `write`.
+- **Two homes, the workspace wins.** Global skills are the ones you keep; the
+  project's own shadow them by name, because the project is what a colleague
+  clones and what code review sees.
+
+Measured live: given a skill describing three absurd rules for commit messages —
+a rune in the subject, a body saying what was *wrong*, a fixed last line — the
+model loaded it as its **first action** and wrote a message following all three.
+The rules are deliberately unguessable, so following them can only have come
+from the skill.
+
+**And the grammar test earned its keep again.** The manual taught
+`skill_name="…"` and `parseActionTag` did not read it, which would have made the
+action work on Path A and be impossible to express on Path B. That is also why
+the argument is `skill_name` and not `name`: in `<action name="skill" …/>` the
+`name` attribute is already spent on the action itself.
+
+---
+
 ## The list the model keeps for itself
 
 `todo` is the first of the parity features, and it was chosen first because it is
@@ -521,6 +558,25 @@ model-dependent**. Across runs this model wrote a plan and stopped, wrote a plan
 and called `exit_plan_mode`, and called `exit_plan_mode` immediately without
 writing anything. The proxy handles all three; only the first two let the script
 check what happens after a plan exists.
+
+---
+
+## A glob that could not see the root
+
+Found by watching the model work rather than by reading the code. Asked to look
+at `util.js` in a flat workspace, it globbed `**/util.js` — the pattern anyone
+would write — and got "(no files matched)". It concluded the file did not exist
+and wrote its answer around a guess.
+
+`**/util.js` was compiled to `^.*\/util\.js$`, with that slash *literal*, so a
+file in the workspace root could never match. In every glob convention `**/`
+means "zero or more directories, including none". It compiles to
+`(?:[^/]*/)*` now, and the test that pins it also pins the other half: `*.ts`
+must still stay in the root, or every listing becomes the whole tree.
+
+Nothing failed. The action answered, the model believed it, and the answer was
+written on the assumption that a file that exists does not. That is the shape
+this project keeps finding, and this time it took a live run to see it.
 
 ---
 
@@ -1012,6 +1068,8 @@ tests fail — and fail *narrowly*:
 | Let a contentless `todo` empty the list | No-content test fails | exactly 1 fails |
 | Drop containment on the configured todo path | Escape test fails | exactly 1 fails |
 | Inject an empty todo section | Empty-section test fails | exactly 1 fails — after three tests were added for it |
+| Make `**/` require a directory again | Root-match tests fail | exactly 2 fail |
+| Let `*` cross a directory boundary | Root-only test fails | exactly 1 fails |
 | List every top-level entry again | Listing-cap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here

@@ -32,6 +32,7 @@ export enum WorkspaceAction {
   Bash         = "bash",
   Python       = "python",
   Todo         = "todo",
+  Skill        = "skill",
   ExitPlanMode = "exit_plan_mode",
 }
 
@@ -61,6 +62,10 @@ export const ACTION_CLASSIFICATION: Record<string, ActionClass> = {
   // configured file under `.claudio/` and can be pointed nowhere else, so
   // gating it would be a modal per checked box for no protection at all.
   [WorkspaceAction.Todo]:   ActionClass.ReadOnly,
+  // Reading instructions the workspace ships. Whatever those instructions tell
+  // the model to *run* goes through `bash` or `python`, and through the gate
+  // with them — a skill has no execution path of its own.
+  [WorkspaceAction.Skill]:  ActionClass.ReadOnly,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,6 +122,10 @@ export interface ActionEnv {
   plotDir?: string;
   /** Workspace-relative todo list. Empty disables the action. */
   todoFile?: string;
+  /** Workspace-relative directory of project skills. Empty disables them. */
+  skillsDir?: string;
+  /** Absolute directory of shared skills. Empty means none. */
+  globalSkillsDir?: string;
 }
 
 /**
@@ -205,6 +214,12 @@ export const WORKSPACE_TOOL_DEF = {
         new_string: {
           type: "string",
           description: "For edit: the replacement string.",
+        },
+        skill_name: {
+          type: "string",
+          description:
+            "For skill: the name of the skill to load, exactly as listed in your instructions. " +
+            "(Not `name`: on the textual path that attribute already carries the action itself.)",
         },
         cmd: {
           type: "string",

@@ -45,3 +45,21 @@ export interface TodoRepositoryPort {
   /** The current list, or `null` when there is none worth injecting. */
   load(workspaceCwd: string): string | null;
 }
+
+/** One skill, as the index in the prompt shows it. */
+export interface SkillSummaryView {
+  name: string;
+  description: string;
+}
+
+/**
+ * The skills a workspace offers.
+ *
+ * Only the index is a port: the prompt needs the names and one line each, and
+ * the bodies are loaded by an action rather than by the prompt — which is the
+ * whole point of the feature. A skill that were always injected would just be a
+ * longer prompt.
+ */
+export interface SkillRepositoryPort {
+  list(workspaceCwd: string): SkillSummaryView[];
+}

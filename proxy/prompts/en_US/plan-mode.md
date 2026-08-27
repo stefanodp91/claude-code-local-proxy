@@ -57,3 +57,5 @@ Working directory: {{cwd}} ({{cwdBase}})
 {{memorySection}}
 
 {{todoSection}}
+
+{{skillsSection}}

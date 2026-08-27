@@ -40,6 +40,7 @@ import {
   FsWorkspaceFileRepository,
   MAX_TODO_BYTES,
 } from "./adapters/fsWorkspaceFileRepository";
+import { FsSkillRepository } from "./adapters/fsSkillRepository";
 import { FetchLlmClient } from "./adapters/fetchLlmClient";
 import { NodeSseWriter } from "./adapters/nodeSseWriter";
 import { SystemClock } from "./adapters/systemClock";
@@ -68,6 +69,7 @@ export class ProxyServer {
   private readonly actionEnv: ActionEnv;
   private readonly memoryFiles: FsWorkspaceFileRepository;
   private readonly todoFiles: FsWorkspaceFileRepository;
+  private readonly skillFiles: FsSkillRepository;
   private requestTranslator!: RequestTranslator;
   private responseTranslator!: ResponseTranslator;
   private streamTranslator!: StreamTranslator;
@@ -98,8 +100,11 @@ export class ProxyServer {
     this.planFiles         = new FsPlanFileRepository(config.plansDir, clock);
     this.memoryFiles       = new FsWorkspaceFileRepository(config.memoryFile);
     this.todoFiles         = new FsWorkspaceFileRepository(config.todoFile, MAX_TODO_BYTES);
+    this.skillFiles        = new FsSkillRepository(config.skillsDir, config.globalSkillsDir);
     this.promptRepo        = new FsPromptRepository(config.locale);
-    this.promptBuilder     = new SystemPromptBuilder(this.promptRepo, this.planFiles, this.memoryFiles, this.todoFiles);
+    this.promptBuilder     = new SystemPromptBuilder(
+      this.promptRepo, this.planFiles, this.memoryFiles, this.todoFiles, this.skillFiles,
+    );
     this.approvalInteractor = new SseApprovalInteractor(this.logger);
     this.approvalGate       = new ApprovalGateService(
       this.approvalInteractor, this.planFiles, this.logger,
@@ -108,7 +113,9 @@ export class ProxyServer {
     this.actionEnv = {
       venvDir:  this.config.pythonVenvDir,
       plotDir:  this.config.pythonPlotDir,
-      todoFile: this.config.todoFile,
+      todoFile:        this.config.todoFile,
+      skillsDir:       this.config.skillsDir,
+      globalSkillsDir: this.config.globalSkillsDir,
     };
     this.compactor = new ContextCompactor(this.llm, this.logger, {
       semanticEnabled:  this.config.semanticCompact,

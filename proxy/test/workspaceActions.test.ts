@@ -243,6 +243,42 @@ test("glob walks subdirectories", async () => {
   assert.equal(out.includes("c.js"), false);
 });
 
+test("`**/` matches a file in the root as well as one in a subdirectory", async () => {
+  // Found by watching the model work: it asked for `**/util.js`, got "(no files
+  // matched)" for a file sitting in the workspace root, concluded the file did
+  // not exist and wrote its answer around a guess. In every glob convention it
+  // knows, `**/` means "zero or more directories" — including none.
+  put("util.js", "");
+  put("src/util.js", "");
+
+  const out = await run({ action: WorkspaceAction.Glob, pattern: "**/util.js" });
+
+  assert.match(out, /^util\.js$/m, "the file in the root was missed");
+  assert.match(out, /src\/util\.js/);
+});
+
+test("`**/*.ts` reaches the root too", async () => {
+  put("a.ts", "");
+  put("deep/nested/b.ts", "");
+
+  const out = await run({ action: WorkspaceAction.Glob, pattern: "**/*.ts" });
+
+  assert.match(out, /^a\.ts$/m);
+  assert.match(out, /deep\/nested\/b\.ts/);
+});
+
+test("a pattern without `**` still stays in the root", async () => {
+  // The other half of the rule: fixing `**/` must not turn `*.ts` into a
+  // recursive search, or every listing becomes the whole tree.
+  put("a.ts", "");
+  put("src/b.ts", "");
+
+  const out = await run({ action: WorkspaceAction.Glob, pattern: "*.ts" });
+
+  assert.match(out, /a\.ts/);
+  assert.equal(out.includes("src/b.ts"), false, "a single star crossed a directory boundary");
+});
+
 test("glob understands brace alternation", async () => {
   put("a.ts", ""); put("b.js", ""); put("c.md", "");
   const out = await run({ action: WorkspaceAction.Glob, pattern: "*.{ts,js}" });

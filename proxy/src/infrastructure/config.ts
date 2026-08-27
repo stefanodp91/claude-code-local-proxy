@@ -122,6 +122,13 @@ export interface ProxyConfig {
    * the `todo` action. Injected into the prompt when it has content.
    */
   todoFile: string;
+  /** Workspace-relative directory of project skills, or "" to disable them. */
+  skillsDir: string;
+  /**
+   * Absolute directory of skills shared across workspaces, or "" for none.
+   * A project's skill of the same name wins.
+   */
+  globalSkillsDir: string;
 
   // ── Agent loop ──
 
@@ -247,6 +254,9 @@ const DEFAULT_MEMORY_FILE = ".claudio/MEMORY.md";
 /** Workspace-relative todo list. Empty disables the `todo` action entirely. */
 const DEFAULT_TODO_FILE = ".claudio/TODO.md";
 
+/** Where a project keeps its own skills. Empty disables project skills. */
+const DEFAULT_SKILLS_DIR = ".claudio/skills";
+
 /** Default Python venv directory — relative to the workspace root. */
 const DEFAULT_PYTHON_VENV_DIR = ".claudio/python-venv";
 
@@ -368,6 +378,8 @@ export function loadConfig(): ProxyConfig {
     plansDir:                env("PLANS_DIR", DEFAULT_PLANS_DIR),
     memoryFile:              env("MEMORY_FILE", DEFAULT_MEMORY_FILE),
     todoFile:                env("TODO_FILE", DEFAULT_TODO_FILE),
+    skillsDir:               env("SKILLS_DIR", DEFAULT_SKILLS_DIR),
+    globalSkillsDir:         env("GLOBAL_SKILLS_DIR", ""),
 
     // Agent loop
     maxAgentIterations:      envInt("MAX_AGENT_ITERATIONS", DEFAULT_MAX_AGENT_ITERATIONS),
