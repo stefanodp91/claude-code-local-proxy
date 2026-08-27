@@ -119,7 +119,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **396 test**, ~4 s, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **412 test**, ~4 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -282,7 +282,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 396 test / ~4 s, senza GPU e senza rete.
+`npm test` in 412 test / ~4 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -550,9 +550,14 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
 
   L'ordine è per costo crescente e per quanto aiutano un modello piccolo:
 
-  1. **TodoWrite** — una lista di task che il modello mantiene fra le
-     iterazioni. È ciò che gli impedisce di perdere il filo su un compito lungo,
-     ed è la voce più economica della lista.
+  1. ~~**TodoWrite**~~ — **fatta il 2026-08-27.** `action="todo"` scrive
+     `.claudio/TODO.md` (configurabile con `TODO_FILE`, vuoto per disattivare) e
+     il prompt la rilegge all'inizio di ogni turno. L'azione **non porta un
+     path**: scrive quell'unico file e non può essere puntata altrove, ed è per
+     questo che è auto-approvata invece di alzare una modale per ogni casella.
+     Misurata dal vivo: su un compito da tre passi il modello non tiene lista, e
+     fa bene; su uno da sei la scrive come terza azione, senza che il prompt
+     glielo chieda, e alla fine la riscrive con tutte le caselle spuntate.
   2. **Skills** — pacchetti di istruzioni caricati *solo quando servono*: la
      finestra di contesto è la risorsa scarsa dell'intero progetto, e questo è
      l'unico modo di spendere prompt su ciò che conta davvero adesso.
@@ -606,7 +611,7 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
-cd proxy && npm test && npm run typecheck     # 396 test, ~4 s
+cd proxy && npm test && npm run typecheck     # 412 test, ~4 s
 cd chat-extension && npm run typecheck
 ```
 
@@ -620,7 +625,7 @@ questi due comandi sono il cancello.
 | | Stato |
 |---|---|
 | Fase 0 (pulizia, probe, guard) | chiusa |
-| Fase 1 (rete di sicurezza) | chiusa — da 0 a 396 test |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 412 test |
 | Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
 | Fase 3.1 memoria cross-sessione | fatta |
 | Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |

@@ -148,6 +148,40 @@ The two findings underneath were worth more.
   exactly 1 — that last one only after the control was fixed, having first come
   back green because the substitution never applied.
 
+### Added — `todo`: the list the model keeps for itself
+
+First of the parity features decided in PLAN.md §7, and first because it is the
+cheapest thing that addresses what a 27B model is actually bad at: doing three of
+five steps and then answering as though it had done five.
+
+- **`action="todo"` replaces the whole list**, written to `TODO_FILE`
+  (`.claudio/TODO.md`, empty disables). The prompt carries the list back at the
+  start of every turn, which is the half that makes it worth writing.
+
+- **The action takes no path.** It writes the one configured file and can be
+  pointed nowhere else, and that is what makes it safe to auto-approve rather
+  than raising a modal per ticked box. A test passes it a `path` and asserts it
+  goes nowhere; if the action ever grows one, that test is what should stop it.
+
+- **An empty list injects nothing** — the same rule as memory, for the same
+  reason: a heading saying there is nothing to say is paid for on every request
+  of the turn, and the context window is the scarce resource here.
+
+- `FsMemoryRepository` became `FsWorkspaceFileRepository`: one class serving the
+  memory file and the list, since they are the same thing twice and two copies
+  is how they would drift.
+
+- **Measured live, twice.** On a three-step task the model kept no list and was
+  right not to. On a six-step task, with no mention of the feature in the prompt,
+  it wrote the list as its third action, worked through all six and rewrote it at
+  the end with every box ticked — five files edited and a README created.
+
+- 16 tests; `npm test` is now 412. Negative control: letting a contentless todo
+  empty the list fails exactly 1, dropping containment on the configured path
+  fails exactly 1, and injecting an empty section fails exactly 1 — that last one
+  only after three tests were added, because the control came back green and the
+  gap was real.
+
 ### Changed — The proxy owns its own lifecycle, for both surfaces
 
 - **The rules existed twice**: in TypeScript inside Claudio's `ProxyManager`, and

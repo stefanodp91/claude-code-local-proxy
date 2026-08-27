@@ -31,6 +31,7 @@ export enum WorkspaceAction {
   Edit         = "edit",
   Bash         = "bash",
   Python       = "python",
+  Todo         = "todo",
   ExitPlanMode = "exit_plan_mode",
 }
 
@@ -56,6 +57,10 @@ export const ACTION_CLASSIFICATION: Record<string, ActionClass> = {
   [WorkspaceAction.Edit]:   ActionClass.Destructive,
   [WorkspaceAction.Bash]:   ActionClass.Destructive,
   [WorkspaceAction.Python]: ActionClass.Destructive,
+  // Read-only in the sense that matters: it takes no path. It writes the one
+  // configured file under `.claudio/` and can be pointed nowhere else, so
+  // gating it would be a modal per checked box for no protection at all.
+  [WorkspaceAction.Todo]:   ActionClass.ReadOnly,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -110,6 +115,8 @@ export interface ActionEnv {
   venvDir?: string;
   /** Workspace-relative directory for saved figures. Empty disables saving. */
   plotDir?: string;
+  /** Workspace-relative todo list. Empty disables the action. */
+  todoFile?: string;
 }
 
 /**
@@ -184,7 +191,10 @@ export const WORKSPACE_TOOL_DEF = {
         },
         content: {
           type: "string",
-          description: "For write: the complete text content to write to the file.",
+          description:
+            "For write: the complete text content to write to the file. " +
+            "For todo: the complete task list in markdown, replacing the previous one " +
+            "(e.g. \"- [x] read the file\\n- [ ] change it\").",
         },
         old_string: {
           type: "string",

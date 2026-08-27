@@ -56,6 +56,7 @@ const MAX_BASH_OUTPUT = 8_000;
 /** Fallbacks when a caller passes no environment — mirror the proxy config. */
 const DEFAULT_VENV_DIR = ".claudio/python-venv";
 const DEFAULT_PLOT_DIR = ".claudio/plots";
+const DEFAULT_TODO_FILE = ".claudio/TODO.md";
 
 // Directories that are never useful to search or list for an LLM agent.
 const PRUNE_DIRS = new Set([
@@ -127,7 +128,11 @@ export async function executeAction(
   workspaceCwd: string,
   env: ActionEnv = {},
 ): Promise<ActionOutcome> {
-  const { venvDir = DEFAULT_VENV_DIR, plotDir = DEFAULT_PLOT_DIR } = env;
+  const {
+    venvDir = DEFAULT_VENV_DIR,
+    plotDir = DEFAULT_PLOT_DIR,
+    todoFile = DEFAULT_TODO_FILE,
+  } = env;
   try {
     switch (args.action) {
       case WorkspaceAction.List:
@@ -144,6 +149,8 @@ export async function executeAction(
         return { text: actionEdit(args, workspaceCwd) };
       case WorkspaceAction.Bash:
         return { text: await actionBash(args, workspaceCwd) };
+      case WorkspaceAction.Todo:
+        return { text: actionTodo(args, workspaceCwd, todoFile) };
       case WorkspaceAction.Python: {
         if (!args.cmd) return { text: "Error: 'cmd' is required for action='python'" };
         const result = await executePythonCode(args.cmd, workspaceCwd, venvDir, () => {});
@@ -164,6 +171,51 @@ export async function executeAction(
   } catch (err) {
     return { text: `Error executing action '${args.action}': ${String(err)}` };
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Action: todo
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Replace the workspace's task list.
+ *
+ * The action carries **no path** on purpose, and that is what makes it safe to
+ * auto-approve: it writes the one configured file under `.claudio/` and can be
+ * pointed nowhere else. A `todo` that could name its target would be a `write`
+ * without a modal.
+ *
+ * The list is replaced rather than appended to, because that is how the model
+ * uses it — it rewrites the whole thing with the boxes ticked — and because an
+ * appended list is a file nobody prunes.
+ *
+ * The result says how many items there are and does not echo the list back: the
+ * model has just written it, and repeating it costs its own length again on
+ * every update.
+ */
+function actionTodo(args: ActionArgs, workspaceCwd: string, todoFile: string): string {
+  if (!todoFile) {
+    return "The todo list is disabled on this proxy (TODO_FILE is empty). Nothing was written.";
+  }
+  if (args.content === undefined) {
+    return "Error: 'content' is required for action='todo' — send the whole list, not a change to it";
+  }
+
+  const safe = safeResolvePath(todoFile, workspaceCwd);
+  if (!safe) return `Error: todo file '${todoFile}' is outside the workspace root`;
+
+  try {
+    mkdirSync(dirname(safe), { recursive: true });
+    writeFileSync(safe, args.content.endsWith("\n") ? args.content : `${args.content}\n`, "utf-8");
+  } catch (err) {
+    return `Error writing the todo list: ${String(err)}`;
+  }
+
+  const items = args.content.split("\n").filter((l) => /^\s*[-*]\s*\[.\]/.test(l)).length;
+  const done = args.content.split("\n").filter((l) => /^\s*[-*]\s*\[[xX]\]/.test(l)).length;
+  return items > 0
+    ? `Todo list updated: ${items} item(s), ${done} done. It is in '${todoFile}' and will be in your instructions next turn.`
+    : `Todo list updated (${args.content.trim().split("\n").length} line(s)). It is in '${todoFile}'.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

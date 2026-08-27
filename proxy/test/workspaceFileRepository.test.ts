@@ -1,12 +1,12 @@
 /**
- * fsMemoryRepository.test.ts — reading the workspace's memory file.
+ * workspaceFileRepository.test.ts — reading the files a workspace keeps for the model.
  *
  * Everything that can go wrong reading a file has to degrade to "no memory",
  * never to a failed request: the memory is an optional enrichment of the system
  * prompt, and a turn that dies because a markdown file was missing would be a
  * strictly worse trade than not having memory at all.
  *
- * @module test/fsMemoryRepository
+ * @module test/workspaceFileRepository
  */
 
 import { test, beforeEach, afterEach } from "node:test";
@@ -14,13 +14,13 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FsMemoryRepository } from "../src/infrastructure/adapters/fsMemoryRepository";
+import { FsWorkspaceFileRepository } from "../src/infrastructure/adapters/fsWorkspaceFileRepository";
 
 let ws: string;
 beforeEach(() => { ws = mkdtempSync(join(tmpdir(), "claudio-memory-")); });
 afterEach(() => { rmSync(ws, { recursive: true, force: true }); });
 
-const repo = (rel = ".claudio/MEMORY.md") => new FsMemoryRepository(rel);
+const repo = (rel = ".claudio/MEMORY.md") => new FsWorkspaceFileRepository(rel);
 
 function put(rel: string, content: string) {
   const full = join(ws, rel);
@@ -59,7 +59,9 @@ test("a very long memory is truncated rather than crowding out the conversation"
   const out = repo().load(ws)!;
 
   assert.equal(out.length < 20_000, true);
-  assert.match(out, /\[memory truncated\]$/);
+  // The marker names the file it truncated: with one reader serving both the
+  // memory and the todo list, "[truncated]" alone would not say which.
+  assert.match(out, /\[\.claudio\/MEMORY\.md truncated\]$/);
 });
 
 test("a configured path that climbs out of the workspace reads nothing", () => {
