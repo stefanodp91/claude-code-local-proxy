@@ -50,6 +50,8 @@ Long LLM prompts live as `.md` files under `proxy/prompts/<locale>/`. This keeps
 | [`plan-mode.md`](../prompts/en_US/plan-mode.md) | Forced Plan-mode directive — mandatory write to `<plansDir>/<slug>.md`, forbidden behaviors, and the `exit_plan_mode` control action. |
 | [`existing-plan-section.md`](../prompts/en_US/existing-plan-section.md) | Template injected into `plan-mode.md` when an existing plan is found, so the model refines the same file instead of spawning a new one. |
 | [`memory-section.md`](../prompts/en_US/memory-section.md) | Wraps cross-session memory when the workspace has any, and tells the model where to write it back. Injected into **both** `agent-base.md` and `plan-mode.md`. |
+| [`todo-section.md`](../prompts/en_US/todo-section.md) | Carries the task list the model was keeping, so a six-step job does not end three steps in. Injected into both, and only when the list has content. |
+| [`skills-section.md`](../prompts/en_US/skills-section.md) | The index of skills the workspace offers — a name and a line each. The bodies are **not** here: the model loads one with `action="skill"` when the task is what it describes. |
 
 ### Templating
 
@@ -67,8 +69,15 @@ Templates use `{{name}}` placeholders — the same syntax as `domain/i18n.ts`. T
 | `{{memorySection}}` | Rendered `memory-section.md`, or **empty string** when the workspace has no memory | `agent-base.md`, `plan-mode.md` |
 | `{{memory}}` | Contents of `MEMORY_FILE`, capped at 8 KB | `memory-section.md` |
 | `{{memoryPath}}` | `MemoryRepositoryPort.relativePath` (from `ProxyConfig.memoryFile`) | `memory-section.md` |
+| `{{todoSection}}` | Rendered `todo-section.md`, or **empty string** when the list is empty | `agent-base.md`, `plan-mode.md` |
+| `{{todo}}` | Contents of `TODO_FILE`, capped at 4 KB | `todo-section.md` |
+| `{{todoPath}}` | `TodoRepositoryPort.relativePath` (from `ProxyConfig.todoFile`) | `todo-section.md` |
+| `{{skillsSection}}` | Rendered `skills-section.md`, or **empty string** when the workspace offers none | `agent-base.md`, `plan-mode.md` |
+| `{{skillList}}` | One line per skill: name and description, from `SKILLS_DIR` and `GLOBAL_SKILLS_DIR` | `skills-section.md` |
 
-**Key consequence**: changing `PLANS_DIR` env var (see [configuration.md](configuration.md#plan-mode)) re-routes every mention of the plans directory in the prompt — the model is told to write to the new location without any code change. `MEMORY_FILE` works the same way, and setting it to an empty string removes the memory section entirely.
+**Key consequence**: changing `PLANS_DIR` env var (see [configuration.md](configuration.md#plan-mode)) re-routes every mention of the plans directory in the prompt — the model is told to write to the new location without any code change. `MEMORY_FILE`, `TODO_FILE` and `SKILLS_DIR` work the same way, and setting any of them to an empty string removes its section entirely.
+
+**What is *not* injected matters as much.** A skill's body is never in the prompt — only its name and description — because the context window is the scarce resource here and instructions the model has not asked for are a longer prompt with nothing to show for it. Memory and the task list are injected, but only when they have content: an empty heading is paid for on every request of the turn.
 
 > **A parameter no template interpolates is silently dropped.** No error, no
 > warning — the builder computes it and `get()` discards it, so a feature wired

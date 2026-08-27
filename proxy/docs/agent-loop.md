@@ -99,11 +99,11 @@ A single OpenAI tool slot with an `action` discriminator keeps the tool count at
   type: "function",
   function: {
     name: "workspace",
-    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash, python",
+    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash, python, todo, skill",
     parameters: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list","read","grep","glob","write","edit","bash","python"] },
+        action: { type: "string", enum: ["list","read","grep","glob","write","edit","bash","python","todo","skill","exit_plan_mode"] },
         path:    { type: "string" },
         pattern: { type: "string" },
         include: { type: "string" },
@@ -169,7 +169,7 @@ NativeAgentLoopService.run(writer, openaiReq, workspaceCwd, thinkingEnabled):
         │     ├── 1. Intercept exit_plan_mode (control action) → return null → exit loop
         │     │
         │     ├── 2. Classify remaining calls:
-        │     │     read-only  = [list, read, grep, glob]
+        │     │     read-only  = [list, read, grep, glob, todo, skill]
         │     │     destructive = [write, edit, bash, python]
         │     │
         │     ├── 3. Execute read-only calls in PARALLEL (Promise.all)
@@ -309,6 +309,8 @@ The agent loop relies on the proxy having already injected the working directory
 2. ~~**bash blocks the event loop**~~ — **fixed.** `bash` and `grep` both spawn asynchronously now, through one `runProcess()` helper. `spawnSync` used to stop everything else in the process for up to 30 seconds: the SSE writes to the client, the approval gate, the health probe — and it quietly turned the parallel read-only dispatch below into a queue. Three things `spawnSync` gave for free are now explicit, each with its own test: the timeout (which must also *kill*, or the promise never settles and the turn hangs), the output cap (`spawn` has no `maxBuffer`), and the exit code (which arrives on `close`, and is `null` when a signal ended the process).
 3. **Parallel benefit is model-dependent**: read-only actions run in parallel at the proxy level, but the benefit is only visible if the model actually emits multiple tool calls in a single turn. Most local models (Qwen, Llama) call one tool at a time; frontier models are more likely to batch.
 4. **Auto-approve allowlist**: per-workspace `.claudio/auto-approve.json` allowlist allows matching actions to execute without a modal. See [permission-protocol.md](permission-protocol.md) for the rule format.
+5. **Hooks run without asking, once trusted**: `.claudio/hooks.json` declares commands to run after a *successful* destructive action, and they are inert until a person trusts the file (`npm run hooks -- trust <workspace>`). Trust is on the file's content, so any change revokes it, and the record is kept beside the proxy rather than in the workspace — inside it, the model could write it with `write` and trust its own hooks. The output comes back in the tool result: a linter's complaint reaches the model, which usually fixes it next turn.
+6. **`todo` and `skill` are auto-approved because neither takes a path**: `todo` writes only `TODO_FILE`, `skill` only reads from the skills directories. Gating them would be a modal per ticked box for no protection at all.
 
 ---
 
