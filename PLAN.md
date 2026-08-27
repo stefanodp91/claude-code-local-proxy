@@ -40,7 +40,7 @@ Claudio  ──[X-Workspace-Root]──>  proxy  ──>  LM Studio
 
 CLI      ──[nessun header]──────>  proxy  ──>  LM Studio
                                     └─ puro traduttore: la CLI tiene
-                                       il suo loop, i suoi ~40 tool,
+                                       il suo loop, i suoi tool,
                                        i suoi prompt di permesso
 ```
 
@@ -622,7 +622,14 @@ In ordine di resa, e nessuno dei tre è grande:
    wiring: vale meno, perché o è composizione o è I/O che un test finirebbe per
    simulare. Il candidato meno inutile è l'orchestrazione del probe
    (`toolLimitDetector`), dove una cache letta male vale un modello mutilato.
-4. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
+4. **La CLI è stata provata il 2026-08-27**, per la prima volta:
+   `proxy/scripts/cli-e2e.sh` lancia Claude Code attraverso il proxy e verifica
+   due turni — una risposta semplice e uno che usa il tool `Read` della CLI,
+   cioè il giro `tool_use`/`tool_result` che è la parte che si rompe in
+   silenzio. Entrambi come atteso. Una cosa da correggere nei documenti: Claude
+   Code in `--print` manda **3 tool**, non i ~40 che questo repo ha sempre
+   assunto — quel numero è di una sessione interattiva.
+5. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
    di §2 valgono per *quel* modello: tetto dei tool, thinking, finestra. Non
    trasferirli.
 

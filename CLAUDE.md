@@ -27,6 +27,12 @@ CLI      ──[no header]─────────>  proxy  is a pure transla
                                          (the CLI keeps its own loop and tools)
 ```
 
+Both were verified against a live model on 2026-08-27 —
+`proxy/scripts/cli-e2e.sh` for the CLI, `chat-extension/scripts/*-e2e.ts` for
+Claudio. One correction from that: Claude Code sends **3** tools in `--print`
+mode, not the ~40 this repo's docs had always assumed; the large number belongs
+to an interactive session.
+
 The routing lives in `handleChatMessageUseCase.ts`, inside `if (workspaceCwd)`.
 Roughly 3 570 of the proxy's 8 816 lines exist only for Claudio — the two agent
 loops, the workspace actions, the approval gate, the prompt builder and the

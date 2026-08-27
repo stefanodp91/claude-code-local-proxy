@@ -1004,6 +1004,29 @@ mapping, and what a stream that ends without `[DONE]` should send.
 
 ---
 
+## The two surfaces, checked by hand
+
+Neither of these can run in CI, and both answer a question no suite can.
+
+`scripts/cli-e2e.sh` is the **CLI** surface — the half where the proxy is a pure
+translator and Claude Code keeps its own loop, its own tools and its own prompts.
+Two turns: a plain answer, which exercises translation, streaming and the
+`max_tokens` cap (32 000 → 29 888 on this model), and a turn using the CLI's own
+`Read` tool, which exercises the `tool_use` / `tool_result` round trip. That
+second one is the reason the script exists: a mistranslated tool result does not
+throw, it produces a confident answer about the wrong thing.
+
+Run 2026-08-27 for the first time in this repo's life: both turns as expected.
+Worth noting what it showed — Claude Code sent **3 tools**, not the ~40 the docs
+have always assumed; that number belongs to an interactive session, not to
+`--print`.
+
+`chat-extension/scripts/approval-e2e.ts` and `plan-mode-e2e.ts` are the same idea
+for the **Claudio** surface: the approval handshake and the plan-mode round trip,
+driven through the shipped client with only the human click simulated.
+
+---
+
 ## What `regression.sh` is for
 
 [`scripts/regression.sh`](../scripts/regression.sh) drives a running proxy with
