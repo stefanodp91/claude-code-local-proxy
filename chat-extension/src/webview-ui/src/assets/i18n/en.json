@@ -27,6 +27,7 @@
   "slash.header": "Slash Commands",
   "slash.tooltip": "Slash commands",
   "slash.commands.branch": "Run git checkout -b in integrated terminal",
+  "slash.commands.brief": "Ask the LLM to answer briefly — at most 3 sentences",
   "slash.commands.clear": "Clear conversation history",
   "slash.commands.commit": "Ask LLM to write a commit message from staged diff",
   "slash.commands.commit-push-pr": "Commit, push and open PR via terminal",

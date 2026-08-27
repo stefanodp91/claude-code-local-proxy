@@ -37,7 +37,7 @@ repositories behind them. Counted, not estimated; recount when it matters.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 318 tests, ~1.0 s
+cd proxy && npm test         # 348 tests, ~1.0 s
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -193,33 +193,33 @@ in step by hand. If you change one, grep for the others.
 
 **Everything on the roadmap is closed except one item that is waiting on a
 decision, not on work.** Phases 0, 1 and 2 are done; Phase 3 is done through its
-third item. 318 tests, ~1.0 s, run locally before every commit — CI runs only
+third item. 348 tests, ~1.0 s, run locally before every commit — CI runs only
 when asked (`gh workflow run ci.yml --ref main`), so nothing automatic stands
 between a broken commit and `main`.
 
 | | State |
 |---|---|
 | Phase 0 — cleanup, probe, guard | closed |
-| Phase 1 — the safety net | closed, 0 → 318 tests |
+| Phase 1 — the safety net | closed, 0 → 348 tests |
 | Phase 2 — known correctness | closed: compaction inside both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
 | Phase 3.1 — cross-session memory | done |
 | Phase 3.2 — the image path | done, and **verified live** against `qwen/qwen3.8-27b` |
 | Phase 3.3 — textual tool calls | measured: a ghost, no parser written |
 | Phase 3.4 — parity with Claude Code | **waiting on a decision** — see PLAN.md §7 |
 
-"Every component has a suite" would still be an overstatement, and was made once
-in this repo's own docs before being counted. The slash interceptor, startup
-probing and the thin adapters have none; [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
-lists them, and the first two rows are the best small jobs left.
+"Every component has a suite" was once written here and was false when counted.
+It is closer now — the routing use case, the slash interceptor and the workspace
+summary all have one — but startup probing, the thin adapters and the wiring
+still do not, and [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
+keeps the honest list.
 
-**Where to pick up**, in order and none of them large:
-
-1. `slashCommandInterceptor` — eight proxy-side commands, several shelling out
-   to git. The routing suite proves one was intercepted, not what each does.
-2. `buildWorkspaceContextSummary` in `workspaceTool.ts` — the static snapshot
-   Path B leans on. If it lies, Path B works from a wrong map and nothing says so.
-3. Re-measure whenever the model changes. The numbers in PLAN.md §2 belong to
-   *that* model; the probe is the authority.
+**Where to pick up.** The component list is now down to startup probing, the
+thin adapters and the wiring — worth less than it looks, because it is either
+composition or I/O a test would end up simulating. The least useless of them is
+the probe orchestration (`toolLimitDetector`), where a cache read wrongly costs
+a model most of its tools. Beyond that: re-measure whenever the model changes —
+the numbers in PLAN.md §2 belong to *that* model, and the probe is the
+authority.
 
 **What the last session actually found**, because it is the pattern worth
 repeating rather than the details worth memorising: the cheapest item on the list

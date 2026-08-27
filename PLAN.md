@@ -119,7 +119,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **318 test**, ~1,0 s, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **348 test**, ~1,0 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -282,7 +282,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 318 test / ~1,0 s, senza GPU e senza rete.
+`npm test` in 348 test / ~1,0 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -571,7 +571,7 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
-cd proxy && npm test && npm run typecheck     # 318 test, ~1,0 s
+cd proxy && npm test && npm run typecheck     # 348 test, ~1,0 s
 cd chat-extension && npm run typecheck
 ```
 
@@ -585,7 +585,7 @@ questi due comandi sono il cancello.
 | | Stato |
 |---|---|
 | Fase 0 (pulizia, probe, guard) | chiusa |
-| Fase 1 (rete di sicurezza) | chiusa — da 0 a 318 test |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 348 test |
 | Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
 | Fase 3.1 memoria cross-sessione | fatta |
 | Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |
@@ -601,13 +601,19 @@ buchi, sono scelte.
 
 In ordine di resa, e nessuno dei tre è grande:
 
-1. **Coprire lo `slashCommandInterceptor`** — otto comandi lato proxy, diversi
-   dei quali lanciano `git`. La suite di routing verifica *che* un comando sia
-   stato intercettato, non cosa fa ciascuno. È il primo nome rimasto nella lista
-   di [testing.md](proxy/docs/testing.md#not-covered-yet).
-2. **Coprire `buildWorkspaceContextSummary`** (`workspaceTool.ts`) — lo snapshot
-   statico su cui Path B si appoggia. Se mente, Path B lavora su una mappa
-   sbagliata e nessuno se ne accorge.
+1. ~~Coprire lo `slashCommandInterceptor`~~ e ~~`buildWorkspaceContextSummary`~~
+   — **fatti il 2026-08-27**, ed erano gli ultimi due componenti nella lista di
+   [testing.md](proxy/docs/testing.md#not-covered-yet). Hanno trovato quattro
+   guasti silenziosi: `/brief` senza traduzione in nessuna delle due lingue (la
+   palette di Claudio mostrava la chiave grezza), un comando digitato insieme a
+   un allegato che non veniva intercettato (si leggeva `content[0]`), un
+   workspace illeggibile che produceva un riassunto **vuoto** iniettato nel
+   prompt, e un elenco di primo livello senza tetto che su una directory grande
+   si mangiava la finestra di contesto.
+2. **Quel che resta senza suite** è probing di avvio, adapter sottili e il
+   wiring: vale meno, perché o è composizione o è I/O che un test finirebbe per
+   simulare. Il candidato meno inutile è l'orchestrazione del probe
+   (`toolLimitDetector`), dove una cache letta male vale un modello mutilato.
 3. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
    di §2 valgono per *quel* modello: tetto dei tool, thinking, finestra. Non
    trasferirli.

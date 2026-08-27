@@ -18,6 +18,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > event loop, and CI stopped running on every commit. Test count over the
 > session: 257 → 315.
 
+### Added — The last two uncovered components, and what covering them found
+
+- **`slashCommandInterceptor` (21 tests).** The eight commands the proxy answers
+  before the model sees them. Two of the checks are derived from the artefacts:
+  every proxy-handled registry entry must do something, and every entry's
+  `descriptionKey` must exist in the extension's locale files, since the registry
+  is served over `GET /commands` and rendered through `descriptionKey |
+  translate`.
+
+- **Two bugs, both silent.** `/brief` shipped with **no translation in either
+  language**, so Claudio's palette showed the raw key `slash.commands.brief`. And
+  the interceptor read `content[0].text`, so a command typed alongside an
+  attachment — which Claudio can now send — was invisible and went to the model
+  as prose. It reads the first *text* block now; the same "first block"
+  assumption that once pinned thinking to index 0.
+
+- **`workspaceTool` (9 tests).** `buildWorkspaceContextSummary()` is everything
+  the model knows about the workspace on Path B. An unreadable root produced an
+  **empty string**, injected into the prompt as nothing at all — it now says it
+  could not list. And the top-level listing is capped at 60 entries with a note:
+  it goes into every system prompt of the turn, and a directory with 500 entries
+  spent the context window on file names.
+
+- **Dead weight removed** from `workspaceTool.ts`: a second `WORKSPACE_TOOL_DEF`
+  offering only `list` and `read`, and an `executeWorkspaceTool()` implementing
+  them over a fourth private copy of the containment check. Nothing imported
+  either — the real schema has nine actions — and a stale duplicate of a schema
+  is one wrong import away from being believed.
+
+- `npm test` is now 348 in ~1.0 s. `docs/testing.md`'s "not covered yet" list
+  loses its last two component rows. Negative control on six fronts, plus a
+  seventh that could not fail: removing the interceptor's registry guard changes
+  nothing because `execute()`'s `default:` returns passthrough too — two guards,
+  and both have to go for the tests to notice.
+
 ### Fixed — An `edit` that changed nothing reported success
 
 Found by running Path B against a real model for the first time. It had twenty

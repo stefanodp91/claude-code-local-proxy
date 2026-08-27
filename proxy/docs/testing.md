@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 318 tests, ~1.0 s
+npm test          # 348 tests, ~1.0 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -50,14 +50,16 @@ starts paying back.
 proxy/test/
   fakes.ts                     shared test doubles — not a test file
   i18n.test.ts                  5 tests — locale integrity
-  toolProbe.test.ts             8 tests — probe outcome triage
   fsMemoryRepository.test.ts    8 tests — reading the cross-session memory file
+  toolProbe.test.ts             8 tests — probe outcome triage
+  workspaceTool.test.ts         9 tests — the static summary Path B leans on
   systemPromptBuilder.test.ts  12 tests — what every request is prefixed with
   actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
   approvalGate.test.ts         20 tests — the write/edit/bash/python gate
-  textualAgentLoop.test.ts     21 tests — Path B, the XML-tag loop
   handleChatMessage.test.ts    21 tests — the routing decision itself
+  slashCommandInterceptor.test.ts 21 tests — the commands the proxy answers itself
+  textualAgentLoop.test.ts     21 tests — Path B, the XML-tag loop
   autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
   streamTranslator.test.ts     23 tests — the SSE state machine
   toolManager.test.ts          23 tests — selection, overflow, promotion decay
@@ -384,6 +386,56 @@ backend exposes no metadata — a guess would be worse), and the four ways the
 backend's answer comes back: an error with its status, a connection that never
 opened (502, never status 0), a backend that ignores `stream: true` and replies
 JSON, and a streamed answer.
+
+---
+
+## Two commands nobody had tested
+
+### `slashCommandInterceptor.test.ts`
+
+21 tests on the eight commands the proxy answers before the model sees them.
+Three failure shapes, none of them loud: a command that is *not* intercepted
+reaches a local model as literal text and gets improvised at; a command that
+*is* intercepted when it should not be steals `/copy` from the extension; and a
+registry entry with no implementation, or no translation, lists itself in the
+palette and then does nothing useful.
+
+The last two are checked against the artefacts. Every proxy-handled entry in the
+registry must produce something other than `passthrough`, and every entry's
+`descriptionKey` must exist in the extension's own locale files — the registry is
+served over `GET /commands` and rendered through `descriptionKey | translate`, so
+the two packages have to agree. They did not: **`/brief` shipped with no
+translation in either language**, showing a raw i18n key in the palette.
+
+It also found a second one while being written: the interceptor read
+`content[0].text`, so a command typed alongside an attachment — which Claudio can
+now send — was invisible and went to the model as prose. The same "first block"
+assumption that once pinned thinking to index 0. It reads the first *text* block
+now.
+
+The git-backed commands run against a real temporary repository, staged diff and
+all, because each has a "nothing to show" branch that has to produce a sentence
+rather than an empty enrichment — and because outside a repository they must
+degrade to an answer instead of throwing.
+
+### `workspaceTool.test.ts`
+
+9 tests on `buildWorkspaceContextSummary()`, which on Path B is *everything* the
+model knows about the workspace: the top-level listing, what `package.json` calls
+the project, the start of the README.
+
+Two of them are about what it does when it cannot look. An unreadable root
+produced an **empty string**, injected into the prompt as nothing at all, leaving
+the model to answer about a project it had never been shown — it now says it
+could not list. And the listing is bounded: it goes into every system prompt of
+the turn, so a directory with 500 entries used to spend the context window on
+file names.
+
+Reading it also turned up dead weight worth removing: a second
+`WORKSPACE_TOOL_DEF` offering only `list` and `read`, and an
+`executeWorkspaceTool()` implementing them over a fourth private copy of the
+containment check. Nothing imported either. A stale duplicate of a schema is one
+wrong import away from telling a model it has two actions when it has nine.
 
 ---
 
@@ -808,11 +860,23 @@ tests fail — and fail *narrowly*:
 | Let an edit replace a string with itself | No-op edit test fails | exactly 1 fails |
 | Drop `python` from `TEXTUAL_TOOL_MANUAL` | Schema-vs-instructions test fails | exactly 1 fails |
 | Swallow an unfinished action tag | Unfinished-tag tests fail | exactly 2 fail |
+| Read only the first content block again | Attachment-command test fails | exactly 1 fails |
+| Stop blocking Anthropic-only commands | `/login` test fails | exactly 1 fails |
+| Drop the registry guard *and* `execute()`'s default | Passthrough tests fail | exactly 2 fail (see below) |
+| Swallow an unreadable workspace again | Empty-summary test fails | exactly 1 fails |
+| List every top-level entry again | Listing-cap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
 
 ### When the control does not fail
+
+A third instance, 2026-08-27: removing the registry guard from the slash
+interceptor changed nothing, because `execute()`'s `default:` returns
+`passthrough` as well. The substitution *had* applied — it was checked this time
+— and the tests were right to stay green: two guards, one removed. Removing both
+fails exactly two tests. A control has to break every site that enforces the
+property, or it proves nothing about the test.
 
 Two things look identical from the outside — a test too weak to notice the bug,
 and a control that never introduced it. They need opposite fixes, so it is worth
@@ -870,8 +934,6 @@ Counted honestly, these have no suite:
 
 | Uncovered | Why it matters, or does not |
 |---|---|
-| `slashCommandInterceptor` | 8 proxy-side commands, several shelling out to git. The routing suite covers *that* one was intercepted, not what each does |
-| `workspaceTool` | `buildWorkspaceContextSummary`, the static snapshot Path B leans on |
 | `modelInfo`, `thinkingProbe`, `thinkingDetector`, `toolLimitDetector` | Startup probing. `toolProbe` itself is covered; its orchestration is not |
 | `persistentCache`, `i18nLoader`, `pythonExecutor` | Infrastructure with real I/O |
 | The adapters (`fetchLlmClient`, `nodeSseWriter`, `fsPromptRepository`, `fsPlanFileRepository`, `sseApprovalInteractor`) | Thin by design; the ports they implement are exercised through fakes everywhere else |
