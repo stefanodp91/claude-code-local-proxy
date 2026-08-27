@@ -6,7 +6,6 @@
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -47,6 +46,10 @@ import { ToolLimitDetector } from "./toolLimitDetector";
 import { ThinkingDetector } from "./thinkingDetector";
 import { executePythonCode } from "./pythonExecutor";
 import type { ActionEnv } from "../domain/entities/workspaceAction";
+import {
+  loadPlanForExit,
+  injectPlanIntoLastUserMessage,
+} from "../application/services/planExitInjection";
 import type { PlanFileRepositoryPort } from "../domain/ports";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -314,17 +317,10 @@ export class ProxyServer {
       // has the full context for the execution turn.
       const planExitPath = req.headers["x-plan-exit-path"] as string | undefined;
       if (planExitPath && workspaceCwd) {
-        try {
-          const resolved = resolve(workspaceCwd, planExitPath.replace(/\\/g, "/"));
-          if (resolved.startsWith(workspaceCwd)) {          // path-traversal guard
-            const planContent = readFileSync(resolved, "utf-8");
-            const lastMsg = body.messages?.at(-1);
-            if (lastMsg?.role === "user" && typeof lastMsg.content === "string") {
-              lastMsg.content =
-                `[Existing plan from \`${planExitPath}\`]:\n\n${planContent}\n\n---\n\n${lastMsg.content}`;
-            }
-          }
-        } catch { /* plan file unreadable — proceed without prepending */ }
+        const planContent = loadPlanForExit(planExitPath, workspaceCwd);
+        if (planContent !== null) {
+          injectPlanIntoLastUserMessage(body.messages ?? [], planContent, planExitPath);
+        }
       }
 
       const result = await this.handleChatUseCase.execute({ body, workspaceCwd }, new NodeSseWriter(res));

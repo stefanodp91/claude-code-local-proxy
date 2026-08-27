@@ -213,8 +213,9 @@ averlo, e questa riga esiste perché il limite sia dichiarato invece che scopert
 Quello che i test non possono vedere è il handshake vero con il proxy:
 
 ```bash
-cd proxy && npm start                              # in un altro terminale
-npx tsx scripts/approval-e2e.ts /tmp/scratch-ws    # richiede LM Studio acceso
+cd proxy && npm start                               # in un altro terminale
+npx tsx scripts/approval-e2e.ts /tmp/scratch-ws     # modale di approvazione
+npx tsx scripts/plan-mode-e2e.ts /tmp/scratch-plan  # plan mode, giro completo
 ```
 
 È l'equivalente di `proxy/scripts/regression.sh`: richiede un backend vivo,

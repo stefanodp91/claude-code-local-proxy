@@ -148,6 +148,38 @@ The two findings underneath were worth more.
   exactly 1 — that last one only after the control was fixed, having first come
   back green because the substitution never applied.
 
+### Fixed — An approved plan was explained back instead of carried out
+
+Found by running plan mode end to end for the first time. Three faults, all in
+the six lines of `server.ts` that read the plan back when the user leaves plan
+mode — the part no suite could see, because it lived in the wiring.
+
+- **The plan carried no instruction.** It was prepended as `[Existing plan from
+  …]` and nothing more, so the model read it and explained it back, changing not
+  one file. Measured twice; then, with a preamble saying the user approved it and
+  it is to be executed now, the same model on the same task edited the file. That
+  before/after is the change's whole justification.
+
+- **A message made of content blocks was skipped.** Claudio sends an array
+  whenever the message carries an attachment, so approving a plan with a file
+  attached ran the turn with no plan at all — silently.
+
+- **Containment was `startsWith(workspaceCwd)`** — the fourth copy of that
+  mistake here, and the first where the path comes from a client header. For a
+  workspace of `/ws`, `/ws-evil/secret.md` passed and its contents went into the
+  prompt. It uses `safeResolvePath()` now, like everything else.
+
+- The logic moved into `application/services/planExitInjection.ts` with 12 tests,
+  which is also the point: out of the untested wiring and into a unit.
+  `npm test` is now 360. Negative control: `startsWith` again fails exactly 1,
+  skipping block arrays fails exactly 2, dropping the preamble fails exactly 1 —
+  each verified after the first attempts silently matched nothing.
+
+- Measured while there: **plan mode is model-dependent.** Across runs the model
+  wrote a plan and stopped, wrote a plan and called `exit_plan_mode`, and called
+  `exit_plan_mode` immediately without writing anything. The proxy handles all
+  three. `chat-extension/scripts/plan-mode-e2e.ts` retries for that reason.
+
 ### Added — The routing use case has a suite (21 tests)
 
 - `handleChatMessageUseCase` decides which proxy the client is talking to —

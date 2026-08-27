@@ -7,6 +7,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Added — `scripts/plan-mode-e2e.ts`
+
+- Drives plan mode end to end against a running proxy: the plan is written, the
+  workspace is left untouched while planning, the plan is executed on exit, and
+  the file it edits keeps what was already there.
+
+- It retries the planning turn, and that is a finding rather than a workaround:
+  **plan mode is model-dependent**. Across runs the model wrote a plan and
+  stopped, wrote a plan and called `exit_plan_mode`, and called `exit_plan_mode`
+  immediately without writing anything at all.
+
+- The run that produced this script also found three faults on the proxy side —
+  see the proxy changelog for 2026-08-27.
+
 ### Added — The extension has tests (52), and the approval handshake was run for real
 
 - **From zero.** `package.json` had no `test` script at all: 2 090 lines of

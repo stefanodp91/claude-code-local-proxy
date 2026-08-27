@@ -37,7 +37,7 @@ repositories behind them. Counted, not estimated; recount when it matters.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 348 tests, ~1.0 s
+cd proxy && npm test         # 360 tests, ~1.0 s
 cd proxy && npm run typecheck
 cd chat-extension && npm test          # 52 tests: 41 host + 11 webview
 cd chat-extension && npm run typecheck
@@ -194,14 +194,14 @@ in step by hand. If you change one, grep for the others.
 
 **Everything on the roadmap is closed except one item that is waiting on a
 decision, not on work.** Phases 0, 1 and 2 are done; Phase 3 is done through its
-third item. 348 tests, ~1.0 s, run locally before every commit — CI runs only
+third item. 360 tests, ~1.0 s, run locally before every commit — CI runs only
 when asked (`gh workflow run ci.yml --ref main`), so nothing automatic stands
 between a broken commit and `main`.
 
 | | State |
 |---|---|
 | Phase 0 — cleanup, probe, guard | closed |
-| Phase 1 — the safety net | closed, 0 → 348 tests |
+| Phase 1 — the safety net | closed, 0 → 360 tests |
 | Phase 2 — known correctness | closed: compaction inside both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
 | Phase 3.1 — cross-session memory | done |
 | Phase 3.2 — the image path | done, and **verified live** against `qwen/qwen3.8-27b` |
