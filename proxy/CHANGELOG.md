@@ -7,6 +7,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+> **In one paragraph, for whoever reads this cold.** Everything below landed in
+> one long session. Cross-session memory shipped first; then the image path was
+> taken end to end, which meant fixing an estimator that counted base64 as prose
+> (an attached screenshot silently reset the conversation), giving a `python`
+> figure a way to reach the model as an image and the user as a file, and — once
+> it was actually run against a loaded model — discovering that a tool call
+> truncated by `max_tokens` made the backend refuse the *next* request. The
+> routing use case got its first suite, `bash` and `grep` stopped blocking the
+> event loop, and CI stopped running on every commit. Test count over the
+> session: 257 → 315.
+
 ### Fixed — The prompt never mentioned `python`, and a cut-off call ran the wrong action
 
 Both found by measuring how often the model writes tool calls as plain text

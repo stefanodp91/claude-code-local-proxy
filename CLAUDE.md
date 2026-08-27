@@ -12,7 +12,7 @@ Three things in one repo, and only one of them is live work:
 
 | Path | What | Status |
 |---|---|---|
-| [`proxy/`](proxy/) | Anthropic → OpenAI translation proxy, ~7 800 lines TS | **The project.** Everything below is about this |
+| [`proxy/`](proxy/) | Anthropic → OpenAI translation proxy, 8 816 lines TS in 50 files, plus 5 303 lines of tests | **The project.** Everything below is about this |
 | [`chat-extension/`](chat-extension/) | "Claudio", a VS Code chat extension | Active, smaller |
 | [`claude_code/src/`](claude_code/src/) | Leaked Claude Code CLI source (2026-03-31), 1 902 files | Reference archive. **Never modified, never imported** |
 
@@ -28,7 +28,9 @@ CLI      ──[no header]─────────>  proxy  is a pure transla
 ```
 
 The routing lives in `handleChatMessageUseCase.ts`, inside `if (workspaceCwd)`.
-Roughly 3 000 of the proxy's 7 800 lines exist only for Claudio.
+Roughly 3 570 of the proxy's 8 816 lines exist only for Claudio — the two agent
+loops, the workspace actions, the approval gate, the prompt builder and the
+repositories behind them. Counted, not estimated; recount when it matters.
 
 ---
 
@@ -44,12 +46,17 @@ No GPU, no LM Studio, no model loaded, no network. That is deliberate: it is wha
 lets these run anywhere, on any commit, in under a second.
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs exactly these — but
-**only when asked**, never once per commit: `gh workflow run ci.yml --ref <branch>`.
-A commit-message marker was tried and removed the same hour — the commit
-introducing it described it, so it triggered the run it existed to withhold. So
-nothing
-automatic stands between a broken commit and `main`: **the gate is the two
-commands above, run locally before committing.** Treat them as mandatory, not as
+**only when asked**, never once per commit:
+
+```bash
+gh workflow run ci.yml --ref <branch>
+```
+
+(A commit-message marker was tried and removed the same hour: the commit
+introducing it described it, so it triggered the run it existed to withhold.)
+
+Nothing automatic therefore stands between a broken commit and `main`. **The
+gate is the two commands above, run locally before committing** — mandatory, not
 a convenience the pipeline will repeat for you.
 
 `proxy/scripts/regression.sh` is a different tool — a curl snapshot needing a
@@ -75,6 +82,11 @@ Do not conflate the two; the project already did once.
 - **`safeResolvePath()` in `workspaceActions.ts` is the containment boundary.**
   Two other places had a weaker copy of that check and both were wrong. If you
   need containment, use `relative()` — never `startsWith(root)`.
+- **A `tool_calls` entry's `arguments` must be the string of a JSON object.**
+  Measured against LM Studio: `""`, whitespace and truncated JSON all give 500,
+  `"null"` gives 400, `"{}"` gives 200. The loop replays its own history, so one
+  malformed call — which is what a call truncated by `max_tokens` looks like —
+  used to kill the *next* request. Normalise where the assistant turn is built.
 - **Docs describe the code as it is.** When they disagree, the code wins, but the
   drift gets fixed rather than ignored. This repo shipped for months with a
   README describing a Bun server that had not existed for releases.
@@ -83,16 +95,24 @@ Do not conflate the two; the project already did once.
 
 ## How work is done here
 
-**The failure mode of this project is the silent one.** Eleven bugs have been
-found by the test suites and not one threw, logged, or failed a typecheck: a
-probe reading timeouts as capability, an allowlist rule approving the opposite of
-what it said, an `edit` corrupting `$` in replacements, a tool manual teaching a
-grammar the parser refused, compaction producing a conversation the backend
-rejects. Useful work here is usually *making noisy what is currently quiet*.
+**The failure mode of this project is the silent one.** Every bug found here so
+far — the full list is in [`proxy/docs/testing.md`](proxy/docs/testing.md) — was
+one that threw nothing, logged nothing and passed the typecheck: a probe reading
+timeouts as capability, an allowlist rule approving the opposite of what it said,
+an `edit` corrupting `$` in replacements, a tool manual teaching a grammar the
+parser refused, compaction producing a conversation the backend rejects, a
+screenshot silently resetting the conversation. Useful work here is usually
+*making noisy what is currently quiet*.
 
 **Test first, then fix.** Write the test asserting the behaviour you believe is
-correct, watch it fail, then change the code. The suites in `proxy/test/` were
-all built that way and it is what turned up the nine.
+correct, watch it fail, then change the code. Every suite in `proxy/test/` was
+built that way, and that is what turned up most of the list.
+
+**Then run it.** The suites cannot see what only a live model shows. Trying the
+image path end to end — with LM Studio loaded, through the real proxy — found
+three more in an afternoon, one of which had nothing to do with images. If a
+feature has never been exercised against a real backend, "the tests pass" is a
+statement about the tests.
 
 **Every test gets a negative control.** Reintroduce the bug on purpose and
 confirm the test fails — and fails *narrowly*. A suite nobody has seen fail is
@@ -109,13 +129,19 @@ Three traps, all hit on this branch, all invisible in a green run:
 - **A control that comes back green.** It may mean the test is weak *or* that
   the control never introduced the bug. Reverting a two-site fix at one site
   leaves both sites guarding; `(b.score - a.score) || 1` does not reorder
-  anything in V8. Verify the control before touching the test.
+  anything in V8; and a `perl -0pi` substitution with the wrong indentation
+  edits nothing at all while looking like it did. Verify the control before
+  touching the test.
 - **A fake more forgiving than reality.** The prompt-builder tests use a
   repository that echoes its parameters, so they passed while the shipped
   `agent-base.md` had no `{{memorySection}}` and the whole feature did nothing.
   Where a fake stands in for a *file on disk*, one test has to read the real
   file. The same shape caught the Path B grammar bugs: a test comparing against
-  a list written in the test proves only that the list matches itself.
+  a list written in the test proves only that the list matches itself. And again
+  on 2026-08-27 — the shipped prompt named neither `python` nor anything about
+  it, while the tool schema offered it, so the model was being told an
+  implemented action did not exist. The test that catches that reads *both*
+  artefacts and compares them to each other.
 
 **Fakes are object literals.** `LlmClientPort`, `SseWriterPort` and the rest are
 already ports; `proxy/test/fakes.ts` holds the shared ones. A fake that drifts
@@ -161,78 +187,46 @@ in step by hand. If you change one, grep for the others.
 
 ## Current state, and what is next
 
-Phase 1 (the safety net) is **closed** and Phase 2 is done bar one item
-deliberately left alone. 315 tests, run locally before every commit and in CI
-on request.
+**Everything on the roadmap is closed except one item that is waiting on a
+decision, not on work.** Phases 0, 1 and 2 are done; Phase 3 is done through its
+third item. 315 tests, ~1.0 s, run locally before every commit — CI runs only
+when asked (`gh workflow run ci.yml --ref main`), so nothing automatic stands
+between a broken commit and `main`.
 
-"Every component has a suite" would be an overstatement, and was made once in
-this repo's own docs before being counted. The routing use case now has one; the
-slash interceptor, startup probing and the thin adapters still do not. [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
-enumerates them.
+| | State |
+|---|---|
+| Phase 0 — cleanup, probe, guard | closed |
+| Phase 1 — the safety net | closed, 0 → 315 tests |
+| Phase 2 — known correctness | closed: compaction inside both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
+| Phase 3.1 — cross-session memory | done |
+| Phase 3.2 — the image path | done, and **verified live** against `qwen/qwen3.8-27b` |
+| Phase 3.3 — textual tool calls | measured: a ghost, no parser written |
+| Phase 3.4 — parity with Claude Code | **waiting on a decision** — see PLAN.md §7 |
 
-**Phase 3 is under way.** Cross-session memory is done: `.claudio/MEMORY.md` is
-prepended to the system prompt when present, and the model updates it through
-the ordinary gated `write` rather than a dedicated path.
+"Every component has a suite" would still be an overstatement, and was made once
+in this repo's own docs before being counted. The slash interceptor, startup
+probing and the thin adapters have none; [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
+lists them, and the first two rows are the best small jobs left.
 
-**Done, from PLAN.md §6: the image path, verified end to end on 2026-08-27**
-against `qwen/qwen3.8-27b` in LM Studio. The discriminating test is the one that
-counts: the model ran code with `n = random.randint(3, 9)` that printed nothing
-and drew that many red dots, answered **7**, and the saved PNG has 7. That number
-exists only in the picture.
+**Where to pick up**, in order and none of them large:
 
-Getting there needed three fixes. Two came from reading the code:
+1. `slashCommandInterceptor` — eight proxy-side commands, several shelling out
+   to git. The routing suite proves one was intercepted, not what each does.
+2. `buildWorkspaceContextSummary` in `workspaceTool.ts` — the static snapshot
+   Path B leans on. If it lies, Path B works from a wrong map and nothing says so.
+3. Re-measure whenever the model changes. The numbers in PLAN.md §2 belong to
+   *that* model; the probe is the authority.
 
-- **Fixed** — `estimateTokens()` counted base64 as prose, so a 500 KB screenshot
-  scored ~171 000 tokens and compaction fired on a conversation that fit. `naive`
-  keeps the first message and the last two, so the image survived and the history
-  did not: attaching a picture reset the conversation, with no error anywhere.
-  Images now cost a flat nominal amount in both message shapes.
-- **Fixed** — a `python` action that drew a plot returned the PNG's base64 *as
-  the tool result string*. `executeAction` now returns an `ActionOutcome` (`text`
-  plus an optional `image`) and the loops hand that image to the model as an
-  image part, through [`services/actionOutcome.ts`](proxy/src/application/services/actionOutcome.ts).
-  Where it can go is a wire-format constraint, not a preference: `role: "tool"`
-  takes a string, and nothing may sit between an assistant turn and its tool
-  results — so Path A appends all results first, then one user message with the
-  batch's images. Attached only when the model reports `type: "vlm"`.
-- **Also fixed** — the figure is written to `PYTHON_PLOT_DIR` (default
-  `.claudio/plots`) and the result names the path, for both kinds of model. The
-  image is what the model sees; the file is the only handle the user has on it.
-  Contained by `safeResolvePath()`, never overwriting, never pruned.
+**What the last session actually found**, because it is the pattern worth
+repeating rather than the details worth memorising: the cheapest item on the list
+— "just try the image path, it may already work" — turned up three bugs, and only
+one of them was about images. An attached screenshot silently reset the
+conversation (base64 counted as prose by the token estimator). A `python` figure
+came back to the model as base64 text. A tool call truncated by `max_tokens`
+arrives with no arguments, and replaying it verbatim made the backend refuse the
+*next* request with a 500. All three were invisible: no exception, no log, no
+failing typecheck.
 
-The third came from running it, and no suite could have: the first live attempt
-died one iteration in with a raw HTML error page in the answer. The model emitted
-a tool call with **empty arguments**, and the loop replays its own history
-verbatim — an assistant `tool_calls` whose `arguments` is not a JSON object
-string is refused by the backend (`""`, `"   "` and truncated JSON give 500,
-`"null"` gives 400). Arguments are normalised at the point the assistant turn is
-built now, and `test/nativeAgentLoop.test.ts` covers it.
-
-**The lesson is the item's own justification.** The cheapest thing on the list
-was the one nobody had tried, and trying it found a bug that had nothing to do
-with images: any model emitting an argument-less call would have hit it.
-
-**Phase 2 — known correctness**, from PLAN.md §5:
-
-1. ~~Compaction absent inside the agent loop~~ — **done**. It now runs between
-   iterations in both loops, through `services/contextCompactor.ts`. Extracting
-   it surfaced a second problem: trimming by position cuts through `tool_use` /
-   `tool_result` pairs, and an orphan on either side makes the backend reject the
-   request — in long conversations only, which is to say exactly when compaction
-   runs. `repairToolPairing()` handles both message shapes.
-2. ~~Path B lies about its own limits~~ — **done**. It now receives the same
-   resolved iteration ceiling Path A uses. The other half of that item was
-   wrong: parallel read-only dispatch is not *missing* from Path B, it does not
-   *apply* — the parser stops at the first complete tag, so there is never a
-   second action to dispatch.
-3. ~~**`bash` blocks the event loop**~~ — **done.** `bash` and `grep` now spawn
-   asynchronously through one `runProcess()` helper. The property is asserted
-   directly: a test runs `sleep 0.4` and counts timer ticks, which is zero under
-   `spawnSync`. Killing on timeout has its own test — `spawn`'s `timeout`
-   signals but leaves the promise to settle, and one that never settles hangs
-   the turn.
-
-Three **decisions**, not gaps, also recorded in PLAN.md §5: the
-`tool_choice: "any"` mapping, what a stream truncated without `[DONE]` should
-send, and Path B's inability to express a quote inside `old_string`. Each has a
-test pinning today's behaviour and pointing at the note.
+PLAN.md §9 is the resume-from-cold section — what is true today, what needs no
+decision, and the traps this repo has already paid for. The full detail of every
+change is in [`proxy/CHANGELOG.md`](proxy/CHANGELOG.md).
