@@ -148,6 +148,17 @@ The two findings underneath were worth more.
   exactly 1 — that last one only after the control was fixed, having first come
   back green because the substitution never applied.
 
+### Fixed — `hooks-trust.json` was committed by accident
+
+- The file recording which workspaces have had their hooks trusted was picked up
+  by a `git add -A` and shipped, with absolute paths from one machine in it.
+
+- Nothing was exploitable — trust is keyed by workspace path *and* content hash,
+  so an entry from someone else's machine matches nothing — but a repository
+  whose whole design is that trust is granted locally, by a person, for a
+  specific content, should not carry a trust file at all. It is local state, like
+  `model-cache.json` is for probe results, and it is `.gitignore`d now.
+
 ### Added — `hooks`: user commands that run without asking
 
 Third of the parity features from PLAN.md §7, and the only one whose purpose is

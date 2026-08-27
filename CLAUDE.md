@@ -44,6 +44,9 @@ recount when it matters, because features land on that side and the ratio moves.
 ## Verify anything with these
 
 ```bash
+sh verify-all.sh             # everything below, plus the end-to-end scripts
+sh verify-all.sh --fast      # just the suites, ~30 s
+
 cd proxy && npm test         # 446 tests, ~15 s
 cd proxy && npm run typecheck
 cd chat-extension && npm test          # 63 tests: 52 host + 11 webview
@@ -95,6 +98,11 @@ Do not conflate the two; the project already did once.
   `"null"` gives 400, `"{}"` gives 200. The loop replays its own history, so one
   malformed call — which is what a call truncated by `max_tokens` looks like —
   used to kill the *next* request. Normalise where the assistant turn is built.
+- **A background job that must be killable needs its own process group.**
+  `set -m` in a shell, `detached: true` in Node. Without it the group kill
+  reaches the subshell and leaves `npm` and `node` running, holding the port.
+  Three times so far: `ProxyManager`, `start_agent_cli.sh`, and `verify-all.sh`
+  — the last written after the other two were fixed.
 - **The intelligence lives in the proxy.** Claudio and the CLI are surfaces:
   they render, they collect clicks, they own an editor. Every rule — what may be
   done to a workspace, when a human is asked, what the model is told, when a

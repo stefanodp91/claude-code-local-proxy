@@ -1,0 +1,4 @@
+{
+  "write": ["grep -q \"'use strict'\" \"$CLAUDIO_PATH\" || echo \"[lint] $CLAUDIO_PATH is missing the 'use strict' pragma this project requires\""],
+  "edit":  ["echo \"[lint] checked $CLAUDIO_PATH\""]
+}

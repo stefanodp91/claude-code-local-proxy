@@ -624,8 +624,15 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
+sh verify-all.sh --fast     # suite e typecheck di entrambi i pacchetti, ~30 s
+sh verify-all.sh            # e in più gli end-to-end, se LM Studio è acceso
+```
+
+Funziona da qualunque directory. Per pezzi:
+
+```bash
 cd proxy && npm test && npm run typecheck     # 446 test, ~15 s
-cd chat-extension && npm run typecheck
+cd chat-extension && npm test && npm run typecheck
 ```
 
 Niente GPU, niente LM Studio, niente rete. Se sono verdi, il codice è nello
@@ -721,5 +728,11 @@ feature sono codice del proxy che Claudio non ha dovuto imparare.
   disco o una risposta del backend, almeno un test deve leggere l'artefatto
   vero. Tre bug trovati così, l'ultimo il 2026-08-27: il prompt spedito non
   nominava l'azione `python`.
+- **Un job di sfondo che deve poter essere ucciso ha bisogno del proprio
+  gruppo.** Senza `set -m` (o `detached: true`), il kill di gruppo non lo
+  raggiunge: muore il sottoshell e sopravvivono `npm` e `node`, con la porta
+  ancora occupata. È successo tre volte — in `ProxyManager`, in
+  `start_agent_cli.sh` e in `verify-all.sh`, quest'ultimo scritto *dopo* che le
+  altre due erano corrette.
 - **Il backend rifiuta più di quanto sembri.** Un `tool_calls` con `arguments`
   che non è la stringa di un oggetto JSON dà 500. Misurato, non dedotto.

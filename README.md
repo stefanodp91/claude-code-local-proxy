@@ -195,6 +195,21 @@ from it, and it is never modified.
 
 ### Tests and CI
 
+**One command runs everything that can check itself:**
+
+```bash
+sh verify-all.sh            # suites, then the end-to-end scripts if a model is up
+sh verify-all.sh --fast     # the suites only, about thirty seconds
+```
+
+It works from any directory, starts and stops its own proxy for the end-to-end
+part, skips that part with a reason when no backend is loaded, and prints the
+checklist for the half only a person can do — against
+[`demo-workspace/`](demo-workspace/), which ships a skill and a hook for exactly
+that.
+
+The pieces, if you want them separately:
+
 ```bash
 cd proxy && npm test        # 446 tests, ~15 s, no GPU and no model required
 cd proxy && npm run typecheck
