@@ -38,7 +38,7 @@ import {
   statSync,
   mkdirSync,
 } from "node:fs";
-import { execSync, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { resolve, join, relative, dirname, sep } from "node:path";
 import { executePythonCode } from "./pythonExecutor";
 
@@ -135,7 +135,7 @@ export async function executeAction(
       case WorkspaceAction.Read:
         return { text: actionRead(args, workspaceCwd) };
       case WorkspaceAction.Grep:
-        return { text: actionGrep(args, workspaceCwd) };
+        return { text: await actionGrep(args, workspaceCwd) };
       case WorkspaceAction.Glob:
         return { text: actionGlob(args, workspaceCwd) };
       case WorkspaceAction.Write:
@@ -143,7 +143,7 @@ export async function executeAction(
       case WorkspaceAction.Edit:
         return { text: actionEdit(args, workspaceCwd) };
       case WorkspaceAction.Bash:
-        return { text: actionBash(args, workspaceCwd) };
+        return { text: await actionBash(args, workspaceCwd) };
       case WorkspaceAction.Python: {
         if (!args.cmd) return { text: "Error: 'cmd' is required for action='python'" };
         const result = await executePythonCode(args.cmd, workspaceCwd, venvDir, () => {});
@@ -308,7 +308,7 @@ function actionRead(args: ActionArgs, workspaceCwd: string): string {
 // Action: grep
 // ─────────────────────────────────────────────────────────────────────────────
 
-function actionGrep(args: ActionArgs, workspaceCwd: string): string {
+async function actionGrep(args: ActionArgs, workspaceCwd: string): Promise<string> {
   if (!args.pattern) return "Error: 'pattern' is required for action='grep'";
 
   const searchRoot = args.path ?? ".";
@@ -335,20 +335,15 @@ function actionGrep(args: ActionArgs, workspaceCwd: string): string {
 
   cmd += ` '${escapedPattern}' .`;
 
-  let output: string;
-  try {
-    output = execSync(cmd, {
-      cwd: safe,
-      timeout: SHELL_TIMEOUT_MS,
-      maxBuffer: 2 * 1024 * 1024,
-      encoding: "utf-8",
-    });
-  } catch (err: unknown) {
-    // grep exits with code 1 when no matches — that is a valid result
-    const childErr = err as { status?: number; stdout?: string; message?: string };
-    if (childErr.status === 1) return "(no matches found)";
-    return `Error running grep: ${childErr.message ?? String(err)}`;
-  }
+  // Read-only actions are dispatched with Promise.all by the agent loop, which
+  // a blocking call quietly turns back into a queue — so this one spawns too.
+  const r = await runProcess(cmd, safe, SHELL_TIMEOUT_MS, 2 * 1024 * 1024);
+  if (r.timedOut) return `Error running grep: timed out after ${SHELL_TIMEOUT_MS / 1000}s`;
+  if (r.error) return `Error running grep: ${r.error}`;
+  // grep exits 1 when there are no matches — a valid result, not a failure.
+  if (r.code === 1) return "(no matches found)";
+  if (r.code !== 0) return `Error running grep: ${r.stderr.trim() || `exit code ${r.code}`}`;
+  const output = r.stdout;
 
   const lines = output.trimEnd().split("\n");
   if (lines.length > MAX_GREP_LINES) {
@@ -529,48 +524,122 @@ function actionEdit(args: ActionArgs, workspaceCwd: string): string {
  * executeAction) is the authorization boundary.  Here we apply only
  * resource limits: a 30-second timeout, combined stdout+stderr capped
  * at MAX_BASH_OUTPUT, and cwd locked to workspaceCwd.
- *
- * Note: spawnSync blocks the Node.js event loop for the duration of the
- * command.  This is acceptable for a local single-user proxy; long-running
- * commands should be avoided or broken into shorter steps by the model.
  */
-function actionBash(args: ActionArgs, workspaceCwd: string): string {
-  if (!args.cmd) return "Error: 'cmd' is required for action='bash'";
+function actionBash(args: ActionArgs, workspaceCwd: string): Promise<string> {
+  if (!args.cmd) return Promise.resolve("Error: 'cmd' is required for action='bash'");
+  return runShell(args.cmd, workspaceCwd, BASH_TIMEOUT_MS);
+}
 
-  const result = spawnSync("bash", ["-c", args.cmd], {
-    cwd: workspaceCwd,
-    timeout: BASH_TIMEOUT_MS,
-    maxBuffer: 4 * 1024 * 1024,
-    encoding: "utf-8",
+/**
+ * Run one shell command without blocking the event loop, and describe what
+ * happened in the words the model reads.
+ *
+ * `spawnSync` used to do this, and for up to 30 seconds nothing else in the
+ * process ran: not the SSE writes to the client, not the approval gate, not the
+ * health probe. Acceptable for a single user, said the note that stood here —
+ * until read-only actions started being dispatched in parallel, which a
+ * blocking call quietly turns back into a queue.
+ *
+ * Three things `spawnSync` gave for free have to be done by hand now, and each
+ * has a test, because losing one of them is silent:
+ *
+ * - **The timeout.** `spawn`'s own `timeout` sends a signal; the promise still
+ *   has to settle, and a promise that never settles hangs the whole turn. The
+ *   kill is timed here and reported as a timeout.
+ * - **The cap.** `spawn` has no `maxBuffer`, so unbounded output is this code's
+ *   problem: collection stops at the cap rather than growing without limit.
+ * - **The exit code**, which arrives on `close` rather than on a result object,
+ *   and is `null` when a signal ended the process.
+ *
+ * @param timeoutMs Parameterised so a test can watch a kill happen in 150 ms
+ *                  instead of waiting out the shipped 30 s.
+ */
+export async function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<string> {
+  const r = await runProcess(cmd, cwd, timeoutMs, MAX_BASH_OUTPUT * 2);
+  if (r.timedOut) return `Error: command timed out after ${timeoutMs / 1000}s`;
+  if (r.error) return `Error: ${r.error}`;
+  return formatShellOutput(r.stdout, r.stderr, r.code);
+}
+
+/** What a finished process left behind. Never rejects — every end is a result. */
+interface ProcessResult {
+  stdout: string;
+  stderr: string;
+  /** Exit code, or `null` when a signal ended it. */
+  code: number | null;
+  timedOut: boolean;
+  /** Set when the process could not be started at all. */
+  error?: string;
+}
+
+/**
+ * Spawn `bash -c cmd` and collect what it produces, bounded in time and size.
+ *
+ * `collectLimit` stands in for `maxBuffer`, which `spawn` does not have: past
+ * it, output is dropped rather than accumulated. It bounds memory only — the
+ * text the model sees is capped separately by each caller, so this limit has no
+ * observable effect and no test asserts it.
+ */
+function runProcess(
+  cmd: string,
+  cwd: string,
+  timeoutMs: number,
+  collectLimit: number,
+): Promise<ProcessResult> {
+  return new Promise((resolve) => {
+    const child = spawn("bash", ["-c", cmd], { cwd });
+
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+
+    const collect = (into: "out" | "err") => (chunk: Buffer) => {
+      if (stdout.length + stderr.length >= collectLimit) return;
+      if (into === "out") stdout += chunk.toString();
+      else stderr += chunk.toString();
+    };
+    child.stdout.on("data", collect("out"));
+    child.stderr.on("data", collect("err"));
+
+    // spawn's own `timeout` signals the child but leaves the promise to settle
+    // on its own, and a promise that never settles hangs the turn.
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+
+    const finish = (r: ProcessResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+
+    child.on("error", (err) =>
+      finish({ stdout, stderr, code: null, timedOut, error: String(err) }));
+    child.on("close", (code) => finish({ stdout, stderr, code, timedOut }));
   });
+}
 
-  // Timeout or spawn error
-  if (result.error) {
-    const code = (result.error as NodeJS.ErrnoException).code;
-    if (code === "ETIMEDOUT") {
-      return `Error: command timed out after ${BASH_TIMEOUT_MS / 1000}s`;
-    }
-    return `Error: ${String(result.error)}`;
-  }
+/** stdout first, stderr labelled, exit code appended, the whole thing capped. */
+function formatShellOutput(rawOut: string, rawErr: string, code: number | null): string {
+  const stdout = rawOut.trimEnd();
+  const stderr = rawErr.trimEnd();
 
-  const stdout = (result.stdout ?? "").trimEnd();
-  const stderr = (result.stderr ?? "").trimEnd();
-
-  // Build combined output: stdout first, then stderr labelled separately.
   let output = stdout;
   if (stderr) {
     output += (output ? "\n\n[stderr]\n" : "[stderr]\n") + stderr;
   }
   if (!output) {
-    output = result.status !== 0 ? `(no output, exit code ${result.status ?? "?"})` : "(no output)";
-  } else if (result.status !== 0 && result.status !== null) {
-    output += `\n\n[exit code: ${result.status}]`;
+    output = code !== 0 ? `(no output, exit code ${code ?? "?"})` : "(no output)";
+  } else if (code !== 0 && code !== null) {
+    output += `\n\n[exit code: ${code}]`;
   }
 
   if (output.length > MAX_BASH_OUTPUT) {
     output = output.slice(0, MAX_BASH_OUTPUT) + `\n\n[output truncated at ${MAX_BASH_OUTPUT} chars]`;
   }
-
   return output;
 }
 

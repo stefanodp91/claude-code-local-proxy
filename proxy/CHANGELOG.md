@@ -7,6 +7,86 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Fixed — The prompt never mentioned `python`, and a cut-off call ran the wrong action
+
+Both found by measuring how often the model writes tool calls as plain text
+instead of using the native channel. The answer to *that* question is **never**,
+in 39 live calls across three configurations — so no parser was built for it.
+The two findings underneath were worth more.
+
+- **`python` was named in no prompt.** It is implemented, exposed in the tool
+  schema, and the model was being told the available actions are list, read,
+  grep, glob, write, edit and bash. A model that reads its instructions then
+  concludes the action does not exist — which one did, in the wild: *"there's no
+  dedicated `python` action, but `bash` can execute it"*, followed by a tool call
+  written as text. `agent-base.md` now names it, with what the venv provides and
+  what `plt.show()` gives back.
+
+- **A test derived from both artefacts**, so this cannot drift again: every
+  action in `WORKSPACE_TOOL_DEF`'s enum must appear in the shipped prompts. It
+  failed on `python` the moment it was written.
+
+- **An empty tool call is a truncated one.** Measured: `max_tokens: 60` on a
+  prompt needing a longer call ends the stream with `finish_reason: "length"` and
+  zero accumulated arguments, on demand. The loop ran `list .` in its place —
+  harmless, and a puzzle for a model that had asked for nothing. It now returns a
+  sentence saying the call was cut short and asking for it again, executes
+  nothing, never raises an approval modal, and replays `{}` so the backend still
+  accepts the history.
+
+- 4 tests; `npm test` is now 315. Negative control: removing `python` from the
+  prompt fails exactly 1, running `list .` again fails exactly 2, replaying raw
+  arguments fails exactly 3.
+
+### Changed — `bash` and `grep` no longer stop the process
+
+- `spawnSync` blocked the Node.js event loop for as long as the command ran: up
+  to 30 s for `bash`, 15 s for `grep`, during which nothing else happened — no
+  SSE writes to the client, no approval gate, no health probe. `grep` is one of
+  the read-only actions the agent loop dispatches with `Promise.all`, so that
+  parallelism was a queue.
+
+- Both now go through one async `runProcess()`. What `spawnSync` did for free is
+  explicit, and each piece has a test because losing one is silent:
+
+  - **the timeout must kill.** `spawn`'s own `timeout` signals the child and
+    leaves the promise pending — one that never settles hangs the turn;
+  - **`spawn` has no `maxBuffer`**, so collection stops at a cap;
+  - **the exit code** arrives on `close` and is `null` when a signal ended it.
+
+- The property is asserted where it is observable: `sleep 0.4` with a 20 ms
+  timer running, requiring at least five ticks. Under `spawnSync` there are
+  none. `grep` shares the helper; a grep fast enough for a test is too fast to
+  observe, and this says so rather than implying coverage it does not have.
+
+- `npm test` is now 311 in ~1.0 s — the second spent waiting on real processes,
+  which is the price of testing the thing rather than a mock of it. Negative
+  control: `spawnSync` again fails exactly 1, timing out without killing fails
+  exactly 1 (after the full 5 s), grep's `exit 1` treated as an error fails
+  exactly 1 — that last one only after the control was fixed, having first come
+  back green because the substitution never applied.
+
+### Added — The routing use case has a suite (21 tests)
+
+- `handleChatMessageUseCase` decides which proxy the client is talking to —
+  Path A, Path B, or a pure translator — and it was the largest gap
+  `docs/testing.md` listed. None of its failure modes throw: Claudio silently
+  loses its agent, the CLI silently gets a system prompt written for Claudio, a
+  `"fallthrough"` read as `"handled"` answers with silence.
+
+- Path A is a recording stub; Path B is told apart by what reaches the backend,
+  since it strips `tools` from a request the plain forward carries through. Also
+  covered: the capability guard and the two neighbouring cases that must *not*
+  400, the three shapes a system prompt arrives in, the budget compaction is
+  given (`0` when the backend exposes no metadata), and the four ways an answer
+  comes back — error with status, connection refused (502, never status 0), a
+  backend that ignores `stream: true`, and a real stream.
+
+- `npm test` is now 308 in ~410 ms. Negative control, six fronts, one test each:
+  routing to Path A regardless of `maxTools`, treating fallthrough as handled,
+  injecting the agent prompt without a workspace, removing the guard, guessing a
+  context budget, and passing status 0 through as an HTTP status.
+
 ### Fixed — One malformed tool call killed the next iteration
 
 - Found by running the image path end to end against LM Studio, which is the

@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 287 tests, ~400 ms
+npm test          # 315 tests, ~1.0 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -360,6 +360,97 @@ passed against the bug. The version that ships makes the call enormous and its
 answer tiny, so exactly one message is dropped and the cut lands in the middle of
 a pair every time.
 
+### `handleChatMessage.test.ts`
+
+21 tests on the routing decision — the largest gap this document used to list.
+It is the code that decides *which proxy the client is talking to*: Path A with
+a workspace root and a tool-capable model, Path B when the probe says the model
+cannot emit tool calls, and a pure translator with no header at all.
+
+None of the ways it can be wrong throw. Claudio silently loses its agent; the
+CLI silently receives a system prompt written for Claudio and is told about a
+workspace tool it does not have; a `"fallthrough"` treated as `"handled"` leaves
+the user with silence. So every assertion here is about *which* branch ran:
+Path A is a stub that records its calls, and Path B is told apart by the request
+that reaches the fake backend — it strips `tools` from a request the plain
+forward would carry through.
+
+Also covered: the capability guard (tools + `maxTools === 0` + no workspace →
+400, and the two neighbouring cases that must *not* 400), the three shapes a
+system prompt can arrive in, the budget handed to compaction (`0` when the
+backend exposes no metadata — a guess would be worse), and the four ways the
+backend's answer comes back: an error with its status, a connection that never
+opened (502, never status 0), a backend that ignores `stream: true` and replies
+JSON, and a streamed answer.
+
+---
+
+## What the model actually does, measured
+
+The third item on the list was a suspicion: during the live image runs the model
+once answered with a tool call written as **plain text** —
+`<tool_call><function=workspace>…` — which Path A does not parse, so the turn was
+lost. The question was how often that happens, and whether the loop should learn
+to read it.
+
+**39 live calls later: never again.** 15 with a minimal system prompt, 12 with
+the shipped one, 12 more in streaming mode, across prompt shapes chosen to
+resemble the one that failed. Every single one used the native channel. One call
+in 39 produced no tool call at all, which is a different thing and a legitimate
+answer.
+
+So no parser was written. The measurement is the deliverable, and it says the
+imitation is rare enough that building for it would be building for a ghost.
+
+What the measurement *did* find is two things worth more than the thing it was
+looking for:
+
+**The prompt had fallen behind the schema.** `python` is implemented, exposed in
+the tool definition, and was named in no prompt at all — so a model reading its
+instructions concludes the action does not exist. That is exactly what the one
+failing turn said: *"there's no dedicated `python` action, but `bash` can execute
+it"*, and then it improvised the textual call. `systemPromptBuilder.test.ts` now
+derives the check from both artefacts: every action in `WORKSPACE_TOOL_DEF`'s
+enum must appear in the shipped prompts. It failed on `python` the moment it was
+written.
+
+**The empty tool call has a cause, and it is not the model.** With
+`max_tokens: 60` and a prompt that needs a longer call, the stream ends with
+`finish_reason: "length"` and *zero* accumulated arguments — reproducible on
+demand. The loop used to run `list .` in its place; it now says so and asks for
+the call again, because the model had not asked for anything yet and a listing it
+did not request is a puzzle, not an answer.
+
+---
+
+## A shell that does not stop the process
+
+`bash` used to run under `spawnSync`, which blocks the Node.js event loop for as
+long as the command takes — up to 30 seconds of nothing else happening: no SSE
+writes to the client, no approval gate, no health probe. `grep` did the same for
+up to 15, and `grep` is one of the read-only actions the agent loop dispatches
+with `Promise.all`, so the parallelism it advertised was a queue.
+
+Both spawn now, through one `runProcess()`. The interesting part of the change is
+what `spawnSync` was doing for free:
+
+| Was free | Now explicit | Covered by |
+|---|---|---|
+| Timeout | `spawn`'s `timeout` signals the child but leaves the promise pending, and a promise that never settles hangs the turn — so the kill is timed here | a `sleep 5` killed at 150 ms |
+| `maxBuffer` | `spawn` has none; collection stops at a cap | the truncation notice only — the collection cap bounds memory and has no observable effect, so nothing asserts it |
+| Exit code | arrives on `close`, and is `null` when a signal ended the process | the existing exit-code and no-output tests |
+
+The property itself is asserted for `bash`, where it is observable: run
+`sleep 0.4`, count the ticks of a 20 ms timer, and require at least five. Under
+`spawnSync` that count is zero. `grep` shares the helper but has no such test —
+a grep fast enough for a test is too fast to observe.
+
+**And a control that lied.** Reverting grep's `exit 1 → "(no matches found)"`
+came back green, which reads as missing coverage. It was not: the `perl`
+substitution had the wrong indentation and never applied. Applied properly, it
+fails exactly one test. Second time in this repo — when a control comes back
+green, check the control first.
+
 ---
 
 ## Tool arguments the backend refuses
@@ -664,6 +755,18 @@ tests fail — and fail *narrowly*:
 | Leave the saved path out of the notice | Both path tests fail | exactly 2 fail |
 | Replay tool arguments verbatim again | Malformed-argument tests fail | exactly 3 fail |
 | Accept anything `JSON.parse` accepts | Null-arguments test fails | exactly 1 fails |
+| Route to Path A whatever `maxTools` says | Path B test fails | exactly 1 fails |
+| Treat `"fallthrough"` as `"handled"` | Fallthrough test fails | exactly 1 fails |
+| Inject the agent prompt without a workspace | CLI system-prompt test fails | exactly 1 fails |
+| Remove the capability guard | Guard test fails | exactly 1 fails |
+| Guess a context budget when metadata is missing | Zero-budget test fails | exactly 1 fails |
+| Pass status 0 through as an HTTP status | Connection-refused test fails | exactly 1 fails |
+| Run bash under `spawnSync` again | Event-loop test fails | exactly 1 fails |
+| Time out without killing the child | Timeout test fails | exactly 1 fails, after waiting the full 5 s |
+| Treat grep's exit 1 as an error | No-matches test fails | exactly 1 fails |
+| Drop `python` from the shipped prompt | Schema-vs-prompt test fails | exactly 1 fails |
+| Run `list .` for a truncated call again | Truncated-call tests fail | exactly 2 fail |
+| Replay the raw arguments again | Replay tests fail | exactly 3 fail |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
@@ -726,8 +829,7 @@ Counted honestly, these have no suite:
 
 | Uncovered | Why it matters, or does not |
 |---|---|
-| `handleChatMessageUseCase` | The routing decision itself — which surface, which path, slash interception, prompt injection order. The largest genuine gap left |
-| `slashCommandInterceptor` | 8 proxy-side commands, several shelling out to git |
+| `slashCommandInterceptor` | 8 proxy-side commands, several shelling out to git. The routing suite covers *that* one was intercepted, not what each does |
 | `workspaceTool` | `buildWorkspaceContextSummary`, the static snapshot Path B leans on |
 | `modelInfo`, `thinkingProbe`, `thinkingDetector`, `toolLimitDetector` | Startup probing. `toolProbe` itself is covered; its orchestration is not |
 | `persistentCache`, `i18nLoader`, `pythonExecutor` | Infrastructure with real I/O |

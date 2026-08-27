@@ -114,7 +114,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **287 test**, ~400 ms, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **315 test**, ~1,0 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -277,7 +277,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 287 test / ~400 ms, senza GPU e senza rete.
+`npm test` in 315 test / ~1,0 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -347,9 +347,21 @@ Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
   del codice è un limite serio, ma allargarlo significa cambiare la grammatica
   *e* il manuale insieme: è una decisione, non una svista. Path B resta un
   fallback dichiarato.
-- **`bash` blocca l'event loop** fino a 30s (`spawnSync` in
-  [`workspaceActions.ts`](proxy/src/infrastructure/workspaceActions.ts)).
-  Accettabile per un proxy locale monoutente; da sapere, non da correggere ora.
+- ~~**`bash` blocca l'event loop**~~ — **fatto.** `bash` e `grep` ora girano
+  asincroni, attraverso un solo `runProcess()` in
+  [`workspaceActions.ts`](proxy/src/infrastructure/workspaceActions.ts).
+  `spawnSync` fermava tutto il processo fino a 30s — le scritture SSE al client,
+  il gate di approvazione, la sonda di salute — e trasformava silenziosamente in
+  una coda il dispatch parallelo delle azioni read-only, che `grep` è. La
+  proprietà è asserita direttamente: un test lancia `sleep 0.4` e conta i tick di
+  un timer, che sotto `spawnSync` sono zero.
+
+  Tre cose che `spawnSync` regalava vanno ora fatte a mano, e ognuna ha un test
+  perché perderle è silenzioso: il **timeout**, che deve anche *uccidere* il
+  processo — il `timeout` di `spawn` manda il segnale ma lascia la promise
+  pendente, e una promise che non si risolve appende il turno; il **tetto
+  all'output**, perché `spawn` non ha `maxBuffer`; e il **codice di uscita**, che
+  arriva su `close` ed è `null` quando a chiudere è stato un segnale.
 
 ---
 
@@ -463,7 +475,25 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
    costruisce il turno assistant, con lo stesso fallback che usa l'esecutore —
    così la storia concorda con il tool result che le sta accanto — e la
    sostituzione viene loggata. Quattro test, due controlli negativi.
-3. Il resto (hooks, skills, MCP, sub-agent, TodoWrite, web tools, worktree) è
+3. **Misurato il 2026-08-27 — le tool call testuali sono un fantasma.** Durante
+   le prove end-to-end il modello aveva risposto una volta con una tool call
+   scritta *come testo* (`<tool_call><function=workspace>…`), che Path A non
+   parsa: turno perso. La domanda era quanto spesso capita. Risposta: **mai
+   più, in 39 chiamate live** — 15 con un system prompt minimo, 12 con quello
+   spedito, 12 in streaming, su forme di prompt scelte per somigliare a quella
+   che aveva fallito. Nessun parser scritto: costruire per quel caso sarebbe
+   costruire per un fantasma. La misura *è* il risultato.
+
+   Ha però trovato due cose che valgono più di quella cercata, entrambe
+   sistemate: il prompt non nominava `python` (implementato, esposto nello
+   schema, e assente da ogni prompt — il modello che legge le istruzioni conclude
+   che l'azione non esista, ed è letteralmente ciò che aveva detto), e la tool
+   call vuota ha una causa misurabile — `max_tokens` che tronca la generazione:
+   `finish_reason: "length"` e zero argomenti accumulati, riproducibile a
+   comando. Il loop ora lo dice al modello e chiede di rimandare la chiamata,
+   invece di eseguire `list .` al posto suo.
+
+4. Il resto (hooks, skills, MCP, sub-agent, TodoWrite, web tools, worktree) è
    parità con Claude Code, costoso e di resa modesta su un 27B locale.
 
 ---

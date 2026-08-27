@@ -306,7 +306,7 @@ The agent loop relies on the proxy having already injected the working directory
 ## Known Limitations
 
 1. **Path B compliance is model-dependent**: models with `maxTools == 0` may not consistently follow the XML tag protocol. Quality degrades for models below ~15B parameters.
-2. **bash blocks the event loop**: `spawnSync` is used for bash — it blocks the Node.js event loop for up to 30 seconds. Acceptable for a single-user local proxy; would need `execAsync` for a multi-tenant deployment.
+2. ~~**bash blocks the event loop**~~ — **fixed.** `bash` and `grep` both spawn asynchronously now, through one `runProcess()` helper. `spawnSync` used to stop everything else in the process for up to 30 seconds: the SSE writes to the client, the approval gate, the health probe — and it quietly turned the parallel read-only dispatch below into a queue. Three things `spawnSync` gave for free are now explicit, each with its own test: the timeout (which must also *kill*, or the promise never settles and the turn hangs), the output cap (`spawn` has no `maxBuffer`), and the exit code (which arrives on `close`, and is `null` when a signal ended the process).
 3. **Parallel benefit is model-dependent**: read-only actions run in parallel at the proxy level, but the benefit is only visible if the model actually emits multiple tool calls in a single turn. Most local models (Qwen, Llama) call one tool at a time; frontier models are more likely to batch.
 4. **Auto-approve allowlist**: per-workspace `.claudio/auto-approve.json` allowlist allows matching actions to execute without a modal. See [permission-protocol.md](permission-protocol.md) for the rule format.
 
