@@ -6,9 +6,26 @@
 
 ---
 
+
+## What is gated, and what is not
+
+`write`, `edit`, `bash` and `python` raise a modal. `list`, `read`, `grep`,
+`glob`, `todo` and `skill` do not.
+
+The line is not "does it touch the disk" — `todo` writes a file. It is **can the
+model choose what it touches**. `todo` takes no path: it writes the one
+configured `TODO_FILE` and can be pointed nowhere else. `skill` only reads, and
+only from the skills directories, with a name that cannot contain a separator.
+Gating either would be a modal per ticked box in exchange for nothing.
+
+The same question decides hooks, and answers differently. A hook *is* an
+arbitrary command, so it runs only from a file a person has trusted, and the
+trust record lives outside the workspace where no action can reach it — see
+[agent-loop.md](agent-loop.md#known-limitations).
+
 ## Why
 
-The agent loop ([agent-loop.md](agent-loop.md)) lets the LLM call workspace actions without round-tripping through the client. Read-only actions (`list`, `read`, `grep`, `glob`) are safe to auto-execute. Destructive actions (`write`, `edit`, `bash`) **must** be confirmed by the user before execution — a hallucinating local model could otherwise overwrite source files or run arbitrary shell commands inside the workspace.
+The agent loop ([agent-loop.md](agent-loop.md)) lets the LLM call workspace actions without round-tripping through the client. Read-only actions (`list`, `read`, `grep`, `glob`, `todo`, `skill`) are safe to auto-execute. Destructive actions (`write`, `edit`, `bash`, `python`) **must** be confirmed by the user before execution — a hallucinating local model could otherwise overwrite source files or run arbitrary shell commands inside the workspace.
 
 The protocol has three properties:
 

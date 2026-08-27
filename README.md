@@ -239,7 +239,8 @@ the traps this repo has already paid for.
 
 As of 2026-08-27: phases 0, 1 and 2 are closed, phase 3 is done through its
 third item, and the only thing waiting is a decision about which Claude Code
-features are worth chasing on a local model. 446 proxy tests and 63 for Claudio.
+features are worth chasing on a local model — decided on 2026-08-27, and three
+of the four are done. 446 proxy tests and 63 for Claudio.
 
 ---
 

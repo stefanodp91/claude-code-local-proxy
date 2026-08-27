@@ -87,10 +87,15 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Application** | `src/application/services/approvalGateService.ts` | Approval state machine: ask / auto / plan modes, trusted-file tracking, auto-approve allowlist |
 | **Application** | `src/application/services/systemPromptBuilder.ts` | System prompt construction via `PromptRepositoryPort` + `PlanFileRepositoryPort` |
 | **Application** | `src/application/services/contextCompactor.ts` | Trims the conversation to fit the context window: semantic summary, naive drop, and the tool-pairing repair both leave behind. Images are charged a flat nominal cost rather than measured as base64 prose |
+| **Application** | `src/application/services/planExitInjection.ts` | Putting an approved plan back in front of the model when the user leaves plan mode: contained path, both message shapes, and a preamble saying it is to be carried out |
+| **Infrastructure** | `src/infrastructure/lifecycle.ts` | Port discovery, PID files, group kill and the health wait — the rules both surfaces call, rather than each keeping its own |
+| **Infrastructure** | `src/infrastructure/adapters/fsWorkspaceFileRepository.ts` | The files a workspace keeps for the model: `MEMORY.md` and `TODO.md`, read at the start of a turn and injected when they have content |
+| **Infrastructure** | `src/infrastructure/adapters/fsSkillRepository.ts` | Skills: the index that goes in every prompt, and the body the model loads on demand. Workspace skills shadow global ones by name |
+| **Infrastructure** | `src/infrastructure/adapters/fsHooksRepository.ts` | Hooks and the trust that lets them run without asking — trust on content, recorded outside the workspace |
 | **Application** | `src/application/services/actionOutcome.ts` | Where an action's image goes: the tool result stays text, the picture rides in a user message after every result (Path A) or inside the `<observation>` (Path B), and only when the model reports `type: "vlm"` |
 | **Application** | `src/application/useCases/handleChatMessageUseCase.ts` | Full `POST /v1/messages` orchestration: slash intercept → system prompt → compaction → translate → route → stream |
 | **Application** | `src/application/useCases/resolveApprovalUseCase.ts` | `POST /v1/messages/:id/approve` — parse scope, delegate to `ApprovalInteractorPort` |
-| **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash/python, path safety through `safeResolvePath()`, `bash` and `grep` spawned asynchronously with their own timeout and output cap, and `savePlot()` writing a figure into the workspace |
+| **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash/python/todo/skill, path safety through `safeResolvePath()`, `bash` and `grep` spawned asynchronously with their own timeout and output cap, `savePlot()` writing a figure into the workspace, and the hooks that run after a successful destructive action |
 | **Infrastructure** | `src/infrastructure/server.ts` | HTTP router and wiring (437 lines): `/v1/messages`, `/v1/messages/:id/approve`, `/v1/exec-python`, `/health`, `/config`, `/commands`, `/agent-mode`. Zero business logic — all decisions live in the application layer |
 | **Infrastructure** | `src/infrastructure/toolLimitDetector.ts` | Three-tier strategy for `maxTools`: config override → persistent cache → live probe |
 | **Infrastructure** | `src/infrastructure/adapters/fetchLlmClient.ts` | `LlmClientPort` implementation via global `fetch()` |
@@ -286,11 +291,11 @@ A single tool slot with `action` as a discriminator (defined in [`domain/entitie
   type: "function",
   function: {
     name: "workspace",
-    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash",
+    description: "Access the current workspace. Available actions: list, read, grep, glob, write, edit, bash, python, todo, skill",
     parameters: {
       type: "object",
       properties: {
-        action:     { type: "string", enum: ["list","read","grep","glob","write","edit","bash"] },
+        action:     { type: "string", enum: ["list","read","grep","glob","write","edit","bash","python","todo","skill","exit_plan_mode"] },
         path:       { type: "string" },   // relative to workspace root
         pattern:    { type: "string" },   // for grep (regex) or glob (pattern)
         include:    { type: "string" },   // for grep: file filter (e.g. "*.ts")

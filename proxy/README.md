@@ -84,6 +84,10 @@ Claude Code (Anthropic SDK)
 | Local LLM server | any | Must expose `POST /v1/chat/completions` |
 | Claude Code | any | The Anthropic CLI you want to connect — only needed for the CLI path |
 
+The proxy is where the intelligence lives: every rule about what may be done to
+a workspace, when a human is asked, what the model is told and how the proxy's
+own lifecycle is managed is here, once. Claudio and the CLI render it.
+
 **`dependencies` is empty and stays empty.** The proxy uses nothing but Node
 built-ins: `node:http`, `fetch`, `node:fs`, `node:crypto`. The four
 `devDependencies` (`tsx`, `tsup`, `typescript`, `@types/node`) never reach a
@@ -223,6 +227,7 @@ Jenkins, etc.) and to stay away from the LLM server ports listed above.
 | `npm run build` | `tsup … --outDir dist` | Bundles an ESM build targeting Node 18 |
 | `npm run typecheck` | `tsc --noEmit` | Type-checks `src/` **and** `test/` |
 | `npm test` | `node --import tsx --test "test/**/*.test.ts"` | Runs the automated suites — see [Tests](#tests) |
+| `npm run hooks` | `node --import tsx src/cli/hooks.ts` | `status` / `trust` / `revoke` a workspace's hooks. Trusting prints the commands first — see [Configuration](docs/configuration.md) |
 
 `npm test` is preceded by a `pretest` guard that fails the run when the glob
 matches no files. `node --test` exits 0 on an empty run, so without it a broken
@@ -238,7 +243,23 @@ listed under [Quick Start](#3-run-everything) and dissected in
 
 > The earlier `start.sh` and `start_claude_code.sh` pair no longer exists. The
 > CLI half became `start_agent_cli.sh`; the supervision half became
-> `ProxyManager` inside Claudio.
+> `ProxyManager` inside Claudio — and since 2026-08-27 both call the same
+> lifecycle rules in `src/infrastructure/lifecycle.ts` rather than keeping one
+> each.
+
+### src/cli/lifecycle.ts
+
+`find-port`, `kill-group`, `wait-health` — the lifecycle rules, reachable from a
+shell script. `start_agent_cli.sh` calls them instead of reimplementing them in
+bash, which is what it used to do: both copies killed the proxy by the pid of
+`npm`, and only one of them was ever fixed.
+
+### scripts/cli-e2e.sh
+
+Two real turns of Claude Code through the proxy — a plain answer, and one using
+the CLI's own `Read` tool, which is the `tool_use` / `tool_result` round trip.
+Needs a loaded backend and an installed CLI, so it cannot run on CI. It is the
+only check of the surface where the proxy is a pure translator.
 
 ### scripts/regression.sh
 
@@ -636,8 +657,10 @@ cd proxy && npm test
 ```
 
 446 tests, ~15 s, no GPU, no LM Studio, no model loaded, no network. That is
-the property that matters: it is why these can gate a pull request while
-`scripts/regression.sh` cannot.
+the property that matters: it is why these run on any machine, on any commit,
+while `scripts/regression.sh` needs a GPU and a loaded model. Since 2026-08-27
+the pipeline runs **on request only**, so these two commands are the gate and
+they live where the commit is made.
 
 | Suite | Covers |
 |---|---|
@@ -654,7 +677,17 @@ the property that matters: it is why these can gate a pull request while
 | [`test/nativeAgentLoop.test.ts`](test/nativeAgentLoop.test.ts) | Path A — the fallthrough contract, batched execution and its ordering, approval scopes, plan mode, the iteration ceiling, and a JSON reply to a streaming request |
 | [`test/contextCompactor.test.ts`](test/contextCompactor.test.ts) | Trimming a conversation to fit the window — both strategies, the timeout, and tool-call pairing surviving the trim in both message shapes |
 | [`test/systemPromptBuilder.test.ts`](test/systemPromptBuilder.test.ts) | What every request is prefixed with — mode selection, the textual tail, cross-session memory, and that every parameter the builder computes has a placeholder in the shipped template |
-| [`test/fsMemoryRepository.test.ts`](test/fsMemoryRepository.test.ts) | Reading the memory file — missing, empty, oversized, and paths that leave the workspace |
+| [`test/workspaceFileRepository.test.ts`](test/workspaceFileRepository.test.ts) | Reading the files a workspace keeps for the model — the memory and the task list — when they are missing, empty, oversized, or outside the workspace |
+| [`test/handleChatMessage.test.ts`](test/handleChatMessage.test.ts) | The routing decision — Path A, Path B or pure translator; the capability guard; the three shapes a system prompt arrives in; and the four ways a backend's answer comes back |
+| [`test/lifecycle.test.ts`](test/lifecycle.test.ts) | Starting and stopping a proxy, for both surfaces — port discovery, PID files, the group kill that takes the grandchild, and a health wait that gives up when the process is gone |
+| [`test/startupDetectors.test.ts`](test/startupDetectors.test.ts) | What the model can do, decided once and cached — including that `0` and `false` are answers rather than missing ones |
+| [`test/planExitInjection.test.ts`](test/planExitInjection.test.ts) | Handing an approved plan back to the model: contained path, both message shapes, and a preamble saying it is to be carried out |
+| [`test/actionOutcome.test.ts`](test/actionOutcome.test.ts) | Where an action's image goes — a tool result stays text, the picture rides in a user message after every result, and only when the model can see |
+| [`test/todo.test.ts`](test/todo.test.ts) | The task list the model keeps for itself — no path on the action, an empty list injecting nothing |
+| [`test/skills.test.ts`](test/skills.test.ts) | Instructions the model loads on demand — the index, the workspace shadowing the global, and a name that cannot climb out |
+| [`test/hooks.test.ts`](test/hooks.test.ts) | Commands that run without asking — trust on content, revoked by any change, recorded outside the workspace |
+| [`test/slashCommandInterceptor.test.ts`](test/slashCommandInterceptor.test.ts) | The commands the proxy answers itself, checked against the registry and against the extension's own translations |
+| [`test/workspaceTool.test.ts`](test/workspaceTool.test.ts) | The static summary Path B leans on — bounded, and saying so when it cannot look |
 
 Both suites exist because the bug they describe actually happened. `t()` returns
 the key itself when a lookup misses and locale files arrive through `JSON.parse`,
@@ -916,12 +949,15 @@ was launched by Claudio, in the extension's output channel.
         streamTranslator.ts    OpenAI SSE → Anthropic SSE (state machine)
         toolManager.ts         Scoring, selection, UseTool overflow, promotion decay
         slashCommandInterceptor.ts  Handles /commit, /diff, /plan … before the LLM
-        workspaceTool.ts       list/read/grep/glob/write/edit/bash/python definitions
+        workspaceTool.ts       The static workspace summary Path B leans on
         textualAgentLoop.ts    Path B — XML-tag actions for models with no tool support
         services/              nativeAgentLoopService (Path A), approvalGateService,
                                systemPromptBuilder, contextCompactor,
                                actionOutcome (where an action's image goes)
         useCases/              handleChatMessage (the routing decision), resolveApproval
+      cli/                 Small commands the shell and the operator call
+        lifecycle.ts           find-port / kill-group / wait-health, for the launcher
+        hooks.ts               status / trust / revoke a workspace's hooks
       infrastructure/      Everything that touches the outside world
         server.ts              node:http routing: /v1/messages, /v1/messages/:id/approve,
                                /v1/exec-python, /health, /config, /commands, /agent-mode
@@ -931,11 +967,15 @@ was launched by Claudio, in the extension's output channel.
         toolLimitDetector.ts   Probe orchestration + cache read/write
         thinkingProbe.ts       Detects whether reasoning is emitted and suppressible
         pythonExecutor.ts      Auto-managed venv for the python action
+        lifecycle.ts           Port discovery, PID files, group kill, health wait —
+                               shared by Claudio and by start_agent_cli.sh
         workspaceActions.ts    Filesystem and shell execution (bash and grep spawn
-                               asynchronously; savePlot writes a figure to disk)
+                               asynchronously; savePlot writes a figure to disk;
+                               hooks run after a successful destructive action)
         persistentCache.ts     model-cache.json
         adapters/              fetchLlmClient, nodeSseWriter, sseApprovalInteractor,
-                               fsMemoryRepository,
+                               fsWorkspaceFileRepository, fsSkillRepository,
+                               fsHooksRepository,
                                fsPlanFileRepository, fsPromptRepository, systemClock,
                                autoApproveConfig
     test/                  node:test suites — see [Tests](#tests)

@@ -21,7 +21,7 @@ Tre cose distinte, in un solo repo:
 | Componente | Cosa | Dimensione | Ruolo |
 |---|---|---|---|
 | [`claude_code/src/`](claude_code/src/) | Sorgente leaked di Claude Code CLI (2026-03-31) | 1.902 file, 33 MB | Archivio di riferimento. Mai modificato, mai importato dal resto |
-| [`proxy/`](proxy/) | Proxy di traduzione Anthropic → OpenAI | 8.816 righe TS in 50 file, più 5.303 di test | **Il cuore del progetto** |
+| [`proxy/`](proxy/) | Proxy di traduzione Anthropic → OpenAI | 9.940 righe TS in 56 file, più 7.253 di test | **Il cuore del progetto** |
 | [`chat-extension/`](chat-extension/) | "Claudio", estensione VS Code (63 test dal 2026-08-27) | 2.074 righe host + 3.887 webview Angular 19 | Superficie primaria |
 
 Il valore vero è nel proxy: architettura esagonale con porte e adapter, e **zero
@@ -45,7 +45,7 @@ CLI      ──[nessun header]──────>  proxy  ──>  LM Studio
 ```
 
 Il routing è in [`handleChatMessageUseCase.ts`](proxy/src/application/useCases/handleChatMessageUseCase.ts),
-dentro `if (workspaceCwd)`. Circa 3.570 delle 8.816 righe del proxy servono solo
+dentro `if (workspaceCwd)`. Circa 4.370 delle 9.940 righe del proxy servono solo
 Claudio. Vederlo chiaramente è ciò che rende sensate le priorità qui sotto.
 
 ---
@@ -75,7 +75,7 @@ né il soft switch Qwen `/no_think`. Quindi `thinkingCanBeDisabled: false` in
 > thinking dipendono da architettura, chat template e da come il backend fa il
 > parsing di *quel* modello. Numeri visti su nemotron o gemma non dicono nulla su
 > un modello nuovo. L'autorità è il probe — il codice lo dice già a
-> [`server.ts:369`](proxy/src/infrastructure/server.ts#L369).
+> [`server.ts:380`](proxy/src/infrastructure/server.ts#L380).
 
 ---
 
@@ -671,10 +671,12 @@ In ordine di resa, e nessuno dei tre è grande:
    streaming. **Nessun template Angular viene renderizzato**: servirebbe un
    secondo runner, e la scelta è stata di non averlo — scritto qui perché sia
    dichiarato, non scoperto.
-3. **Quel che resta senza suite** è probing di avvio, adapter sottili e il
-   wiring: vale meno, perché o è composizione o è I/O che un test finirebbe per
-   simulare. Il candidato meno inutile è l'orchestrazione del probe
-   (`toolLimitDetector`), dove una cache letta male vale un modello mutilato.
+3. ~~L'orchestrazione del probe di avvio~~ — **fatta il 2026-08-27**, 21 test.
+   I valori interessanti erano quelli falsi: `maxTools: 0` è una risposta del
+   probe, non una risposta mancante, e leggerla per verità significa riprobare a
+   ogni avvio. **Quel che resta senza suite** sono i bordi del probing, gli
+   adapter sottili e il wiring: valgono meno, perché o sono composizione o sono
+   I/O che un test finirebbe per simulare.
 4. **La CLI è stata provata il 2026-08-27**, per la prima volta:
    `proxy/scripts/cli-e2e.sh` lancia Claude Code attraverso il proxy e verifica
    due turni — una risposta semplice e uno che usa il tool `Read` della CLI,
@@ -691,13 +693,29 @@ Path B non è più fra questi: **provato dal vivo il 2026-08-27** forzando
 multi-riga funzionano davvero, i file finiscono sul disco — e la prova ha trovato
 l'`edit` che diceva di aver funzionato senza farlo (§5).
 
+### Cosa ha funzionato, come metodo
+
+Tre feature nuove il 2026-08-27, e **ognuna provata contro il modello vero prima
+di dirla finita**. Ognuna ha trovato un guasto che non c'entrava con sé stessa:
+Skills ha scoperto una `glob` che non vedeva la radice del workspace, TodoWrite
+un'asserzione che non poteva fallire, Hooks nessun bug nuovo ma la decisione che
+lo rende sicuro. Eseguire, e poi coprire ciò che si rompe.
+
+E il principio di §7 si è ripagato tre volte in un pomeriggio: il ciclo di vita
+unificato ha chiuso un bug corretto su un lato e rimasto sull'altro, memoria e
+lista di task condividono un lettore invece di due che divergono, e le tre
+feature sono codice del proxy che Claudio non ha dovuto imparare.
+
 ### Trappole che questo repo ha già pagato
 
 - **Un test che non può fallire** occupa il posto di quello mancante. Ogni test
   nuovo va visto fallire.
 - **Un controllo negativo che torna verde** può voler dire che il test è debole
-  *oppure* che il controllo non ha introdotto il bug. È capitato due volte, la
-  seconda per un'indentazione sbagliata in un `perl -0pi`. Verifica il controllo
+  *oppure* che il controllo non ha introdotto il bug. È capitato **quattro
+  volte**: due per sostituzioni `perl` che non matchavano niente (un backslash
+  escapato, una em dash), una per due guardie di cui ne era stata tolta una, e
+  una che ha trovato un buco vero — nessun test copriva «lista todo vuota →
+  nessuna sezione». Verifica il controllo
   prima del test.
 - **Un fake più indulgente della realtà.** Dove un fake sostituisce un file su
   disco o una risposta del backend, almeno un test deve leggere l'artefatto

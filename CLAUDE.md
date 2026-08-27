@@ -12,7 +12,7 @@ Three things in one repo, and only one of them is live work:
 
 | Path | What | Status |
 |---|---|---|
-| [`proxy/`](proxy/) | Anthropic → OpenAI translation proxy, 8 816 lines TS in 50 files, plus 5 303 lines of tests | **The project.** Everything below is about this |
+| [`proxy/`](proxy/) | Anthropic → OpenAI translation proxy, 9 940 lines TS in 56 files, plus 7 253 lines of tests | **The project.** Everything below is about this |
 | [`chat-extension/`](chat-extension/) | "Claudio", a VS Code chat extension — 63 tests since 2026-08-27 | Active, smaller |
 | [`claude_code/src/`](claude_code/src/) | Leaked Claude Code CLI source (2026-03-31), 1 902 files | Reference archive. **Never modified, never imported** |
 
@@ -34,9 +34,10 @@ mode, not the ~40 this repo's docs had always assumed; the large number belongs
 to an interactive session.
 
 The routing lives in `handleChatMessageUseCase.ts`, inside `if (workspaceCwd)`.
-Roughly 3 570 of the proxy's 8 816 lines exist only for Claudio — the two agent
-loops, the workspace actions, the approval gate, the prompt builder and the
-repositories behind them. Counted, not estimated; recount when it matters.
+Roughly 4 370 of the proxy's 9 940 lines exist only for Claudio — the two agent
+loops, the workspace actions, the approval gate, the prompt builder, and the
+repositories behind memory, task lists, skills and hooks. Counted, not estimated;
+recount when it matters, because features land on that side and the ratio moves.
 
 ---
 
@@ -206,52 +207,55 @@ in step by hand. If you change one, grep for the others.
 
 ## Current state, and what is next
 
-**Everything on the roadmap is closed except one item that is waiting on a
-decision, not on work.** Phases 0, 1 and 2 are done; Phase 3 is done through its
-third item. 446 tests, ~15 s, run locally before every commit — CI runs only
-when asked (`gh workflow run ci.yml --ref main`), so nothing automatic stands
-between a broken commit and `main`.
+**One item left on the roadmap, and it is the expensive one.** Phases 0, 1 and 2
+are closed; Phase 3 is done through its third item, and three of the four parity
+features decided in PLAN.md §7 have shipped. 446 tests in the proxy, 63 in
+Claudio, run locally before every commit — CI runs only when asked
+(`gh workflow run ci.yml --ref main`), so nothing automatic stands between a
+broken commit and `main`.
 
 | | State |
 |---|---|
 | Phase 0 — cleanup, probe, guard | closed |
 | Phase 1 — the safety net | closed, 0 → 446 tests |
-| Phase 2 — known correctness | closed: compaction inside both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
+| Phase 2 — known correctness | closed: compaction in both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
 | Phase 3.1 — cross-session memory | done |
-| Phase 3.2 — the image path | done, and **verified live** against `qwen/qwen3.8-27b` |
+| Phase 3.2 — the image path | done, verified live |
 | Phase 3.3 — textual tool calls | measured: a ghost, no parser written |
-| Phase 3.4 — parity with Claude Code | decided 2026-08-27: TodoWrite + Skills, then Hooks, then MCP — all inside the proxy loop, so all for Claudio. See PLAN.md §7 |
+| Phase 3.4 — parity: **TodoWrite** | done, verified live |
+| Phase 3.4 — parity: **Skills** | done, verified live |
+| Phase 3.4 — parity: **Hooks** | done, verified live |
+| Phase 3.4 — parity: **MCP** | **next, and the costly one** |
 
-"Every component has a suite" was once written here and was false when counted.
-It is closer now — the routing use case, the slash interceptor and the workspace
-summary all have one — but startup probing, the thin adapters and the wiring
-still do not, and [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
-keeps the honest list.
+**Every one of the three was verified against a live model**, and each one turned
+up a bug that had nothing to do with the feature: Skills found a `glob` that
+could not see the workspace root, TodoWrite found an assertion that could not
+fail, Hooks found nothing but forced the decision that makes it safe. That is the
+pattern worth repeating — run it, then cover what breaks.
 
-**Where to pick up.** Claudio has 63 tests since 2026-08-27 — the SSE parser,
-the proxy client, the approval bridge, and the webview's streaming assembly —
-plus `chat-extension/scripts/approval-e2e.ts`, which drives the real handshake
-against a running proxy the way `regression.sh` does for the proxy. No Angular
-template is rendered by any of it, deliberately: that needs a second runner.
+**What MCP needs decided first.** Not how to speak the protocol: how many
+external tools can arrive before the model stops choosing well. `ToolManager`
+exists because that ceiling is real and low on a local model, and every tool a
+server advertises competes for the same slots. It is a measurement, not an
+opinion, and it comes before any code.
 
-In the proxy the component list is now down to startup probing, the
-thin adapters and the wiring — worth less than it looks, because it is either
-composition or I/O a test would end up simulating. The least useless of them is
-the probe orchestration (`toolLimitDetector`), where a cache read wrongly costs
-a model most of its tools. Beyond that: re-measure whenever the model changes —
-the numbers in PLAN.md §2 belong to *that* model, and the probe is the
-authority.
+**Where to pick up otherwise.** In the proxy the uncovered list is down to
+startup orchestration's edges, the thin adapters and the wiring — worth less than
+it looks, because it is either composition or I/O a test would end up simulating.
+Claudio has 63 tests plus `scripts/approval-e2e.ts` and `plan-mode-e2e.ts`, which
+drive the real handshakes against a running proxy the way `regression.sh` does
+for the proxy; no Angular template is rendered by any of it, deliberately.
+[`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet) keeps the honest
+list, and PLAN.md §9 is the resume-from-cold section.
 
-**What the last session actually found**, because it is the pattern worth
-repeating rather than the details worth memorising: the cheapest item on the list
-— "just try the image path, it may already work" — turned up three bugs, and only
-one of them was about images. An attached screenshot silently reset the
-conversation (base64 counted as prose by the token estimator). A `python` figure
-came back to the model as base64 text. A tool call truncated by `max_tokens`
-arrives with no arguments, and replaying it verbatim made the backend refuse the
-*next* request with a 500. All three were invisible: no exception, no log, no
-failing typecheck.
+**The rule that paid for itself three times today** is the one recorded in the
+invariants: the intelligence lives in the proxy. Unifying the lifecycle closed a
+bug that had been fixed on one side and left on the other; memory and the task
+list share one reader instead of two that would drift; and all three new features
+are proxy code Claudio never had to learn.
 
-PLAN.md §9 is the resume-from-cold section — what is true today, what needs no
-decision, and the traps this repo has already paid for. The full detail of every
-change is in [`proxy/CHANGELOG.md`](proxy/CHANGELOG.md).
+**Measure, then build.** Nothing here was added because it sounded useful:
+TodoWrite because a 27B does three of five steps and claims five, Skills because
+the window is the scarce resource, Hooks because deterministic work belongs in a
+command. Each was run against the model before being called done, and what the
+model actually did is written down beside it.
