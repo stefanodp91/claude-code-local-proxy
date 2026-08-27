@@ -116,6 +116,8 @@ export class ProxyServer {
       todoFile:        this.config.todoFile,
       skillsDir:       this.config.skillsDir,
       globalSkillsDir: this.config.globalSkillsDir,
+      hooksFile:       this.config.hooksFile,
+      hooksTrustFile:  this.config.hooksTrustFile,
     };
     this.compactor = new ContextCompactor(this.llm, this.logger, {
       semanticEnabled:  this.config.semanticCompact,

@@ -11,6 +11,8 @@
  * @module infrastructure/config
  */
 
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Locale } from "../domain/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +126,21 @@ export interface ProxyConfig {
   todoFile: string;
   /** Workspace-relative directory of project skills, or "" to disable them. */
   skillsDir: string;
+  /**
+   * Workspace-relative hooks file, or "" to disable hooks entirely.
+   *
+   * Hooks run without asking, so they are inert until a person trusts the file
+   * with `npm run hooks -- trust <workspace>`, and any change revokes that.
+   */
+  hooksFile: string;
+  /**
+   * Absolute path to the hook trust record.
+   *
+   * Beside the proxy rather than in the workspace, and that is the security
+   * property rather than a tidiness one: inside a workspace the model could
+   * write it with `write` and trust its own hooks.
+   */
+  hooksTrustFile: string;
   /**
    * Absolute directory of skills shared across workspaces, or "" for none.
    * A project's skill of the same name wins.
@@ -257,6 +274,21 @@ const DEFAULT_TODO_FILE = ".claudio/TODO.md";
 /** Where a project keeps its own skills. Empty disables project skills. */
 const DEFAULT_SKILLS_DIR = ".claudio/skills";
 
+/** Where a project declares commands to run after an action. Empty disables them. */
+const DEFAULT_HOOKS_FILE = ".claudio/hooks.json";
+
+/**
+ * The trust record sits beside `model-cache.json`, in the proxy's own directory.
+ *
+ * That location is the security property: `safeResolvePath` keeps every action
+ * inside the workspace, so nothing the model can do reaches this file. A record
+ * kept in `.claudio/` would be writable with `write`, and hooks could trust
+ * themselves.
+ */
+function defaultHooksTrustFile(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../../hooks-trust.json");
+}
+
 /** Default Python venv directory — relative to the workspace root. */
 const DEFAULT_PYTHON_VENV_DIR = ".claudio/python-venv";
 
@@ -379,6 +411,8 @@ export function loadConfig(): ProxyConfig {
     memoryFile:              env("MEMORY_FILE", DEFAULT_MEMORY_FILE),
     todoFile:                env("TODO_FILE", DEFAULT_TODO_FILE),
     skillsDir:               env("SKILLS_DIR", DEFAULT_SKILLS_DIR),
+    hooksFile:               env("HOOKS_FILE", DEFAULT_HOOKS_FILE),
+    hooksTrustFile:          env("HOOKS_TRUST_FILE", defaultHooksTrustFile()),
     globalSkillsDir:         env("GLOBAL_SKILLS_DIR", ""),
 
     // Agent loop

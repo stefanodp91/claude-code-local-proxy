@@ -126,6 +126,15 @@ export interface ActionEnv {
   skillsDir?: string;
   /** Absolute directory of shared skills. Empty means none. */
   globalSkillsDir?: string;
+  /** Workspace-relative hooks file. Empty disables hooks. */
+  hooksFile?: string;
+  /**
+   * Absolute path to the trust record for hooks.
+   *
+   * Outside any workspace on purpose: inside one, the model could write it with
+   * `write` and trust its own hooks.
+   */
+  hooksTrustFile?: string;
 }
 
 /**
