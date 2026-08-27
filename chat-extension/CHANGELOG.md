@@ -7,6 +7,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Fixed — A disposed session left the proxy waiting, and hung CI proving it
+
+- **The suite passed locally and hung the first CI run for half an hour.** The
+  tests slept a fixed 40 ms for the stream to reach its `tool_request_pending`
+  event; on a slower machine the answer arrived first, nothing resolved the
+  pending request, and each affected test sat on the session's five-minute
+  timeout. A sleep is a race whose loser is always the slower machine. Every one
+  is now a wait-for-condition that fails with a message instead of hanging, and
+  both `test` scripts pass `--test-timeout 60000` so a hang costs a minute rather
+  than a runner.
+
+- **The leak it exposed is real, not a test artefact.** `dispose()` did not
+  clear pending approvals: closing a VS Code window with a modal open left the
+  five-minute timer and its promise alive, and the *proxy* holding that turn open
+  waiting for an answer nobody could give. Disposing now denies whatever is
+  pending — the view is gone, so that is the honest answer — and clears the
+  timers. One test, one negative control that fails after the full five seconds
+  it takes to notice.
+
+- Sessions are disposed in `afterEach` rather than at the end of each test, so a
+  *failing* test cannot leave one behind either.
+
 ### Added — `ProxyManager` has a suite (10 tests), and two faults it found
 
 The 223 lines that spawn the proxy, wait for it, and kill it. The tests spawn a
