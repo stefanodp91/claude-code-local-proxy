@@ -18,7 +18,7 @@ import { WORKSPACE_TOOL_DEF } from "../src/domain/entities/workspaceAction";
 import { TEXTUAL_TOOL_MANUAL } from "../src/application/textualAgentLoop";
 import { PromptKey } from "../src/domain/ports";
 import type {
-  MemoryRepositoryPort, PlanFileRepositoryPort, PromptRepositoryPort,
+  MemoryRepositoryPort, TodoRepositoryPort, PlanFileRepositoryPort, PromptRepositoryPort,
 } from "../src/domain/ports";
 import type { ExistingPlan } from "../src/domain/entities/existingPlan";
 
@@ -50,8 +50,15 @@ function memory(content: string | null): MemoryRepositoryPort {
   return { relativePath: ".claudio/MEMORY.md", load: () => content };
 }
 
-const builder = (mem: MemoryRepositoryPort = memory(null), plans = planFiles()) =>
-  new SystemPromptBuilder(prompts(), plans, mem);
+function todo(content: string | null): TodoRepositoryPort {
+  return { relativePath: ".claudio/TODO.md", load: () => content };
+}
+
+const builder = (
+  mem: MemoryRepositoryPort = memory(null),
+  plans = planFiles(),
+  list: TodoRepositoryPort = todo(null),
+) => new SystemPromptBuilder(prompts(), plans, mem, list);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The basics
@@ -114,6 +121,33 @@ test("no memory file means no memory section at all", () => {
   assert.match(out, /memorySection=\s*(\n|$)/);
 });
 
+test("the list the model was keeping is carried into the next turn's prompt", () => {
+  // This is the whole feature: a task list is only worth writing if it comes
+  // back. What the model wrote last turn is what stops the fourth step of six
+  // from vanishing.
+  const out = builder(memory(null), planFiles(), todo("- [x] read\n- [ ] change")).build(WS, AgentMode.Ask, false);
+
+  assert.match(out, /todo-section/);
+  assert.match(out, /- \[ \] change/);
+  assert.match(out, /todoPath=\.claudio\/TODO\.md/, "the model must know where to write it back");
+});
+
+test("no list means no todo section at all", () => {
+  // Found by a negative control coming back green: nothing covered this, and
+  // the reasoning is the same as for memory — an empty heading is spent on
+  // every request of the turn to say there is nothing to say.
+  const out = builder(memory(null), planFiles(), todo(null)).build(WS, AgentMode.Ask, false);
+
+  assert.equal(out.includes("todo-section"), false);
+  assert.match(out, /todoSection=\s*(\n|$)/, "the placeholder still resolves, to nothing");
+});
+
+test("the list reaches plan mode too", () => {
+  const out = builder(memory(null), planFiles(), todo("- [ ] step")).build(WS, AgentMode.Plan, false);
+
+  assert.match(out, /todo-section/);
+});
+
 test("the model is told where the memory lives, so it can update it", () => {
   // There is no new action for this: the model writes the file through the
   // ordinary `write`, which means it passes the approval gate like any other
@@ -160,7 +194,7 @@ test("every parameter the builder passes has a placeholder in the real template"
     },
   } as unknown as PromptRepositoryPort;
 
-  const b = new SystemPromptBuilder(recording, planFiles(), memory("x"));
+  const b = new SystemPromptBuilder(recording, planFiles(), memory("x"), todo("- [ ] a"));
   b.build(WS, AgentMode.Ask, false);
   b.build(WS, AgentMode.Plan, false);
 

@@ -83,6 +83,7 @@ sh start_agent_cli.sh
 - **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
 - **Unsupported-tools guard** — A CLI request carrying tools to a model that failed the probe is refused with a readable HTTP 400, instead of firing 40 tool definitions at a model that could not handle one
 - **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
+- **Task list** — the model keeps its own todo list in `.claudio/TODO.md` (`TODO_FILE`) with `action="todo"`, and the prompt reads it back at the start of every turn. It is what stops a six-step task ending three steps in with an answer that claims all six. Measured: the model reaches for it on a long task without being told to, and skips it on a short one
 - **Cross-session memory** — `.claudio/MEMORY.md` (set by `MEMORY_FILE`) is prepended to the system prompt when present, so a decision made last week survives a restart. The model updates it through the ordinary `write` action, so updates pass the approval gate like any other
 - **Images, both directions** — an attached screenshot reaches a vision model as an image (and is charged a nominal token cost rather than measured as base64 prose, which used to make one attachment blow the whole context window). A figure drawn by the `python` action goes back to the model as an image and is written to `PYTHON_PLOT_DIR` (`.claudio/plots`) so a person can open it. Verified end to end against `qwen/qwen3.8-27b`
 - **Non-blocking shell** — `bash` and `grep` spawn asynchronously, with their own timeout, kill and output cap; nothing else in the process waits for a 30-second command
@@ -193,7 +194,7 @@ from it, and it is never modified.
 ### Tests and CI
 
 ```bash
-cd proxy && npm test        # 396 tests, ~4 s, no GPU and no model required
+cd proxy && npm test        # 412 tests, ~4 s, no GPU and no model required
 cd proxy && npm run typecheck
 cd chat-extension && npm test         # 63 tests: 52 extension host + 11 webview
 cd chat-extension && npm run typecheck
@@ -236,7 +237,7 @@ the traps this repo has already paid for.
 
 As of 2026-08-27: phases 0, 1 and 2 are closed, phase 3 is done through its
 third item, and the only thing waiting is a decision about which Claude Code
-features are worth chasing on a local model. 396 proxy tests and 63 for Claudio.
+features are worth chasing on a local model. 412 proxy tests and 63 for Claudio.
 
 ---
 

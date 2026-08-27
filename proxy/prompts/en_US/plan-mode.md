@@ -55,3 +55,5 @@ via the `workspace` tool.
 Working directory: {{cwd}} ({{cwdBase}})
 
 {{memorySection}}
+
+{{todoSection}}

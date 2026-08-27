@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 396 tests, ~4 s
+npm test          # 412 tests, ~4 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -50,13 +50,14 @@ starts paying back.
 proxy/test/
   fakes.ts                     shared test doubles — not a test file
   i18n.test.ts                  5 tests — locale integrity
-  fsMemoryRepository.test.ts    8 tests — reading the cross-session memory file
+  workspaceFileRepository.test.ts 8 tests — reading the files a workspace keeps for the model
   toolProbe.test.ts             8 tests — probe outcome triage
   workspaceTool.test.ts         9 tests — the static summary Path B leans on
   planExitInjection.test.ts    12 tests — handing an approved plan back to the model
   lifecycle.test.ts            15 tests — starting and stopping a proxy, for both surfaces
   startupDetectors.test.ts     21 tests — what the model can do, decided once at startup
-  systemPromptBuilder.test.ts  12 tests — what every request is prefixed with
+  todo.test.ts                 13 tests — the list the model keeps for itself
+  systemPromptBuilder.test.ts  15 tests — what every request is prefixed with
   actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
   approvalGate.test.ts         20 tests — the write/edit/bash/python gate
@@ -389,6 +390,40 @@ backend exposes no metadata — a guess would be worse), and the four ways the
 backend's answer comes back: an error with its status, a connection that never
 opened (502, never status 0), a backend that ignores `stream: true` and replies
 JSON, and a streamed answer.
+
+---
+
+## The list the model keeps for itself
+
+`todo` is the first of the parity features, and it was chosen first because it is
+the cheapest thing that addresses what a 27B model is actually bad at: it does
+three of five steps and then answers as though it had done five.
+
+Two decisions are pinned by the suite rather than argued in a comment. **The
+action takes no path** — it writes the one configured file under `.claudio/` and
+can be pointed nowhere else — and that is the whole reason it is auto-approved
+instead of raising a modal per ticked box. A test passes it a `path` and asserts
+it goes nowhere. **An empty list injects nothing**, the same rule as memory,
+because a heading saying there is nothing to say is spent on every request of the
+turn.
+
+`FsWorkspaceFileRepository` is one class serving both the memory file and the
+list: same shape, same failure modes, and keeping them apart is how the second
+copy would have drifted.
+
+Measured against the live model, twice, which is what turns a plausible feature
+into a known one:
+
+- a **three-step** task: no list, done directly — and that is right, not a miss;
+- a **six-step** task with no mention of the feature in the prompt: the model
+  wrote the list as its third action, worked through all six, and rewrote it at
+  the end with every box ticked. All five files edited, the README created.
+
+**And a control that came back green found a real gap.** Removing the
+"empty list injects nothing" guard changed nothing, because the suite tested the
+*repository* returning null and never the *builder* turning that into an empty
+section. Three tests later it fails as it should. That is the fourth time a green
+control has been worth more than a red one.
 
 ---
 
@@ -967,6 +1002,9 @@ tests fail — and fail *narrowly*:
 | Signal the pid instead of the process group | Grandchild test fails | exactly 1 fails |
 | Poll health for a process known to be dead | Give-up test fails | exactly 1 fails, after the full 30 s |
 | One PID file for every workspace | Per-directory test fails | exactly 1 fails |
+| Let a contentless `todo` empty the list | No-content test fails | exactly 1 fails |
+| Drop containment on the configured todo path | Escape test fails | exactly 1 fails |
+| Inject an empty todo section | Empty-section test fails | exactly 1 fails — after three tests were added for it |
 | List every top-level entry again | Listing-cap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here

@@ -117,6 +117,11 @@ export interface ProxyConfig {
   plansDir: string;
   /** Workspace-relative memory file, or "" to disable cross-session memory. */
   memoryFile: string;
+  /**
+   * Workspace-relative todo list the model keeps for itself, or "" to disable
+   * the `todo` action. Injected into the prompt when it has content.
+   */
+  todoFile: string;
 
   // ── Agent loop ──
 
@@ -239,6 +244,9 @@ const DEFAULT_PLANS_DIR = ".claudio/plans";
 /** Workspace-relative memory file. Empty disables cross-session memory entirely. */
 const DEFAULT_MEMORY_FILE = ".claudio/MEMORY.md";
 
+/** Workspace-relative todo list. Empty disables the `todo` action entirely. */
+const DEFAULT_TODO_FILE = ".claudio/TODO.md";
+
 /** Default Python venv directory — relative to the workspace root. */
 const DEFAULT_PYTHON_VENV_DIR = ".claudio/python-venv";
 
@@ -359,6 +367,7 @@ export function loadConfig(): ProxyConfig {
     // Plan mode
     plansDir:                env("PLANS_DIR", DEFAULT_PLANS_DIR),
     memoryFile:              env("MEMORY_FILE", DEFAULT_MEMORY_FILE),
+    todoFile:                env("TODO_FILE", DEFAULT_TODO_FILE),
 
     // Agent loop
     maxAgentIterations:      envInt("MAX_AGENT_ITERATIONS", DEFAULT_MAX_AGENT_ITERATIONS),

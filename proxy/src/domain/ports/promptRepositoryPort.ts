@@ -27,6 +27,8 @@ export enum PromptKey {
   ExistingPlanSection = "existing-plan-section",
   /** Template wrapping cross-session memory. Injected only when memory exists. */
   MemorySection       = "memory-section",
+  /** Template wrapping the todo list. Injected only when the list has content. */
+  TodoSection         = "todo-section",
 }
 
 export interface PromptRepositoryPort {

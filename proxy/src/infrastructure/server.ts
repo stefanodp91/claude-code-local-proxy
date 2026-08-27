@@ -36,7 +36,10 @@ import { HandleChatMessageUseCase } from "../application/useCases/handleChatMess
 import { ResolveApprovalUseCase } from "../application/useCases/resolveApprovalUseCase";
 import { FsPromptRepository } from "./adapters/fsPromptRepository";
 import { FsPlanFileRepository } from "./adapters/fsPlanFileRepository";
-import { FsMemoryRepository } from "./adapters/fsMemoryRepository";
+import {
+  FsWorkspaceFileRepository,
+  MAX_TODO_BYTES,
+} from "./adapters/fsWorkspaceFileRepository";
 import { FetchLlmClient } from "./adapters/fetchLlmClient";
 import { NodeSseWriter } from "./adapters/nodeSseWriter";
 import { SystemClock } from "./adapters/systemClock";
@@ -63,7 +66,8 @@ export class ProxyServer {
   private readonly compactor: ContextCompactor;
   /** Workspace-relative directories both agent loops hand to executeAction. */
   private readonly actionEnv: ActionEnv;
-  private readonly memoryFiles: FsMemoryRepository;
+  private readonly memoryFiles: FsWorkspaceFileRepository;
+  private readonly todoFiles: FsWorkspaceFileRepository;
   private requestTranslator!: RequestTranslator;
   private responseTranslator!: ResponseTranslator;
   private streamTranslator!: StreamTranslator;
@@ -92,17 +96,19 @@ export class ProxyServer {
     const clock = new SystemClock();
     this.llm               = new FetchLlmClient(config.targetUrl);
     this.planFiles         = new FsPlanFileRepository(config.plansDir, clock);
-    this.memoryFiles       = new FsMemoryRepository(config.memoryFile);
+    this.memoryFiles       = new FsWorkspaceFileRepository(config.memoryFile);
+    this.todoFiles         = new FsWorkspaceFileRepository(config.todoFile, MAX_TODO_BYTES);
     this.promptRepo        = new FsPromptRepository(config.locale);
-    this.promptBuilder     = new SystemPromptBuilder(this.promptRepo, this.planFiles, this.memoryFiles);
+    this.promptBuilder     = new SystemPromptBuilder(this.promptRepo, this.planFiles, this.memoryFiles, this.todoFiles);
     this.approvalInteractor = new SseApprovalInteractor(this.logger);
     this.approvalGate       = new ApprovalGateService(
       this.approvalInteractor, this.planFiles, this.logger,
       loadOldContent, checkAutoApprove,
     );
     this.actionEnv = {
-      venvDir: this.config.pythonVenvDir,
-      plotDir: this.config.pythonPlotDir,
+      venvDir:  this.config.pythonVenvDir,
+      plotDir:  this.config.pythonPlotDir,
+      todoFile: this.config.todoFile,
     };
     this.compactor = new ContextCompactor(this.llm, this.logger, {
       semanticEnabled:  this.config.semanticCompact,

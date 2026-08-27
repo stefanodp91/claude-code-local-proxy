@@ -20,6 +20,7 @@ import {
   type PromptRepositoryPort,
   type PlanFileRepositoryPort,
   type MemoryRepositoryPort,
+  type TodoRepositoryPort,
 } from "../../domain/ports";
 import { buildWorkspaceContextSummary } from "../workspaceTool";
 import { TEXTUAL_TOOL_MANUAL } from "../textualAgentLoop";
@@ -29,6 +30,7 @@ export class SystemPromptBuilder {
     private readonly prompts: PromptRepositoryPort,
     private readonly planFiles: PlanFileRepositoryPort,
     private readonly memory: MemoryRepositoryPort,
+    private readonly todo: TodoRepositoryPort,
   ) {}
 
   /**
@@ -49,6 +51,7 @@ export class SystemPromptBuilder {
       cwd:           workspaceCwd,
       cwdBase:       basename(workspaceCwd),
       memorySection: this.buildMemorySection(workspaceCwd),
+      todoSection:   this.buildTodoSection(workspaceCwd),
     };
 
     if (mode === AgentMode.Plan) {
@@ -104,6 +107,22 @@ export class SystemPromptBuilder {
     return this.prompts.get(PromptKey.MemorySection, {
       memory:     remembered,
       memoryPath: this.memory.relativePath,
+    });
+  }
+
+  /**
+   * The list the model was keeping, or an empty string.
+   *
+   * Empty for the same reason memory is: this goes into every request of the
+   * turn, and an empty heading spends tokens telling the model there is nothing
+   * to tell it.
+   */
+  private buildTodoSection(workspaceCwd: string): string {
+    const list = this.todo.load(workspaceCwd);
+    if (!list) return "";
+    return this.prompts.get(PromptKey.TodoSection, {
+      todo:     list,
+      todoPath: this.todo.relativePath,
     });
   }
 
