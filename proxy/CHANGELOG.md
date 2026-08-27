@@ -148,6 +148,51 @@ The two findings underneath were worth more.
   exactly 1 — that last one only after the control was fixed, having first come
   back green because the substitution never applied.
 
+### Added — `skill`: instructions the model asks for
+
+Second of the parity features from PLAN.md §7. A skill is a directory with a
+`SKILL.md` and whatever else it needs, in `.claudio/skills/` or in a global
+`GLOBAL_SKILLS_DIR`; the project's version wins a clash by name.
+
+- **Only the index is in the prompt** — one name and one line each. The body
+  arrives when the model calls `action="skill"`. A skill always injected would
+  just be a longer prompt, and the window is the scarce resource here.
+
+- **The model chooses**, with no keyword triggers. The evidence for trusting it
+  is `todo`, which it reached for on a six-step task and not on a three-step one.
+
+- **A skill's scripts run through the ordinary actions.** The skill ships the
+  file and names it; the model runs it with `bash` or `python`, and those pass
+  the approval gate as always. A private execution channel would be a second
+  route with nobody watching it.
+
+- Measured live: given a skill with three deliberately unguessable rules for
+  commit messages, the model loaded it as its **first action** and followed all
+  three.
+
+- The argument is `skill_name`, not `name`, because `<action name="skill" …/>`
+  already spends `name` on the action itself — and the grammar test caught the
+  parser not reading it, which would have made the action work on Path A and be
+  impossible on Path B.
+
+### Fixed — `**/` could not see the workspace root
+
+- Found by watching the model work. Asked about a file in a flat workspace it
+  globbed `**/util.js`, got "(no files matched)", concluded the file did not
+  exist and wrote its answer around a guess.
+
+- The pattern compiled to `^.*\/util\.js$` with that slash **literal**, so a
+  file in the root could never match. `**/` means "zero or more directories,
+  including none" in every convention the model knows. It compiles to
+  `(?:[^/]*/)*` now.
+
+- Three tests, including the other half of the rule: `*.ts` must still stay in
+  the root, or every listing becomes the whole tree. Negative control: requiring
+  a directory again fails exactly 2, letting `*` cross a boundary fails exactly 1.
+
+- Nothing failed at any point. The action answered, the model believed it, and
+  the answer was written on the assumption that a file that exists does not.
+
 ### Added — `todo`: the list the model keeps for itself
 
 First of the parity features decided in PLAN.md §7, and first because it is the

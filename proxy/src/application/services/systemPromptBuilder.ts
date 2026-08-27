@@ -21,6 +21,7 @@ import {
   type PlanFileRepositoryPort,
   type MemoryRepositoryPort,
   type TodoRepositoryPort,
+  type SkillRepositoryPort,
 } from "../../domain/ports";
 import { buildWorkspaceContextSummary } from "../workspaceTool";
 import { TEXTUAL_TOOL_MANUAL } from "../textualAgentLoop";
@@ -31,6 +32,7 @@ export class SystemPromptBuilder {
     private readonly planFiles: PlanFileRepositoryPort,
     private readonly memory: MemoryRepositoryPort,
     private readonly todo: TodoRepositoryPort,
+    private readonly skills: SkillRepositoryPort,
   ) {}
 
   /**
@@ -52,6 +54,7 @@ export class SystemPromptBuilder {
       cwdBase:       basename(workspaceCwd),
       memorySection: this.buildMemorySection(workspaceCwd),
       todoSection:   this.buildTodoSection(workspaceCwd),
+      skillsSection: this.buildSkillsSection(workspaceCwd),
     };
 
     if (mode === AgentMode.Plan) {
@@ -123,6 +126,21 @@ export class SystemPromptBuilder {
     return this.prompts.get(PromptKey.TodoSection, {
       todo:     list,
       todoPath: this.todo.relativePath,
+    });
+  }
+
+  /**
+   * The index of skills on offer: a name and a line each, and nothing more.
+   *
+   * The bodies are loaded by `action="skill"` when the model decides it needs
+   * one. That is the feature — instructions the conversation pays for only when
+   * they are used — and injecting them here would undo it.
+   */
+  private buildSkillsSection(workspaceCwd: string): string {
+    const available = this.skills.list(workspaceCwd);
+    if (available.length === 0) return "";
+    return this.prompts.get(PromptKey.SkillsSection, {
+      skillList: available.map((s) => `  ${s.name} — ${s.description}`).join("\n"),
     });
   }
 

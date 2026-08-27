@@ -29,6 +29,8 @@ export enum PromptKey {
   MemorySection       = "memory-section",
   /** Template wrapping the todo list. Injected only when the list has content. */
   TodoSection         = "todo-section",
+  /** Template listing the skills on offer. Injected only when there are any. */
+  SkillsSection       = "skills-section",
 }
 
 export interface PromptRepositoryPort {

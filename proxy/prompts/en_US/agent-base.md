@@ -6,7 +6,7 @@ using the `workspace` tool. Do NOT just explain the commands in a markdown
 code block — PERFORM them.
 
 Available actions:
-  read-only   : list, read, grep, glob, todo  (auto-approved, use freely)
+  read-only   : list, read, grep, glob, todo, skill  (auto-approved, use freely)
   destructive : write, edit, bash, python     (may require user approval)
 
 Patterns:
@@ -32,3 +32,5 @@ Working directory: {{cwd}} ({{cwdBase}})
 {{memorySection}}
 
 {{todoSection}}
+
+{{skillsSection}}

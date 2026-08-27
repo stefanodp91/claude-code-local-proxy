@@ -18,7 +18,8 @@ import { WORKSPACE_TOOL_DEF } from "../src/domain/entities/workspaceAction";
 import { TEXTUAL_TOOL_MANUAL } from "../src/application/textualAgentLoop";
 import { PromptKey } from "../src/domain/ports";
 import type {
-  MemoryRepositoryPort, TodoRepositoryPort, PlanFileRepositoryPort, PromptRepositoryPort,
+  MemoryRepositoryPort, TodoRepositoryPort, SkillRepositoryPort,
+  PlanFileRepositoryPort, PromptRepositoryPort,
 } from "../src/domain/ports";
 import type { ExistingPlan } from "../src/domain/entities/existingPlan";
 
@@ -54,11 +55,16 @@ function todo(content: string | null): TodoRepositoryPort {
   return { relativePath: ".claudio/TODO.md", load: () => content };
 }
 
+function skills(...names: string[]): SkillRepositoryPort {
+  return { list: () => names.map((n) => ({ name: n, description: `what ${n} is for` })) };
+}
+
 const builder = (
   mem: MemoryRepositoryPort = memory(null),
   plans = planFiles(),
   list: TodoRepositoryPort = todo(null),
-) => new SystemPromptBuilder(prompts(), plans, mem, list);
+  available: SkillRepositoryPort = skills(),
+) => new SystemPromptBuilder(prompts(), plans, mem, list, available);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The basics
@@ -119,6 +125,25 @@ test("no memory file means no memory section at all", () => {
   assert.equal(out.includes("memory-section"), false);
   assert.equal(out.includes("memorySection="), true, "the placeholder still resolves, to nothing");
   assert.match(out, /memorySection=\s*(\n|$)/);
+});
+
+test("the skills on offer are listed, so the model knows what it may load", () => {
+  // The index and nothing else: a name and a line each. The bodies arrive only
+  // when the model asks, which is the whole point — a skill always in the prompt
+  // is just a longer prompt.
+  const out = builder(memory(null), planFiles(), todo(null), skills("commit-style", "release"))
+    .build(WS, AgentMode.Ask, false);
+
+  assert.match(out, /skills-section/);
+  assert.match(out, /commit-style/);
+  assert.match(out, /release/);
+});
+
+test("a workspace with no skills gets no skills section", () => {
+  const out = builder(memory(null), planFiles(), todo(null), skills()).build(WS, AgentMode.Ask, false);
+
+  assert.equal(out.includes("skills-section"), false);
+  assert.match(out, /skillsSection=\s*(\n|$)/, "the placeholder still resolves, to nothing");
 });
 
 test("the list the model was keeping is carried into the next turn's prompt", () => {
@@ -194,7 +219,9 @@ test("every parameter the builder passes has a placeholder in the real template"
     },
   } as unknown as PromptRepositoryPort;
 
-  const b = new SystemPromptBuilder(recording, planFiles(), memory("x"), todo("- [ ] a"));
+  const b = new SystemPromptBuilder(
+    recording, planFiles(), memory("x"), todo("- [ ] a"), skills("commit-style"),
+  );
   b.build(WS, AgentMode.Ask, false);
   b.build(WS, AgentMode.Plan, false);
 
