@@ -178,6 +178,14 @@ test("dispose kills the proxy and takes the PID file with it", async () => {
   // The leak that matters: a VS Code window closes and leaves a proxy holding a
   // port. Nothing reports it until the next window picks a different port and
   // the user wonders why two models are loaded.
+  //
+  // This one is platform-dependent, and only CI can see it. `npm run start`
+  // makes node a *grandchild*; on macOS a SIGTERM to npm reaches the whole
+  // group anyway, so this passed locally for as long as it existed. On Linux it
+  // does not: npm died, node kept the port, and the surviving grandchild held
+  // this test process's pipes open until the runner killed the step. The fix is
+  // to signal the process group — see `signalGroup` — and the reason it is
+  // written down here is that a green run on a Mac proves nothing about it.
   fakeProxyProject();
   const pm = manager();
   await pm.start(45701);
