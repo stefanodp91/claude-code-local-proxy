@@ -43,7 +43,7 @@ repositories behind them. Counted, not estimated; recount when it matters.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 381 tests, ~1.1 s
+cd proxy && npm test         # 396 tests, ~4 s
 cd proxy && npm run typecheck
 cd chat-extension && npm test          # 63 tests: 52 host + 11 webview
 cd chat-extension && npm run typecheck
@@ -94,6 +94,14 @@ Do not conflate the two; the project already did once.
   `"null"` gives 400, `"{}"` gives 200. The loop replays its own history, so one
   malformed call — which is what a call truncated by `max_tokens` looks like —
   used to kill the *next* request. Normalise where the assistant turn is built.
+- **The intelligence lives in the proxy.** Claudio and the CLI are surfaces:
+  they render, they collect clicks, they own an editor. Every rule — what may be
+  done to a workspace, when a human is asked, what the model is told, when a
+  context is trimmed, how the proxy's own lifecycle is managed — belongs in the
+  proxy, once. Where a rule is written twice, the second copy is a bug waiting
+  to be found separately: `ProxyManager` and `start_agent_cli.sh` both killed a
+  proxy by the wrapper's pid, and the same orphaned process was fixed in one and
+  not the other for as long as they were two.
 - **Docs describe the code as it is.** When they disagree, the code wins, but the
   drift gets fixed rather than ignored. This repo shipped for months with a
   README describing a Bun server that had not existed for releases.
@@ -200,14 +208,14 @@ in step by hand. If you change one, grep for the others.
 
 **Everything on the roadmap is closed except one item that is waiting on a
 decision, not on work.** Phases 0, 1 and 2 are done; Phase 3 is done through its
-third item. 381 tests, ~1.1 s, run locally before every commit — CI runs only
+third item. 396 tests, ~4 s, run locally before every commit — CI runs only
 when asked (`gh workflow run ci.yml --ref main`), so nothing automatic stands
 between a broken commit and `main`.
 
 | | State |
 |---|---|
 | Phase 0 — cleanup, probe, guard | closed |
-| Phase 1 — the safety net | closed, 0 → 381 tests |
+| Phase 1 — the safety net | closed, 0 → 396 tests |
 | Phase 2 — known correctness | closed: compaction inside both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
 | Phase 3.1 — cross-session memory | done |
 | Phase 3.2 — the image path | done, and **verified live** against `qwen/qwen3.8-27b` |

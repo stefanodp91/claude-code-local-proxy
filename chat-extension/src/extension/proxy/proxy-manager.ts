@@ -11,27 +11,23 @@
  */
 
 import * as vscode from "vscode";
-import * as net from "node:net";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-
-/**
- * Signal a child and everything it started.
- *
- * A negative pid means "the process group", which is what `detached: true` gave
- * the child when it was spawned. Falls back to signalling the child alone if the
- * group is gone or the platform refuses — better a signalled npm than none.
- */
-function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
-  if (child.pid === undefined) return;
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    try { child.kill(signal); } catch { /* already gone */ }
-  }
-}
+// The lifecycle rules live in the proxy, and this imports them rather than
+// keeping a second copy. The two copies is how the orphaned-proxy bug came to
+// be fixed here and left in `start_agent_cli.sh`: same rule, two homes, one
+// correction. See proxy/src/infrastructure/lifecycle.ts.
+import {
+  findFreePort,
+  pidFilePath,
+  writePidFile,
+  removePidFile,
+  killProcessGroup,
+  cleanupOrphan,
+  waitForHealth,
+} from "../../../../proxy/src/infrastructure/lifecycle";
 
 export class ProxyManager implements vscode.Disposable {
   private process: ChildProcess | null = null;
@@ -64,22 +60,18 @@ export class ProxyManager implements vscode.Disposable {
      */
     private readonly onError: (message: string) => void,
   ) {
-    // Unique PID file per proxyDir to avoid cross-window proxy killing when
-    // multiple VS Code windows have different proxyDir values configured.
-    const dirHash = Buffer.from(proxyDir)
-      .toString("base64")
-      .replace(/[^a-zA-Z0-9]/g, "")
-      .slice(0, 16);
-    this.pidFile = path.join(globalStoragePath, `.claudio-proxy-${dirHash}.pid`);
+    // One PID file per proxyDir, so two VS Code windows pointed at different
+    // checkouts do not kill each other's proxy. The naming rule is the proxy's.
+    this.pidFile = pidFilePath(globalStoragePath, proxyDir);
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
   async start(basePort: number): Promise<void> {
     this.startPort = basePort;
-    await this.cleanupOrphan();
+    await cleanupOrphan(this.pidFile);
 
-    const port = await this.findFreePort(basePort);
+    const port = await findFreePort(basePort);
     this.actualPort = port;
 
     const envVars = this.parseEnvFile(path.join(this.proxyDir, ".env.proxy"));
@@ -146,7 +138,7 @@ export class ProxyManager implements vscode.Disposable {
           "Reload Window (Ctrl+Shift+P) to restart.",
       );
       this.process = null;
-      try { fs.unlinkSync(this.pidFile); } catch { /* already gone */ }
+      removePidFile(this.pidFile);
     });
 
     this.process = child;
@@ -154,20 +146,15 @@ export class ProxyManager implements vscode.Disposable {
     this.exited = false;
 
     if (child.pid !== undefined) {
-      try {
-        fs.mkdirSync(this.globalStoragePath, { recursive: true });
-        fs.writeFileSync(this.pidFile, String(child.pid), "utf8");
-      } catch (e) {
-        this.outputChannel.appendLine(`[ProxyManager] Could not write PID file: ${e}`);
-      }
+      writePidFile(this.pidFile, child.pid);
     }
 
-    try {
-      await this.waitForHealth(port, 30_000);
+    const healthy = await waitForHealth(port, 30_000, () => !this.exited);
+    if (healthy) {
       this.outputChannel.appendLine(
         `[ProxyManager] Proxy ready at http://127.0.0.1:${port}`,
       );
-    } catch (err) {
+    } else {
       // Two different failures, and telling them apart is the difference
       // between a wait and a diagnosis: a proxy still probing its model can
       // take half a minute, but a proxy that has already exited will never
@@ -197,16 +184,16 @@ export class ProxyManager implements vscode.Disposable {
     if (!this.isOwner || !this.process) return;
     this.outputChannel.appendLine("[ProxyManager] Stopping proxy (SIGTERM)…");
     const proc = this.process;
-    signalGroup(proc, "SIGTERM");
+    if (proc.pid !== undefined) killProcessGroup(proc.pid, "SIGTERM");
     this.forceKillTimer = setTimeout(() => {
       this.forceKillTimer = null;
       if (proc.exitCode === null) {
         this.outputChannel.appendLine("[ProxyManager] Force-killing proxy (SIGKILL)…");
-        signalGroup(proc, "SIGKILL");
+        if (proc.pid !== undefined) killProcessGroup(proc.pid, "SIGKILL");
       }
     }, 5_000);
     this.process = null;
-    try { fs.unlinkSync(this.pidFile); } catch { /* already gone */ }
+    removePidFile(this.pidFile);
   }
 
   get isRunning(): boolean {
@@ -218,35 +205,6 @@ export class ProxyManager implements vscode.Disposable {
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
-
-  /** Find the first available TCP port starting from startPort. */
-  private findFreePort(startPort: number): Promise<number> {
-    return new Promise((resolve, reject) => {
-      const server = net.createServer();
-      server.listen(startPort, "127.0.0.1", () => {
-        const port = (server.address() as net.AddressInfo).port;
-        server.close(() => resolve(port));
-      });
-      server.on("error", () =>
-        this.findFreePort(startPort + 1).then(resolve, reject),
-      );
-    });
-  }
-
-  /** Kill any proxy process left behind by a previous VS Code crash. */
-  private async cleanupOrphan(): Promise<void> {
-    if (!fs.existsSync(this.pidFile)) return;
-    try {
-      const pid = parseInt(fs.readFileSync(this.pidFile, "utf8").trim(), 10);
-      if (!isNaN(pid)) {
-        // The group, for the same reason stop() signals the group: the pid in
-        // the file is npm's, and the proxy itself is its child.
-        try { process.kill(-pid, "SIGTERM"); } catch { /* not a group leader, or gone */ }
-        try { process.kill(pid, 0); process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
-      }
-      fs.unlinkSync(this.pidFile);
-    } catch { /* nothing to do */ }
-  }
 
   /** Parse KEY=VALUE lines from a .env file; returns {} if the file is absent. */
   private parseEnvFile(filePath: string): Record<string, string> {
@@ -266,19 +224,4 @@ export class ProxyManager implements vscode.Disposable {
     return result;
   }
 
-  /** Poll /health until it responds 200 or the deadline is exceeded. */
-  private async waitForHealth(port: number, timeoutMs: number): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      if (this.exited) throw new Error("proxy process exited before becoming healthy");
-      try {
-        const res = await fetch(`http://127.0.0.1:${port}/health`, {
-          signal: AbortSignal.timeout(2_000),
-        });
-        if (res.ok) return;
-      } catch { /* not ready yet */ }
-      await new Promise((r) => setTimeout(r, 1_000));
-    }
-    throw new Error(`Proxy on port ${port} did not respond within ${timeoutMs / 1000}s`);
-  }
 }

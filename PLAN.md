@@ -119,7 +119,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **381 test**, ~1,1 s, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **396 test**, ~4 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -282,7 +282,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 381 test / ~1,1 s, senza GPU e senza rete.
+`npm test` in 396 test / ~4 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -519,6 +519,16 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
 
 ## 7. Decisioni aperte
 
+> **Principio, fissato il 2026-08-27.** La parte *intelligente* del progetto è il
+> proxy. Claudio e la CLI sono superfici: disegnano, raccolgono click, possiedono
+> un editor. Ogni regola — cosa si può fare a un workspace, quando si chiede a un
+> umano, cosa viene detto al modello, quando si taglia il contesto, come si
+> gestisce il ciclo di vita del proxy — sta nel proxy, **una volta sola**. Dove una
+> regola è scritta due volte, la seconda copia è un bug che verrà trovato a parte:
+> `ProxyManager` e `start_agent_cli.sh` uccidevano entrambi il proxy per il pid del
+> wrapper, e lo stesso processo orfano è stato corretto in uno e non nell'altro
+> finché sono rimasti due.
+
 - **`claude_code/` è zavorra o archivio?** 1.902 file e 33 MB tracciati in git,
   mai toccati, mai importati. Se il progetto da far vivere è il proxy, pesa su
   ogni clone e ogni ricerca. Dipende se il repo è "l'archivio del leak, con in
@@ -596,7 +606,7 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
-cd proxy && npm test && npm run typecheck     # 381 test, ~1,1 s
+cd proxy && npm test && npm run typecheck     # 396 test, ~4 s
 cd chat-extension && npm run typecheck
 ```
 
@@ -610,7 +620,7 @@ questi due comandi sono il cancello.
 | | Stato |
 |---|---|
 | Fase 0 (pulizia, probe, guard) | chiusa |
-| Fase 1 (rete di sicurezza) | chiusa — da 0 a 381 test |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 396 test |
 | Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
 | Fase 3.1 memoria cross-sessione | fatta |
 | Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |
