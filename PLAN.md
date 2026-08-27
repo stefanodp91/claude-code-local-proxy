@@ -119,7 +119,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **315 test**, ~1,0 s, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **318 test**, ~1,0 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -282,7 +282,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 315 test / ~1,0 s, senza GPU e senza rete.
+`npm test` in 318 test / ~1,0 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -346,12 +346,24 @@ Tre problemi già identificati e circoscritti, da affrontare *dopo* i test.
   dice al modello la stessa cosa ("Emit exactly one action at a time"). Non c'è
   mai una seconda azione da dispacciare. Un test lo fissa.
 
-- **Path B non sa esprimere una virgoletta dentro `old_string`.** Gli attributi
-  del tag sono parsati con `[^"]*` e il manuale non insegna nessun escaping,
-  quindi `<action name="edit" old_string="const s = \"hi\"" …/>` si tronca. Per
-  del codice è un limite serio, ma allargarlo significa cambiare la grammatica
-  *e* il manuale insieme: è una decisione, non una svista. Path B resta un
-  fallback dichiarato.
+- **Path B non sa esprimere una virgoletta dentro `old_string`** — decisione
+  confermata, ma la *conseguenza* era un bug, trovato provando Path B dal vivo il
+  2026-08-27. Gli attributi sono parsati con `[^"]*`, quindi `old_string` e
+  `new_string` si troncavano **allo stesso prefisso**: `edit` sostituiva una
+  stringa con sé stessa, riscriveva il file identico e rispondeva «Replaced 1
+  occurrence». Il modello riferiva all'utente una modifica mai avvenuta, citando
+  un contenuto mai scritto. Nessun unit test poteva vederlo: li scrivi tutti con
+  `old_string` e `new_string` diversi.
+
+  Ora `edit` rifiuta una sostituzione che non può cambiare niente e dice perché,
+  e il `TEXTUAL_TOOL_MANUAL` insegna il limite invece di lasciarlo scoprire —
+  rifatta la stessa richiesta, il modello ha risposto «since the file contains
+  double quotes, I'll rewrite it entirely using `write`» e il file era giusto.
+  La grammatica resta quella: Path B è un fallback dichiarato.
+- **Un tag `<action>` che il modello non chiude finisce all'utente come testo.**
+  È una scelta, non una svista: l'alternativa è perdere in silenzio ciò che il
+  modello stava dicendo, che è il modo di rompersi tipico di qui. Un test la
+  fissa, così se un giorno diventa "spiegalo a parole" cambia di proposito.
 - ~~**`bash` blocca l'event loop**~~ — **fatto.** `bash` e `grep` ora girano
   asincroni, attraverso un solo `runProcess()` in
   [`workspaceActions.ts`](proxy/src/infrastructure/workspaceActions.ts).
@@ -559,7 +571,7 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
-cd proxy && npm test && npm run typecheck     # 315 test, ~1,0 s
+cd proxy && npm test && npm run typecheck     # 318 test, ~1,0 s
 cd chat-extension && npm run typecheck
 ```
 
@@ -573,7 +585,7 @@ questi due comandi sono il cancello.
 | | Stato |
 |---|---|
 | Fase 0 (pulizia, probe, guard) | chiusa |
-| Fase 1 (rete di sicurezza) | chiusa — da 0 a 315 test |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 318 test |
 | Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
 | Fase 3.1 memoria cross-sessione | fatta |
 | Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |
@@ -599,6 +611,11 @@ In ordine di resa, e nessuno dei tre è grande:
 3. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
    di §2 valgono per *quel* modello: tetto dei tool, thinking, finestra. Non
    trasferirli.
+
+Path B non è più fra questi: **provato dal vivo il 2026-08-27** forzando
+`MAX_TOOLS=0`. `read`, `write`, `bash`, `edit`, `python` e la scrittura
+multi-riga funzionano davvero, i file finiscono sul disco — e la prova ha trovato
+l'`edit` che diceva di aver funzionato senza farlo (§5).
 
 ### Trappole che questo repo ha già pagato
 

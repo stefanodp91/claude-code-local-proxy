@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { SystemPromptBuilder } from "../src/application/services/systemPromptBuilder";
 import { AgentMode } from "../src/domain/types";
 import { WORKSPACE_TOOL_DEF } from "../src/domain/entities/workspaceAction";
+import { TEXTUAL_TOOL_MANUAL } from "../src/application/textualAgentLoop";
 import { PromptKey } from "../src/domain/ports";
 import type {
   MemoryRepositoryPort, PlanFileRepositoryPort, PromptRepositoryPort,
@@ -175,30 +176,47 @@ test("every parameter the builder passes has a placeholder in the real template"
   }
 });
 
-test("every action the tool schema offers is named in the shipped prompt", async () => {
+test("every action the tool schema offers is named in the instructions that reach the model", async () => {
   // Derived from the artefacts, not from a list written here: the schema on one
-  // side, `prompts/en_US/*.md` on the other. The prompt is where the model
-  // learns what it may do, and it had fallen behind the schema — `python` was
-  // implemented, exposed in the tool definition, and named in no prompt at all.
-  // A model that reads the prompt then concludes the action does not exist,
-  // which is exactly what one did: "there's no dedicated `python` action, but
-  // `bash` can execute it", followed by a tool call written as plain text.
+  // side, what the model is actually told on the other. The prompt is where the
+  // model learns what it may do, and it had fallen behind the schema — `python`
+  // was implemented, exposed in the tool definition, and named nowhere. A model
+  // that reads its instructions then concludes the action does not exist, which
+  // is what one did: "there's no dedicated `python` action, but `bash` can
+  // execute it", followed by a tool call written as plain text.
+  //
+  // Checked per artefact rather than against their concatenation. Joining them
+  // first is how this test passed while Path B's manual was still missing
+  // `python`: agent-base.md named it, so the union did too.
   const { readFileSync } = await import("node:fs");
   const { join } = await import("node:path");
 
-  const prompts = ["agent-base", "plan-mode"]
-    .map((k) => readFileSync(join("prompts", "en_US", `${k}.md`), "utf-8"))
-    .join("\n");
+  const read = (k: string) => readFileSync(join("prompts", "en_US", `${k}.md`), "utf-8");
 
   const advertised: string[] =
     (WORKSPACE_TOOL_DEF.function.parameters.properties.action as any).enum;
   assert.equal(advertised.length > 0, true, "the schema advertises no actions at all");
 
+  // `exit_plan_mode` is a control action that only exists in plan mode, and
+  // Path B does not implement it — its manual must not offer it.
+  const executable = advertised.filter((a) => a !== "exit_plan_mode");
+
+  const pathA = `${read("agent-base")}\n${read("plan-mode")}`;
   for (const action of advertised) {
     assert.equal(
-      prompts.includes(action),
+      pathA.includes(action),
       true,
-      `the tool schema offers '${action}' and no prompt mentions it — the model is being told it does not exist`,
+      `the schema offers '${action}' and Path A's prompts never mention it — the model is being told it does not exist`,
+    );
+  }
+
+  // Path B's manual is not a prompt file but a constant in the loop, and it had
+  // drifted the same way. Same rule, different artefact.
+  for (const action of executable) {
+    assert.equal(
+      TEXTUAL_TOOL_MANUAL.includes(action),
+      true,
+      `the schema offers '${action}' and TEXTUAL_TOOL_MANUAL never teaches it — Path B cannot use it`,
     );
   }
 });

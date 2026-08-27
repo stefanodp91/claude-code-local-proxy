@@ -193,7 +193,7 @@ from it, and it is never modified.
 ### Tests and CI
 
 ```bash
-cd proxy && npm test        # 315 tests, ~1.0 s, no GPU and no model required
+cd proxy && npm test        # 318 tests, ~1.0 s, no GPU and no model required
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -235,7 +235,7 @@ the traps this repo has already paid for.
 
 As of 2026-08-27: phases 0, 1 and 2 are closed, phase 3 is done through its
 third item, and the only thing waiting is a decision about which Claude Code
-features are worth chasing on a local model. 315 tests, ~1.0 s.
+features are worth chasing on a local model. 318 tests, ~1.0 s.
 
 ---
 

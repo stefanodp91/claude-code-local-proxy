@@ -494,6 +494,20 @@ function actionEdit(args: ActionArgs, workspaceCwd: string): string {
     return `Error: 'old_string' not found in '${args.path}' — no changes made`;
   }
 
+  // An edit that replaces a string with itself writes the file back unchanged
+  // and answers "Replaced 1 occurrence", which the model then reports to the
+  // user as a completed change. Seen in the wild on Path B: the tag parser
+  // stops an attribute at the first double quote, so an `old_string` containing
+  // one arrives truncated — and `new_string` truncates to the same prefix. The
+  // caller has to be told, or nobody ever learns the edit did not happen.
+  if (args.old_string === args.new_string) {
+    return (
+      `Error: 'old_string' and 'new_string' are identical — nothing to replace in '${args.path}'. ` +
+      `If either contains a double quote, the action tag cannot carry it: rewrite the whole file ` +
+      `with action='write' instead.`
+    );
+  }
+
   // Replace only the first occurrence to match Claude Code behaviour.
   //
   // The replacement goes through a function on purpose. Passing the string

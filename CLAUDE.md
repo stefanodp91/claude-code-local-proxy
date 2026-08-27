@@ -37,7 +37,7 @@ repositories behind them. Counted, not estimated; recount when it matters.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 315 tests, ~1.0 s
+cd proxy && npm test         # 318 tests, ~1.0 s
 cd proxy && npm run typecheck
 cd chat-extension && npm run typecheck
 ```
@@ -110,9 +110,13 @@ built that way, and that is what turned up most of the list.
 
 **Then run it.** The suites cannot see what only a live model shows. Trying the
 image path end to end — with LM Studio loaded, through the real proxy — found
-three more in an afternoon, one of which had nothing to do with images. If a
-feature has never been exercised against a real backend, "the tests pass" is a
-statement about the tests.
+three more in an afternoon, one of which had nothing to do with images. Forcing
+Path B on with `MAX_TOOLS=0` found a fourth on its first real request: an `edit`
+that replaced a string with itself, reported "Replaced 1 occurrence", and had the
+model tell the user about a change that never happened. Twenty green tests had
+never produced one, because nobody writes an `edit` test where `old_string` and
+`new_string` are equal. If a feature has never been exercised against a real
+backend, "the tests pass" is a statement about the tests.
 
 **Every test gets a negative control.** Reintroduce the bug on purpose and
 confirm the test fails — and fails *narrowly*. A suite nobody has seen fail is
@@ -189,14 +193,14 @@ in step by hand. If you change one, grep for the others.
 
 **Everything on the roadmap is closed except one item that is waiting on a
 decision, not on work.** Phases 0, 1 and 2 are done; Phase 3 is done through its
-third item. 315 tests, ~1.0 s, run locally before every commit — CI runs only
+third item. 318 tests, ~1.0 s, run locally before every commit — CI runs only
 when asked (`gh workflow run ci.yml --ref main`), so nothing automatic stands
 between a broken commit and `main`.
 
 | | State |
 |---|---|
 | Phase 0 — cleanup, probe, guard | closed |
-| Phase 1 — the safety net | closed, 0 → 315 tests |
+| Phase 1 — the safety net | closed, 0 → 318 tests |
 | Phase 2 — known correctness | closed: compaction inside both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
 | Phase 3.1 — cross-session memory | done |
 | Phase 3.2 — the image path | done, and **verified live** against `qwen/qwen3.8-27b` |
