@@ -148,6 +148,31 @@ The two findings underneath were worth more.
   exactly 1 — that last one only after the control was fixed, having first come
   back green because the substitution never applied.
 
+### Added — Startup probing has a suite (21 tests)
+
+- `ToolLimitDetector` and `ThinkingDetector` each ask a question that costs real
+  time and cache the answer under the model's id. Everything downstream stands on
+  those numbers: `maxTools` chooses Path A or Path B, the thinking flags decide
+  whether Claudio shows a toggle that does anything.
+
+- **The interesting values are the falsy ones.** `maxTools: 0` is the probe
+  saying the model could not manage a single tool; `supportsThinking: false` is a
+  measured answer. Both files check `!== undefined` for that reason, and the
+  suite pins it — reverting either to truthiness re-probes on every launch, which
+  nobody reports as a bug because the proxy merely feels slow to start.
+
+- `fetch` is stubbed and **counted**: "the expensive path was skipped" is the
+  property, and a call count is the only way to see it. Also covered: the two
+  detectors write into the same cache record and must not overwrite each other's
+  half, a partial record is not a complete one, and `PersistentCache` treats a
+  missing or corrupt file as empty and a failed write as nothing at all — the
+  proxy re-probes next time rather than refusing to start.
+
+- `npm test` is now 381. Negative control: truthiness on `maxTools` fails
+  exactly 1, truthiness on the thinking flags fails exactly 2, `merge` replacing
+  instead of merging fails exactly 3, and running the second thinking probe
+  unconditionally fails exactly 1.
+
 ### Fixed — An approved plan was explained back instead of carried out
 
 Found by running plan mode end to end for the first time. Three faults, all in
