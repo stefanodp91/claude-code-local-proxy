@@ -1,11 +1,16 @@
 # Piano di evoluzione
 
 > Stato del progetto e percorso per riprenderlo in mano.
-> Ultimo aggiornamento: 2026-08-27.
+> Ultimo aggiornamento: 2026-08-27 (fine sessione: routing coperto, shell non
+> bloccante, percorso immagini provato dal vivo).
 >
 > **Chi riprende il lavoro parte da [CLAUDE.md](CLAUDE.md)**: mappa del repo,
 > comandi per verificare, invarianti da non rompere e il metodo di lavoro.
 > Questo documento è il *dove siamo e dove andiamo*; quello è il *come*.
+>
+> Se torni qui dopo settimane, salta a [§9 — Da dove ripartire](#9-da-dove-ripartire):
+> cos'è vero oggi, cosa si può fare senza decidere niente, e cosa aspetta una tua
+> decisione.
 
 ---
 
@@ -16,7 +21,7 @@ Tre cose distinte, in un solo repo:
 | Componente | Cosa | Dimensione | Ruolo |
 |---|---|---|---|
 | [`claude_code/src/`](claude_code/src/) | Sorgente leaked di Claude Code CLI (2026-03-31) | 1.902 file, 33 MB | Archivio di riferimento. Mai modificato, mai importato dal resto |
-| [`proxy/`](proxy/) | Proxy di traduzione Anthropic → OpenAI | ~7.800 righe TS, 46 file | **Il cuore del progetto** |
+| [`proxy/`](proxy/) | Proxy di traduzione Anthropic → OpenAI | 8.816 righe TS in 50 file, più 5.303 di test | **Il cuore del progetto** |
 | [`chat-extension/`](chat-extension/) | "Claudio", estensione VS Code | 2.074 righe host + 3.887 webview Angular 19 | Superficie primaria |
 
 Il valore vero è nel proxy: architettura esagonale con porte e adapter, e **zero
@@ -40,7 +45,7 @@ CLI      ──[nessun header]──────>  proxy  ──>  LM Studio
 ```
 
 Il routing è in [`handleChatMessageUseCase.ts`](proxy/src/application/useCases/handleChatMessageUseCase.ts),
-dentro `if (workspaceCwd)`. Circa 3.000 delle 7.800 righe del proxy servono solo
+dentro `if (workspaceCwd)`. Circa 3.570 delle 8.816 righe del proxy servono solo
 Claudio. Vederlo chiaramente è ciò che rende sensate le priorità qui sotto.
 
 ---
@@ -70,7 +75,7 @@ né il soft switch Qwen `/no_think`. Quindi `thinkingCanBeDisabled: false` in
 > thinking dipendono da architettura, chat template e da come il backend fa il
 > parsing di *quel* modello. Numeri visti su nemotron o gemma non dicono nulla su
 > un modello nuovo. L'autorità è il probe — il codice lo dice già a
-> [`server.ts:349`](proxy/src/infrastructure/server.ts#L349).
+> [`server.ts:369`](proxy/src/infrastructure/server.ts#L369).
 
 ---
 
@@ -383,9 +388,9 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
    vuota, niente "(nessuna memoria)". Ogni token speso su una sezione vuota è
    tolto alla conversazione, e su questi modelli la finestra è la risorsa scarsa
    dell'intero progetto.
-2. **Verificare il percorso immagini.**  ← **in corso.** La traduzione dei
-   blocchi immagine → `image_url` esiste già a
-   [`requestTranslator.ts:202`](proxy/src/application/requestTranslator.ts#L202)
+2. ~~**Verificare il percorso immagini.**~~ — **fatta e provata dal vivo.** La
+   traduzione dei blocchi immagine → `image_url` esiste già a
+   [`requestTranslator.ts:204`](proxy/src/application/requestTranslator.ts#L204)
    e Claudio permette già di allegare immagini, quindi l'ipotesi era che
    funzionasse senza scrivere niente. Controllando i due punti in cui
    un'immagine attraversa codice *non* coperto dai test ne sono usciti due
@@ -507,6 +512,14 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
 - **Fino a dove seguire la CLI?** Claudio è la superficie primaria, ma la CLI
   funziona e ora ha i tool nativi interi. Ogni feature va decisa sapendo quale
   delle due serve.
+- **Quale parità serve davvero?** È la domanda che blocca §6.4 (hooks, skills,
+  MCP, sub-agent, TodoWrite, web tools, worktree). Non è una questione di costo
+  di implementazione: dipende da quale superficie usi, e la risposta cambia
+  quale metà del proxy vale la pena far crescere. Finché non c'è, il lavoro
+  utile è quello di §9.
+- **La pipeline non è più una barriera.** Dal 2026-08-27 la CI parte solo su
+  richiesta, quindi fra un commit rotto e `main` non c'è più niente di
+  automatico. Chi riprende deve saperlo prima di committare, non dopo.
 
 ---
 
@@ -533,3 +546,71 @@ Tre schemi ricorrenti, utili a chi riprende in mano il codice:
 - **Misurare, non dedurre.** Le capacità dei modelli non si trasferiscono tra
   modelli, e i metadata dichiarati dal backend non sono affidabili. Il codice lo
   sapeva già; il modo di lavorare deve saperlo altrettanto.
+
+---
+
+## 9. Da dove ripartire
+
+Scritta il 2026-08-27, alla fine di una sessione lunga. Se stai riprendendo in
+mano il progetto dopo settimane, questa sezione è il punto di ingresso: dice
+cos'è vero oggi, cosa si può fare senza decidere niente, e cosa invece richiede
+prima una tua decisione.
+
+### Verificare in trenta secondi
+
+```bash
+cd proxy && npm test && npm run typecheck     # 315 test, ~1,0 s
+cd chat-extension && npm run typecheck
+```
+
+Niente GPU, niente LM Studio, niente rete. Se sono verdi, il codice è nello
+stato descritto qui. **La CI non parte più da sola**: `gh workflow run ci.yml
+--ref main`. Fra un commit rotto e `main` non c'è più niente di automatico, e
+questi due comandi sono il cancello.
+
+### Cos'è vero oggi
+
+| | Stato |
+|---|---|
+| Fase 0 (pulizia, probe, guard) | chiusa |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 315 test |
+| Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
+| Fase 3.1 memoria cross-sessione | fatta |
+| Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |
+| Fase 3.3 tool call testuali | misurato: fantasma, nessun parser scritto |
+| Fase 3.4 parità con Claude Code | **ferma su una decisione tua**, vedi §7 |
+
+Restano tre *decisioni* registrate in §5 (il mapping di `tool_choice: "any"`, lo
+stream troncato senza `[DONE]`, le virgolette dentro `old_string` in Path B) e
+quelle di §7. Ognuna ha un test che fissa il comportamento di oggi: non sono
+buchi, sono scelte.
+
+### Lavoro utile che non richiede decisioni
+
+In ordine di resa, e nessuno dei tre è grande:
+
+1. **Coprire lo `slashCommandInterceptor`** — otto comandi lato proxy, diversi
+   dei quali lanciano `git`. La suite di routing verifica *che* un comando sia
+   stato intercettato, non cosa fa ciascuno. È il primo nome rimasto nella lista
+   di [testing.md](proxy/docs/testing.md#not-covered-yet).
+2. **Coprire `buildWorkspaceContextSummary`** (`workspaceTool.ts`) — lo snapshot
+   statico su cui Path B si appoggia. Se mente, Path B lavora su una mappa
+   sbagliata e nessuno se ne accorge.
+3. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
+   di §2 valgono per *quel* modello: tetto dei tool, thinking, finestra. Non
+   trasferirli.
+
+### Trappole che questo repo ha già pagato
+
+- **Un test che non può fallire** occupa il posto di quello mancante. Ogni test
+  nuovo va visto fallire.
+- **Un controllo negativo che torna verde** può voler dire che il test è debole
+  *oppure* che il controllo non ha introdotto il bug. È capitato due volte, la
+  seconda per un'indentazione sbagliata in un `perl -0pi`. Verifica il controllo
+  prima del test.
+- **Un fake più indulgente della realtà.** Dove un fake sostituisce un file su
+  disco o una risposta del backend, almeno un test deve leggere l'artefatto
+  vero. Tre bug trovati così, l'ultimo il 2026-08-27: il prompt spedito non
+  nominava l'azione `python`.
+- **Il backend rifiuta più di quanto sembri.** Un `tool_calls` con `arguments`
+  che non è la stringa di un oggetto JSON dà 500. Misurato, non dedotto.

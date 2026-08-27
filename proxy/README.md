@@ -906,7 +906,8 @@ was launched by Claudio, in the extension's output channel.
       domain/              Pure types, entities and ports. No I/O, no Node imports
         types.ts             Anthropic/OpenAI shapes, SSE event names, enums
         i18n.ts              t() — flat key lookup, returns the key on a miss
-        entities/            workspaceAction, existingPlan
+        entities/            workspaceAction (actions, ActionOutcome, ActionEnv),
+                             existingPlan
         ports/               llmClient, sseWriter, logger, clock, approvalInteractor,
                              planFileRepository, promptRepository
       application/         Translation and orchestration. Depends on ports only
@@ -918,7 +919,8 @@ was launched by Claudio, in the extension's output channel.
         workspaceTool.ts       list/read/grep/glob/write/edit/bash/python definitions
         textualAgentLoop.ts    Path B — XML-tag actions for models with no tool support
         services/              nativeAgentLoopService (Path A), approvalGateService,
-                               systemPromptBuilder, contextCompactor
+                               systemPromptBuilder, contextCompactor,
+                               actionOutcome (where an action's image goes)
         useCases/              handleChatMessage (the routing decision), resolveApproval
       infrastructure/      Everything that touches the outside world
         server.ts              node:http routing: /v1/messages, /v1/messages/:id/approve,
@@ -929,7 +931,8 @@ was launched by Claudio, in the extension's output channel.
         toolLimitDetector.ts   Probe orchestration + cache read/write
         thinkingProbe.ts       Detects whether reasoning is emitted and suppressible
         pythonExecutor.ts      Auto-managed venv for the python action
-        workspaceActions.ts    Filesystem and shell execution
+        workspaceActions.ts    Filesystem and shell execution (bash and grep spawn
+                               asynchronously; savePlot writes a figure to disk)
         persistentCache.ts     model-cache.json
         adapters/              fetchLlmClient, nodeSseWriter, sseApprovalInteractor,
                                fsMemoryRepository,

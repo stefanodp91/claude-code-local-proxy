@@ -84,6 +84,8 @@ sh start_agent_cli.sh
 - **Unsupported-tools guard** — A CLI request carrying tools to a model that failed the probe is refused with a readable HTTP 400, instead of firing 40 tool definitions at a model that could not handle one
 - **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
 - **Cross-session memory** — `.claudio/MEMORY.md` (set by `MEMORY_FILE`) is prepended to the system prompt when present, so a decision made last week survives a restart. The model updates it through the ordinary `write` action, so updates pass the approval gate like any other
+- **Images, both directions** — an attached screenshot reaches a vision model as an image (and is charged a nominal token cost rather than measured as base64 prose, which used to make one attachment blow the whole context window). A figure drawn by the `python` action goes back to the model as an image and is written to `PYTHON_PLOT_DIR` (`.claudio/plots`) so a person can open it. Verified end to end against `qwen/qwen3.8-27b`
+- **Non-blocking shell** — `bash` and `grep` spawn asynchronously, with their own timeout, kill and output cap; nothing else in the process waits for a 30-second command
 - **i18n** — Externalized log/error messages with `{{param}}` interpolation
 - **Zero runtime dependencies** — `dependencies` is `{}`; only Node built-ins at runtime
 
@@ -226,7 +228,14 @@ were built with. Read it before changing anything in `proxy/`.
 
 [PLAN.md](PLAN.md) is the honest account: the two surfaces and how they differ,
 what was measured on the current model rather than assumed, what is done, and
-what comes next in priority order. It is written in Italian.
+what comes next in priority order. It is written in Italian. If you are coming
+back after a break, its **§9 — Da dove ripartire** is the shortest path back in:
+what is true today, what can be worked on without deciding anything first, and
+the traps this repo has already paid for.
+
+As of 2026-08-27: phases 0, 1 and 2 are closed, phase 3 is done through its
+third item, and the only thing waiting is a decision about which Claude Code
+features are worth chasing on a local model. 315 tests, ~1.0 s.
 
 ---
 

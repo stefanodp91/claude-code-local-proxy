@@ -29,7 +29,7 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 │                        INFRASTRUCTURE                               │
 │                                                                     │
 │  main.ts             Composition root: config → probes → listen     │
-│  server.ts           HTTP router + wiring (416 lines)               │
+│  server.ts           HTTP router + wiring (437 lines)               │
 │  config.ts           Environment variable parsing → ProxyConfig     │
 │  logger.ts           Logger implements ILogger port                 │
 │  modelInfo.ts        LM Studio /api/v0/models fetcher               │
@@ -86,11 +86,12 @@ The codebase follows hexagonal (clean) architecture with three layers. Dependenc
 | **Application** | `src/application/services/nativeAgentLoopService.ts` | Path A agent loop (native tool_calls). Every iteration streams; iteration 0 additionally acts as the fallback guard |
 | **Application** | `src/application/services/approvalGateService.ts` | Approval state machine: ask / auto / plan modes, trusted-file tracking, auto-approve allowlist |
 | **Application** | `src/application/services/systemPromptBuilder.ts` | System prompt construction via `PromptRepositoryPort` + `PlanFileRepositoryPort` |
-| **Application** | `src/application/services/contextCompactor.ts` | Trims the conversation to fit the context window: semantic summary, naive drop, and the tool-pairing repair both leave behind |
+| **Application** | `src/application/services/contextCompactor.ts` | Trims the conversation to fit the context window: semantic summary, naive drop, and the tool-pairing repair both leave behind. Images are charged a flat nominal cost rather than measured as base64 prose |
+| **Application** | `src/application/services/actionOutcome.ts` | Where an action's image goes: the tool result stays text, the picture rides in a user message after every result (Path A) or inside the `<observation>` (Path B), and only when the model reports `type: "vlm"` |
 | **Application** | `src/application/useCases/handleChatMessageUseCase.ts` | Full `POST /v1/messages` orchestration: slash intercept → system prompt → compaction → translate → route → stream |
 | **Application** | `src/application/useCases/resolveApprovalUseCase.ts` | `POST /v1/messages/:id/approve` — parse scope, delegate to `ApprovalInteractorPort` |
-| **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash/python, path safety, bash timeout |
-| **Infrastructure** | `src/infrastructure/server.ts` | HTTP router and wiring (416 lines): `/v1/messages`, `/v1/messages/:id/approve`, `/v1/exec-python`, `/health`, `/config`, `/commands`, `/agent-mode`. Zero business logic — all decisions live in the application layer |
+| **Infrastructure** | `src/infrastructure/workspaceActions.ts` | Shared action backend: list/read/grep/glob/write/edit/bash/python, path safety through `safeResolvePath()`, `bash` and `grep` spawned asynchronously with their own timeout and output cap, and `savePlot()` writing a figure into the workspace |
+| **Infrastructure** | `src/infrastructure/server.ts` | HTTP router and wiring (437 lines): `/v1/messages`, `/v1/messages/:id/approve`, `/v1/exec-python`, `/health`, `/config`, `/commands`, `/agent-mode`. Zero business logic — all decisions live in the application layer |
 | **Infrastructure** | `src/infrastructure/toolLimitDetector.ts` | Three-tier strategy for `maxTools`: config override → persistent cache → live probe |
 | **Infrastructure** | `src/infrastructure/adapters/fetchLlmClient.ts` | `LlmClientPort` implementation via global `fetch()` |
 | **Infrastructure** | `src/infrastructure/adapters/nodeSseWriter.ts` | `SseWriterPort` implementation via Node.js `ServerResponse` |
@@ -278,7 +279,7 @@ When a client sends the `X-Workspace-Root` header, the proxy gives the LLM acces
 
 ### Workspace Tool Definition
 
-A single tool slot with `action` as a discriminator (defined in [workspaceActions.ts:96-160](../src/infrastructure/workspaceActions.ts#L96-L160)):
+A single tool slot with `action` as a discriminator (defined in [`domain/entities/workspaceAction.ts`](../src/domain/entities/workspaceAction.ts), re-exported by `workspaceActions.ts` for older imports):
 
 ```typescript
 {

@@ -51,18 +51,20 @@ proxy/test/
   fakes.ts                     shared test doubles — not a test file
   i18n.test.ts                  5 tests — locale integrity
   toolProbe.test.ts             8 tests — probe outcome triage
-  approvalGate.test.ts         20 tests — the write/edit/bash/python gate
-  requestTranslator.test.ts    25 tests — Anthropic → OpenAI
+  fsMemoryRepository.test.ts    8 tests — reading the cross-session memory file
+  systemPromptBuilder.test.ts  12 tests — what every request is prefixed with
+  actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
+  approvalGate.test.ts         20 tests — the write/edit/bash/python gate
+  textualAgentLoop.test.ts     20 tests — Path B, the XML-tag loop
+  handleChatMessage.test.ts    21 tests — the routing decision itself
+  autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
   streamTranslator.test.ts     23 tests — the SSE state machine
   toolManager.test.ts          23 tests — selection, overflow, promotion decay
-  autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
-  workspaceActions.test.ts     34 tests — the filesystem and shell backend
-  textualAgentLoop.test.ts     20 tests — Path B, the XML-tag loop
-  nativeAgentLoop.test.ts      22 tests — Path A, the native tool-call loop
-  contextCompactor.test.ts     20 tests — trimming a conversation to fit the window
-  systemPromptBuilder.test.ts  11 tests — what every request is prefixed with
-  fsMemoryRepository.test.ts    8 tests — reading the cross-session memory file
+  contextCompactor.test.ts     24 tests — trimming a conversation to fit the window
+  requestTranslator.test.ts    25 tests — Anthropic → OpenAI
+  nativeAgentLoop.test.ts      29 tests — Path A, the native tool-call loop
+  workspaceActions.test.ts     44 tests — the filesystem and shell backend
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
