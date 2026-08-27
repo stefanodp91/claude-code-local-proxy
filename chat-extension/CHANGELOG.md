@@ -5,6 +5,55 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — 2026-08-27
+
+### Added — The extension has tests (52), and the approval handshake was run for real
+
+- **From zero.** `package.json` had no `test` script at all: 2 090 lines of
+  extension host and an Angular webview, verified by `tsc --noEmit` and nothing
+  else. The proxy went from 0 to 348 tests over the same period; this side had
+  stayed at 0, and it is the surface the user actually touches.
+
+- **41 host tests** — the SSE parser (a frame split across chunks, one character
+  at a time, a stream that ends without its blank line), the proxy client (the
+  workspace header that *selects the agent loop at all*, the plan-exit header,
+  the thinking flag, an approval posted to the right id with the right scope),
+  the health poller (every status transition, and that `stop()` really stops),
+  and `chat-session`'s approval bridge.
+
+- **11 webview tests** — `StreamingService` reassembling deltas into the message
+  on screen: text and thinking kept apart, a tool call's arguments accumulated
+  across fragments, a stream that ends without `message_stop` still finalising
+  rather than leaving a spinner for ever.
+
+- **`node:test` + `tsx`, the proxy's runner**, so the repo has one way of writing
+  tests rather than two. `vscode` resolves to `test/stubs/vscode.ts` through
+  `tsconfig.test.json` only: `npm run typecheck` still checks the host against
+  the real `@types/vscode`, so a call that does not exist still fails there.
+
+- **What this does not cover, stated rather than implied:** no Angular template
+  is ever rendered. That needs a browser environment and a second runner, and
+  the choice was to keep one.
+
+- **`scripts/approval-e2e.ts`** drives the real handshake against a running proxy
+  and a loaded model, using the shipped `ProxyClient` and simulating only the
+  click. Verified 2026-08-27 against `qwen/qwen3.8-27b`: an approved write lands
+  on disk, a denied one writes nothing and the model says so, `scope: "turn"`
+  raises one modal for two writes, and an unknown approval id neither throws nor
+  hangs. It needs a live backend, so it cannot run in CI — the extension's
+  `regression.sh`.
+
+- Negative control on five fronts, each failing narrowly: dropping the SSE
+  partial-frame buffer, resolving any pending approval regardless of id,
+  dropping the scope on the way to the proxy, dropping the workspace header, and
+  removing the webview's `ngOnDestroy` unsubscribe.
+
+- One test was wrong before the code was: it assumed two approval modals could
+  be open at once. The stream *awaits* each decision, so they are strictly
+  sequential — which is the safer behaviour and now the asserted one.
+
+---
+
 ## [Unreleased] — 2026-08-26
 
 ### Documentation — cross-session memory is no longer absent

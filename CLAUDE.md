@@ -13,7 +13,7 @@ Three things in one repo, and only one of them is live work:
 | Path | What | Status |
 |---|---|---|
 | [`proxy/`](proxy/) | Anthropic → OpenAI translation proxy, 8 816 lines TS in 50 files, plus 5 303 lines of tests | **The project.** Everything below is about this |
-| [`chat-extension/`](chat-extension/) | "Claudio", a VS Code chat extension | Active, smaller |
+| [`chat-extension/`](chat-extension/) | "Claudio", a VS Code chat extension — 52 tests since 2026-08-27 | Active, smaller |
 | [`claude_code/src/`](claude_code/src/) | Leaked Claude Code CLI source (2026-03-31), 1 902 files | Reference archive. **Never modified, never imported** |
 
 The proxy serves two surfaces, and the difference decides almost everything:
@@ -39,6 +39,7 @@ repositories behind them. Counted, not estimated; recount when it matters.
 ```bash
 cd proxy && npm test         # 348 tests, ~1.0 s
 cd proxy && npm run typecheck
+cd chat-extension && npm test          # 52 tests: 41 host + 11 webview
 cd chat-extension && npm run typecheck
 ```
 
@@ -213,7 +214,13 @@ summary all have one — but startup probing, the thin adapters and the wiring
 still do not, and [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
 keeps the honest list.
 
-**Where to pick up.** The component list is now down to startup probing, the
+**Where to pick up.** Claudio has 52 tests since 2026-08-27 — the SSE parser,
+the proxy client, the approval bridge, and the webview's streaming assembly —
+plus `chat-extension/scripts/approval-e2e.ts`, which drives the real handshake
+against a running proxy the way `regression.sh` does for the proxy. No Angular
+template is rendered by any of it, deliberately: that needs a second runner.
+
+In the proxy the component list is now down to startup probing, the
 thin adapters and the wiring — worth less than it looks, because it is either
 composition or I/O a test would end up simulating. The least useless of them is
 the probe orchestration (`toolLimitDetector`), where a cache read wrongly costs

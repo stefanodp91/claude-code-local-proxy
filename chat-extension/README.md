@@ -196,6 +196,30 @@ curl http://127.0.0.1:5678/config
 
 In VS Code: apri il pannello Claudio → l'indicatore mostra `● Connected` → digita "Ciao!" → la risposta appare in streaming.
 
+### Test automatici
+
+```bash
+npm test              # 52 test: 41 host + 11 webview, ~1 s, senza VS Code
+npm run typecheck     # host contro le API vere di VS Code
+npm run typecheck:test  # test, con `vscode` risolto sullo stub
+```
+
+Girano senza VS Code, senza proxy e senza modello. Coprono la **logica**: il
+parser SSE, il client del proxy, il bridge di approvazione e l'assemblaggio dei
+messaggi in streaming lato webview. **Nessun template Angular viene renderizzato**
+— servirebbe Karma o jsdom, cioè un secondo runner; la scelta è stata di non
+averlo, e questa riga esiste perché il limite sia dichiarato invece che scoperto.
+
+Quello che i test non possono vedere è il handshake vero con il proxy:
+
+```bash
+cd proxy && npm start                              # in un altro terminale
+npx tsx scripts/approval-e2e.ts /tmp/scratch-ws    # richiede LM Studio acceso
+```
+
+È l'equivalente di `proxy/scripts/regression.sh`: richiede un backend vivo,
+quindi non gira in CI.
+
 ---
 
 ## Troubleshooting

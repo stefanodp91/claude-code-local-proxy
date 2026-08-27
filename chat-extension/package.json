@@ -7,7 +7,9 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Chat"],
+  "categories": [
+    "Chat"
+  ],
   "main": "./dist/extension.js",
   "activationEvents": [],
   "contributes": {
@@ -68,12 +70,18 @@
     "build": "npm run build:webview && npm run build:extension",
     "watch:extension": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "package": "npx @vscode/vsce package --no-dependencies --allow-missing-repository --baseContentUrl https://localhost"
+    "pretest": "node --input-type=module -e \"import{globSync}from'node:fs';const f=globSync('test/**/*.test.ts');if(!f.length){console.error('No test files matched test/**/*.test.ts. node --test exits 0 when it finds nothing, so this check exists to stop an empty run from looking like a passing one.');process.exit(1);}console.log('discovered '+f.length+' test file(s)');\"",
+    "test": "npm run test:host && npm run test:webview",
+    "package": "npx @vscode/vsce package --no-dependencies --allow-missing-repository --baseContentUrl https://localhost",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "test:host": "TSX_TSCONFIG_PATH=tsconfig.test.json node --import tsx --test \"test/**/*.test.ts\"",
+    "test:webview": "cd src/webview-ui && npm test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.85.0",
     "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
 }
