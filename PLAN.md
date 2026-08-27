@@ -119,7 +119,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **360 test**, ~1,0 s, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **381 test**, ~1,1 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -282,7 +282,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 360 test / ~1,0 s, senza GPU e senza rete.
+`npm test` in 381 test / ~1,1 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -510,8 +510,10 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
    comando. Il loop ora lo dice al modello e chiede di rimandare la chiamata,
    invece di eseguire `list .` al posto suo.
 
-4. Il resto (hooks, skills, MCP, sub-agent, TodoWrite, web tools, worktree) è
-   parità con Claude Code, costoso e di resa modesta su un 27B locale.
+4. **Parità con Claude Code — decisa, vedi §7.** Si fanno TodoWrite + Skills,
+   poi Hooks, poi MCP, in quest'ordine e tutte dentro il loop del proxy (cioè
+   per Claudio: sulla CLI ci pensa già Claude Code). Restano fuori sub-agent,
+   web tools e worktree: costano quanto le altre e rendono meno su un 27B.
 
 ---
 
@@ -524,11 +526,34 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
 - **Fino a dove seguire la CLI?** Claudio è la superficie primaria, ma la CLI
   funziona e ora ha i tool nativi interi. Ogni feature va decisa sapendo quale
   delle due serve.
-- **Quale parità serve davvero?** È la domanda che blocca §6.4 (hooks, skills,
-  MCP, sub-agent, TodoWrite, web tools, worktree). Non è una questione di costo
-  di implementazione: dipende da quale superficie usi, e la risposta cambia
-  quale metà del proxy vale la pena far crescere. Finché non c'è, il lavoro
-  utile è quello di §9.
+- ~~**Quale parità serve davvero?**~~ — **decisa il 2026-08-27.** Entrambe le
+  superfici servono, a seconda del compito: Claudio per l'iterazione
+  nell'editor, la CLI per i lavori lunghi. E si costruiscono **TodoWrite +
+  Skills, Hooks e MCP**, in quest'ordine.
+
+  La conseguenza va detta perché non è ovvia: **tutte e tre vivono nel loop del
+  proxy, quindi servono solo Claudio.** Claude Code le implementa già di suo, e
+  sulla CLI il proxy resta un traduttore che non deve fare niente di nuovo.
+  Costruirle significa far raggiungere a Claudio quello che la CLI ha già — che
+  è una scelta legittima, dato che metà del lavoro si fa lì dentro, ma non è
+  "aggiungere capacità al progetto": è aggiungerle a *una* delle due superfici.
+
+  L'ordine è per costo crescente e per quanto aiutano un modello piccolo:
+
+  1. **TodoWrite** — una lista di task che il modello mantiene fra le
+     iterazioni. È ciò che gli impedisce di perdere il filo su un compito lungo,
+     ed è la voce più economica della lista.
+  2. **Skills** — pacchetti di istruzioni caricati *solo quando servono*: la
+     finestra di contesto è la risorsa scarsa dell'intero progetto, e questo è
+     l'unico modo di spendere prompt su ciò che conta davvero adesso.
+  3. **Hooks** — comandi dell'utente su evento (lint dopo `write`, test dopo
+     `edit`). Sposta lavoro dal modello a comandi deterministici, che su un 27B
+     è spesso la mossa giusta. Va progettato *con* il gate di approvazione: senza,
+     è una via per eseguire comandi senza chiedere.
+  4. **MCP** — il modello che usa server esterni. Massimo valore potenziale e di
+     gran lunga il costo maggiore: il proxy diventa un client MCP, con handshake,
+     scoperta dei tool e ciclo di vita — e ogni tool scoperto compete per i pochi
+     slot che il modello regge. Ultima proprio per questo.
 - **La pipeline non è più una barriera.** Dal 2026-08-27 la CI parte solo su
   richiesta, quindi fra un commit rotto e `main` non c'è più niente di
   automatico. Chi riprende deve saperlo prima di committare, non dopo.
@@ -571,7 +596,7 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
-cd proxy && npm test && npm run typecheck     # 360 test, ~1,0 s
+cd proxy && npm test && npm run typecheck     # 381 test, ~1,1 s
 cd chat-extension && npm run typecheck
 ```
 
@@ -585,7 +610,7 @@ questi due comandi sono il cancello.
 | | Stato |
 |---|---|
 | Fase 0 (pulizia, probe, guard) | chiusa |
-| Fase 1 (rete di sicurezza) | chiusa — da 0 a 360 test |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 381 test |
 | Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
 | Fase 3.1 memoria cross-sessione | fatta |
 | Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |

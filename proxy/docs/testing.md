@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 360 tests, ~1.0 s
+npm test          # 381 tests, ~1.1 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -54,6 +54,7 @@ proxy/test/
   toolProbe.test.ts             8 tests — probe outcome triage
   workspaceTool.test.ts         9 tests — the static summary Path B leans on
   planExitInjection.test.ts    12 tests — handing an approved plan back to the model
+  startupDetectors.test.ts     21 tests — what the model can do, decided once at startup
   systemPromptBuilder.test.ts  12 tests — what every request is prefixed with
   actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
@@ -387,6 +388,31 @@ backend exposes no metadata — a guess would be worse), and the four ways the
 backend's answer comes back: an error with its status, a connection that never
 opened (502, never status 0), a backend that ignores `stream: true` and replies
 JSON, and a streamed answer.
+
+---
+
+## `0` and `false` are answers
+
+`ToolLimitDetector` and `ThinkingDetector` each ask a question that costs real
+time — a binary search over live requests, and two more requests after it — and
+cache the answer under the model's id. Everything downstream stands on those
+numbers: `maxTools` chooses Path A or Path B, and the thinking flags decide
+whether Claudio offers a toggle that does anything.
+
+The failures are quiet in opposite directions. A cache that is not read means
+probing on every launch, which nobody reports as a bug — the proxy just feels
+slow to start. A cache read *wrongly* is worse, and the interesting values are
+the falsy ones: `maxTools: 0` is the probe saying "this model could not manage a
+single tool", and `supportsThinking: false` is a measured answer, not a missing
+one. Both files check `!== undefined` for exactly that reason, and the suite
+pins it: reverting either to a truthiness check fails precisely the tests about
+zero and false.
+
+`fetch` is stubbed and **counted** here, because "the expensive path was skipped"
+is the property and a call count is the only way to see it. The probes have their
+own suites; this one is about the orchestration around them — including that the
+two detectors write into the same cache record and must not overwrite each
+other's half.
 
 ---
 
@@ -903,6 +929,10 @@ tests fail — and fail *narrowly*:
 | Contain the plan path with `startsWith` again | Sibling-prefix test fails | exactly 1 fails |
 | Skip block-array messages when injecting a plan | Attachment tests fail | exactly 2 fail |
 | Prepend the plan with no instruction | Preamble test fails | exactly 1 fails |
+| Read a cached `maxTools` by truthiness | Cached-zero test fails | exactly 1 fails |
+| Read the cached thinking flags by truthiness | Cached-false and partial-cache tests fail | exactly 2 fail |
+| Make `merge` replace instead of merge | Write-back tests fail | exactly 3 fail |
+| Run the second thinking probe unconditionally | No-reasoning test fails | exactly 1 fails |
 | List every top-level entry again | Listing-cap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
@@ -979,8 +1009,8 @@ Counted honestly, these have no suite:
 
 | Uncovered | Why it matters, or does not |
 |---|---|
-| `modelInfo`, `thinkingProbe`, `thinkingDetector`, `toolLimitDetector` | Startup probing. `toolProbe` itself is covered; its orchestration is not |
-| `persistentCache`, `i18nLoader`, `pythonExecutor` | Infrastructure with real I/O |
+| `modelInfo`, `thinkingProbe` | Reading LM Studio's metadata, and the thinking probe itself. Their *orchestration* — the detectors and the cache under them — is covered |
+| `i18nLoader`, `pythonExecutor` | Infrastructure with real I/O |
 | The adapters (`fetchLlmClient`, `nodeSseWriter`, `fsPromptRepository`, `fsPlanFileRepository`, `sseApprovalInteractor`) | Thin by design; the ports they implement are exercised through fakes everywhere else |
 | `server.ts`, `main.ts` | Wiring and composition |
 
