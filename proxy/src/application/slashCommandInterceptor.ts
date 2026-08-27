@@ -89,10 +89,15 @@ export class SlashCommandInterceptor {
     const lastMsg = request.messages.at(-1);
     if (!lastMsg || lastMsg.role !== "user") return { type: "passthrough" };
 
+    // The first *text* block, not the first block. An attachment arrives ahead
+    // of its caption, so reading index 0 and stopping means a command typed
+    // alongside an image is silently forwarded to the model as prose.
     const raw: string =
       typeof lastMsg.content === "string"
         ? lastMsg.content
-        : (lastMsg.content?.[0]?.text as string | undefined) ?? "";
+        : (Array.isArray(lastMsg.content)
+            ? (lastMsg.content.find((b: any) => typeof b?.text === "string")?.text as string | undefined)
+            : undefined) ?? "";
 
     const trimmed = raw.trim();
     if (!trimmed.startsWith("/")) return { type: "passthrough" };

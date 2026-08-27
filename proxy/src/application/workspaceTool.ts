@@ -1,97 +1,44 @@
 /**
- * workspaceTool.ts — Workspace file-system tool for LLM-driven code exploration.
+ * workspaceTool.ts — the static workspace summary for models without tools.
  *
- * Provides:
- * - WORKSPACE_TOOL_DEF: OpenAI tool schema (single tool, 1 slot)
- * - executeWorkspaceTool(): execute list/read calls from the LLM
- * - buildWorkspaceContextSummary(): static summary for models without tool support
+ * One export: `buildWorkspaceContextSummary()`, injected into the system prompt
+ * on Path B, where the model cannot look at anything for itself.
+ *
+ * It used to carry two more — a second `WORKSPACE_TOOL_DEF` offering only
+ * `list` and `read`, and an `executeWorkspaceTool()` that implemented them with
+ * a fourth private copy of the containment check. Nothing imported either: the
+ * real schema lives in `domain/entities/workspaceAction.ts` with nine actions,
+ * and execution lives in `infrastructure/workspaceActions.ts`. A stale duplicate
+ * of a schema is not harmless — it is one wrong import away from telling a model
+ * it has two actions when it has nine — so it is gone.
  *
  * @module application/workspaceTool
  */
 
-import { readFileSync, readdirSync, existsSync, statSync } from "node:fs";
-import { resolve, join } from "node:path";
-
-const MAX_FILE_BYTES = 50_000;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tool definition (OpenAI schema)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const WORKSPACE_TOOL_DEF = {
-  type: "function",
-  function: {
-    name: "workspace",
-    description:
-      "Access files in the current workspace. " +
-      "Use action='list' to list the contents of a directory, " +
-      "action='read' to read the content of a file.",
-    parameters: {
-      type: "object",
-      properties: {
-        action: { type: "string", enum: ["list", "read"] },
-        path: {
-          type: "string",
-          description:
-            "Path relative to the workspace root (e.g. '.', 'src/components', 'package.json').",
-        },
-      },
-      required: ["action", "path"],
-    },
-  },
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Tool execution
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Execute a workspace tool call from the LLM.
- * Returns a string result suitable for use as a tool_result message.
- */
-export function executeWorkspaceTool(
-  args: { action: string; path: string },
-  workspaceCwd: string,
-): string {
-  const safePath = safeResolve(args.path, workspaceCwd);
-  if (!safePath) return "Error: path is outside workspace root";
-
-  if (args.action === "list") {
-    try {
-      const entries = readdirSync(safePath, { withFileTypes: true });
-      if (entries.length === 0) return "(empty directory)";
-      return entries
-        .map((e) => `${e.isDirectory() ? "[dir]" : "[file]"} ${e.name}`)
-        .join("\n");
-    } catch (err) {
-      return `Error listing directory: ${String(err)}`;
-    }
-  }
-
-  if (args.action === "read") {
-    try {
-      const stat = statSync(safePath);
-      if (stat.isDirectory()) return "Error: path is a directory — use action='list'";
-      const raw = readFileSync(safePath, "utf-8");
-      if (raw.length > MAX_FILE_BYTES) {
-        return raw.slice(0, MAX_FILE_BYTES) + `\n\n[file truncated at ${MAX_FILE_BYTES} bytes]`;
-      }
-      return raw;
-    } catch (err) {
-      return `Error reading file: ${String(err)}`;
-    }
-  }
-
-  return `Error: unknown action '${args.action}'`;
-}
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Option B — static context summary (for models without tool support)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** How many top-level entries the summary lists before saying "and N more". */
+const MAX_SUMMARY_ENTRIES = 60;
+
 /**
  * Build a static workspace summary to inject into the system prompt
  * when the model does not support tool calling.
+ *
+ * Two things this owes the reader, both learned the hard way elsewhere in this
+ * project:
+ *
+ * - **It never comes back silently empty.** On Path B this summary is all the
+ *   model knows about the workspace; an unreadable root used to produce an
+ *   empty string, and the model then answered about a project it had never been
+ *   shown. It now says it could not look.
+ * - **It is bounded.** It is injected into every system prompt of the turn, and
+ *   the context window is the scarce resource here. A directory with hundreds
+ *   of entries would spend the conversation's budget on file names.
  */
 export function buildWorkspaceContextSummary(workspaceCwd: string): string {
   const lines: string[] = [];
@@ -100,10 +47,15 @@ export function buildWorkspaceContextSummary(workspaceCwd: string): string {
   try {
     const entries = readdirSync(workspaceCwd, { withFileTypes: true });
     lines.push("Workspace structure (top level):");
-    for (const e of entries) {
+    for (const e of entries.slice(0, MAX_SUMMARY_ENTRIES)) {
       lines.push(`  ${e.isDirectory() ? "[dir]" : "[file]"} ${e.name}`);
     }
-  } catch {}
+    if (entries.length > MAX_SUMMARY_ENTRIES) {
+      lines.push(`  … and ${entries.length - MAX_SUMMARY_ENTRIES} more entries (use an action to look)`);
+    }
+  } catch (err) {
+    lines.push(`Workspace structure: could not be listed (${String(err)})`);
+  }
 
   // package.json
   const pkgPath = join(workspaceCwd, "package.json");
@@ -134,16 +86,4 @@ export function buildWorkspaceContextSummary(workspaceCwd: string): string {
   }
 
   return lines.join("\n");
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Security helper
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Resolve a relative path and ensure it stays within workspaceCwd. */
-function safeResolve(relativePath: string, workspaceCwd: string): string | null {
-  const resolved = resolve(workspaceCwd, relativePath);
-  // Must start with workspaceCwd followed by separator or be exactly workspaceCwd
-  if (resolved !== workspaceCwd && !resolved.startsWith(workspaceCwd + "/")) return null;
-  return resolved;
 }
