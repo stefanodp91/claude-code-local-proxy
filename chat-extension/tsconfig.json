@@ -3,9 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022", "dom"],
+    "lib": [
+      "ES2022",
+      "dom"
+    ],
     "outDir": "./dist",
-    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -13,6 +15,12 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/extension/**/*.ts", "src/shared/**/*.ts"],
-  "exclude": ["src/webview-ui"]
+  "include": [
+    "src/extension/**/*.ts",
+    "src/shared/**/*.ts",
+    "test/**/*.ts"
+  ],
+  "exclude": [
+    "src/webview-ui"
+  ]
 }

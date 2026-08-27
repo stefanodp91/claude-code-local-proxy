@@ -22,7 +22,7 @@ Tre cose distinte, in un solo repo:
 |---|---|---|---|
 | [`claude_code/src/`](claude_code/src/) | Sorgente leaked di Claude Code CLI (2026-03-31) | 1.902 file, 33 MB | Archivio di riferimento. Mai modificato, mai importato dal resto |
 | [`proxy/`](proxy/) | Proxy di traduzione Anthropic → OpenAI | 8.816 righe TS in 50 file, più 5.303 di test | **Il cuore del progetto** |
-| [`chat-extension/`](chat-extension/) | "Claudio", estensione VS Code | 2.074 righe host + 3.887 webview Angular 19 | Superficie primaria |
+| [`chat-extension/`](chat-extension/) | "Claudio", estensione VS Code (52 test dal 2026-08-27) | 2.074 righe host + 3.887 webview Angular 19 | Superficie primaria |
 
 Il valore vero è nel proxy: architettura esagonale con porte e adapter, e **zero
 dipendenze runtime** — solo built-in Node. Questa proprietà va difesa: rende il
@@ -610,11 +610,19 @@ In ordine di resa, e nessuno dei tre è grande:
    workspace illeggibile che produceva un riassunto **vuoto** iniettato nel
    prompt, e un elenco di primo livello senza tetto che su una directory grande
    si mangiava la finestra di contesto.
-2. **Quel che resta senza suite** è probing di avvio, adapter sottili e il
+2. ~~Claudio senza un solo test~~ — **fatto il 2026-08-27: 52 test** (41 host,
+   11 webview) con lo stesso runner del proxy, più
+   `chat-extension/scripts/approval-e2e.ts` che prova il handshake vero contro
+   un proxy acceso, come fa `regression.sh` per il proxy. Coprono il parser SSE,
+   il client, il bridge di approvazione e l'assemblaggio dei messaggi in
+   streaming. **Nessun template Angular viene renderizzato**: servirebbe un
+   secondo runner, e la scelta è stata di non averlo — scritto qui perché sia
+   dichiarato, non scoperto.
+3. **Quel che resta senza suite** è probing di avvio, adapter sottili e il
    wiring: vale meno, perché o è composizione o è I/O che un test finirebbe per
    simulare. Il candidato meno inutile è l'orchestrazione del probe
    (`toolLimitDetector`), dove una cache letta male vale un modello mutilato.
-3. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
+4. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
    di §2 valgono per *quel* modello: tetto dei tool, thinking, finestra. Non
    trasferirli.
 

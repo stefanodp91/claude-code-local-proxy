@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "vscode": [
+        "./test/stubs/vscode.ts"
+      ]
+    },
+    "noEmit": true
+  },
+  "include": [
+    "src/extension/**/*.ts",
+    "src/shared/**/*.ts",
+    "test/**/*.ts"
+  ]
+}

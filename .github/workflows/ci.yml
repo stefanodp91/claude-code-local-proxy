@@ -49,7 +49,7 @@ jobs:
         run: npm test
 
   extension:
-    name: claudio — typecheck
+    name: claudio — typecheck & tests
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,8 +65,19 @@ jobs:
 
       - run: npm ci
 
-      # Extension-host code only. The Angular webview has its own dependency
-      # tree under src/webview-ui and is not built here — add it once there is
-      # something to check beyond compilation.
+      # Extension-host code. `typecheck` resolves `vscode` to @types/vscode;
+      # `typecheck:test` resolves it to the test stub instead, so both the real
+      # API and the tests are checked.
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Typecheck tests
+        run: npm run typecheck:test
+
+      # The webview suite needs the Angular dependency tree, which lives in its
+      # own package.
+      - name: Install webview dependencies
+        run: cd src/webview-ui && npm ci
+
+      - name: Tests
+        run: npm test
