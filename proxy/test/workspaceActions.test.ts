@@ -256,6 +256,39 @@ test("glob understands brace alternation", async () => {
 // bash
 // ─────────────────────────────────────────────────────────────────────────────
 
+test("an edit that would change nothing is refused, not reported as done", async () => {
+  // Seen in the wild on Path B, 2026-08-27. The tag parser stops attributes at
+  // the first double quote, so `old_string="const label = \"hello world\""`
+  // arrives truncated to `const label = ` — and so does new_string. The two are
+  // then identical, `replace()` writes the file back unchanged, the action
+  // answers "Replaced 1 occurrence", and the model tells the user the edit
+  // landed. It did not. A write path that reports success while changing
+  // nothing is the worst shape a failure takes here.
+  put("quoted.ts", 'const label = "hello world";\n');
+
+  const out = await run({
+    action: WorkspaceAction.Edit,
+    path: "quoted.ts",
+    old_string: "const label = ",
+    new_string: "const label = ",
+  });
+
+  assert.match(out, /identical|nothing to replace|no changes/i);
+  assert.equal(readFileSync(join(ws, "quoted.ts"), "utf-8"), 'const label = "hello world";\n');
+});
+
+test("an ordinary edit still reports what it did", async () => {
+  // The guard must not swallow the normal case.
+  put("a.ts", "const x = 1;\n");
+
+  const out = await run({
+    action: WorkspaceAction.Edit, path: "a.ts", old_string: "1", new_string: "2",
+  });
+
+  assert.match(out, /Replaced 1 occurrence/);
+  assert.equal(readFileSync(join(ws, "a.ts"), "utf-8"), "const x = 2;\n");
+});
+
 test("bash runs in the workspace root", async () => {
   put("marker.txt", "");
   assert.match(await run({ action: WorkspaceAction.Bash, cmd: "ls" }), /marker\.txt/);

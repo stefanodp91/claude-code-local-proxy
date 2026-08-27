@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 315 tests, ~1.0 s
+npm test          # 318 tests, ~1.0 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -56,7 +56,7 @@ proxy/test/
   actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
   approvalGate.test.ts         20 tests — the write/edit/bash/python gate
-  textualAgentLoop.test.ts     20 tests — Path B, the XML-tag loop
+  textualAgentLoop.test.ts     21 tests — Path B, the XML-tag loop
   handleChatMessage.test.ts    21 tests — the routing decision itself
   autoApproveConfig.test.ts    22 tests — the allowlist predicate and the diff read
   streamTranslator.test.ts     23 tests — the SSE state machine
@@ -64,7 +64,7 @@ proxy/test/
   contextCompactor.test.ts     24 tests — trimming a conversation to fit the window
   requestTranslator.test.ts    25 tests — Anthropic → OpenAI
   nativeAgentLoop.test.ts      29 tests — Path A, the native tool-call loop
-  workspaceActions.test.ts     44 tests — the filesystem and shell backend
+  workspaceActions.test.ts     46 tests — the filesystem and shell backend
 ```
 
 `fakes.ts` holds the `ToolManager`, logger and config doubles the translator
@@ -384,6 +384,42 @@ backend exposes no metadata — a guess would be worse), and the four ways the
 backend's answer comes back: an error with its status, a connection that never
 opened (502, never status 0), a backend that ignores `stream: true` and replies
 JSON, and a streamed answer.
+
+---
+
+## The edit that said it had happened
+
+Path B had twenty green tests and had never been run against a real model — the
+loaded one carries 64 tools, so the textual loop never starts. Forced on with
+`MAX_TOOLS=0`, read/write/bash/edit all worked and the files landed on disk. Then
+this, asked in the plainest possible way:
+
+> In `src/quoted.ts` replace the string `"hello world"` with `"ciao mondo"` —
+> keep the double quotes.
+
+The tag parser stops an attribute at the first double quote, which was already a
+recorded limitation. What nobody had followed through is what it *produces*:
+`old_string` arrived truncated to `const label = `, `new_string` truncated to the
+same prefix, `edit` replaced a string with itself, wrote the file back byte for
+byte, and answered **"Replaced 1 occurrence"**. The model then told the user the
+change was done, quoting the new contents it had never written.
+
+A write path that reports success while changing nothing is the worst shape a
+failure takes in this project, and it needed a live model to surface: every unit
+test passes a distinct `old_string` and `new_string`, because why would you write
+one where they are equal?
+
+Two changes, both small. `edit` refuses a replacement that cannot change
+anything, and says why — including the quote limitation and the way around it.
+And `TEXTUAL_TOOL_MANUAL` now teaches that limitation, so the model can avoid it
+rather than discover it: asked again after the fix, it answered *"since the file
+contains double quotes, I'll rewrite it entirely using `write`"*, and the file on
+disk was correct.
+
+**The drift test learned something too.** It joined the prompt files and the
+manual before checking, so `python` — present in `agent-base.md`, missing from
+Path B's manual — passed. A union proves only that *somewhere* says it. Each
+artefact is now checked on its own, and the manual failed immediately.
 
 ---
 
@@ -769,6 +805,9 @@ tests fail — and fail *narrowly*:
 | Drop `python` from the shipped prompt | Schema-vs-prompt test fails | exactly 1 fails |
 | Run `list .` for a truncated call again | Truncated-call tests fail | exactly 2 fail |
 | Replay the raw arguments again | Replay tests fail | exactly 3 fail |
+| Let an edit replace a string with itself | No-op edit test fails | exactly 1 fails |
+| Drop `python` from `TEXTUAL_TOOL_MANUAL` | Schema-vs-instructions test fails | exactly 1 fails |
+| Swallow an unfinished action tag | Unfinished-tag tests fail | exactly 2 fail |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.

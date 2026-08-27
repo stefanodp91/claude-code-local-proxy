@@ -18,6 +18,42 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 > event loop, and CI stopped running on every commit. Test count over the
 > session: 257 → 315.
 
+### Fixed — An `edit` that changed nothing reported success
+
+Found by running Path B against a real model for the first time. It had twenty
+green tests and no live run — the loaded model carries 64 tools, so the textual
+loop never starts unless it is forced with `MAX_TOOLS=0`.
+
+- **The failure.** Asked to replace `"hello world"` with `"ciao mondo"`, the model
+  emitted an `edit` whose attributes stopped at the first double quote — a
+  recorded limitation of the tag grammar. What nobody had followed through is
+  what it produces: `old_string` and `new_string` both truncated to the same
+  prefix, `edit` replacing a string with itself, the file written back byte for
+  byte, and the action answering **"Replaced 1 occurrence"**. The model then told
+  the user the change was done and quoted contents it had never written.
+
+- `edit` now refuses a replacement that cannot change anything and says why,
+  including the quote limitation and the way around it. No unit test had caught
+  it because every one of them passes a distinct `old_string` and `new_string`.
+
+- **`TEXTUAL_TOOL_MANUAL` now teaches the limitation**, so the model can avoid it
+  instead of discovering it. Asked again after the fix: *"since the file contains
+  double quotes, I'll rewrite it entirely using `write`"* — and the file on disk
+  was right. It also teaches `python`, which it had never mentioned.
+
+- **The drift test was weaker than it looked.** It joined the prompt files and
+  the manual before checking, so `python` passed on the strength of
+  `agent-base.md` alone while Path B's manual still lacked it. Each artefact is
+  checked separately now, and the manual failed at once.
+
+- An unfinished action tag reaching the user as text is pinned as a decision
+  rather than left to drift: showing it is deliberate, since the alternative is
+  silently dropping what the model was in the middle of saying.
+
+- 4 tests; `npm test` is now 318. Negative control: allowing the no-op edit fails
+  exactly 1, dropping `python` from the manual fails exactly 1, swallowing an
+  unfinished tag fails exactly 2.
+
 ### Fixed — The prompt never mentioned `python`, and a cut-off call ran the wrong action
 
 Both found by measuring how often the model writes tool calls as plain text

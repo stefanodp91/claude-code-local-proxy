@@ -21,7 +21,7 @@
 
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runTextualAgentLoop, type TextualApprovalGate } from "../src/application/textualAgentLoop";
@@ -421,4 +421,23 @@ test("an LLM error ends the turn cleanly instead of hanging the client", async (
   const out = events();
   assert.equal(out.at(-1)?.type, "message_stop");
   assert.match(JSON.stringify(out), /500|fire|error/i);
+});
+
+test("a tag the model never finished is shown, not swallowed", async () => {
+  // Seen live on 2026-08-27: a turn ended mid-tag and the opening
+  // `<action name="write" path="src/quoted.ts">` reached the user as text. It
+  // looks like a bug and is the deliberate choice — the alternative is a turn
+  // that silently drops what the model was in the middle of saying, which is
+  // this project's own failure mode. Pinned here so the choice stays a choice:
+  // if it ever becomes "explain it in prose instead", this test changes on
+  // purpose rather than by accident.
+  const { events } = await drive([[
+    "Rewriting the file.\n",
+    '<action name="write" path="a.txt">\npartial body, no closing tag',
+  ]]);
+
+  const text = textOf(events);
+  assert.match(text, /Rewriting the file\./);
+  assert.match(text, /<action name="write"/, "the unfinished tag was dropped instead of shown");
+  assert.equal(existsSync(join(ws, "a.txt")), false, "an unfinished tag must not write anything");
 });
