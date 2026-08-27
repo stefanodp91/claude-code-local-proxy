@@ -419,6 +419,13 @@ into a known one:
   wrote the list as its third action, worked through all six, and rewrote it at
   the end with every box ticked. All five files edited, the README created.
 
+**And an assertion that was theatre.** The "no path" test also checked that
+`ws/../../etc/passwd` did not exist — which on a Linux runner *is* `/etc/passwd`,
+true on every machine alive. It passed locally only because `mkdtemp` lands
+deeper on macOS. CI caught it, and it is worth naming because it reads like
+coverage: the fix asserts what the action actually did — the list is where it
+belongs and the workspace contains nothing else.
+
 **And a control that came back green found a real gap.** Removing the
 "empty list injects nothing" guard changed nothing, because the suite tested the
 *repository* returning null and never the *builder* turning that into an empty

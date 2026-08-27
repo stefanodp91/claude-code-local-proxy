@@ -20,7 +20,7 @@
 
 import { test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import { executeAction } from "../src/infrastructure/workspaceActions";
@@ -126,9 +126,15 @@ test("the action carries no path, which is why it needs no approval", async () =
     path: "../../etc/passwd",
   } as Partial<ActionArgs>);
 
+  // Assert what the action did, not that a system file is missing. The first
+  // version of this checked `existsSync(ws + "/../../etc/passwd")`, which on a
+  // Linux runner resolves to /etc/passwd and is true on every machine alive —
+  // it passed on macOS only because mkdtemp lands somewhere deeper there. CI
+  // caught it; theatre in an assertion is worse than no assertion, because it
+  // reads like coverage.
   assert.match(onDisk(), /- \[ \] x/, "the list did not go where it belongs");
-  assert.equal(existsSync(join(ws, "..", "..", "etc", "passwd")), false);
-  assert.equal(out.text.includes("passwd"), false);
+  assert.deepEqual(readdirSync(ws), [".claudio"], "the action wrote something else as well");
+  assert.equal(out.text.includes("passwd"), false, "the path was echoed back as if it meant something");
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
