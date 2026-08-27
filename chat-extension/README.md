@@ -199,7 +199,7 @@ In VS Code: apri il pannello Claudio → l'indicatore mostra `● Connected` →
 ### Test automatici
 
 ```bash
-npm test              # 52 test: 41 host + 11 webview, ~1 s, senza VS Code
+npm test              # 62 test: 51 host + 11 webview, ~13 s, senza VS Code
 npm run typecheck     # host contro le API vere di VS Code
 npm run typecheck:test  # test, con `vscode` risolto sullo stub
 ```
@@ -213,8 +213,9 @@ averlo, e questa riga esiste perché il limite sia dichiarato invece che scopert
 Quello che i test non possono vedere è il handshake vero con il proxy:
 
 ```bash
-cd proxy && npm start                              # in un altro terminale
-npx tsx scripts/approval-e2e.ts /tmp/scratch-ws    # richiede LM Studio acceso
+cd proxy && npm start                               # in un altro terminale
+npx tsx scripts/approval-e2e.ts /tmp/scratch-ws     # modale di approvazione
+npx tsx scripts/plan-mode-e2e.ts /tmp/scratch-plan  # plan mode, giro completo
 ```
 
 È l'equivalente di `proxy/scripts/regression.sh`: richiede un backend vivo,

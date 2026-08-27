@@ -21,6 +21,16 @@ export class ProxyManager implements vscode.Disposable {
   private process: ChildProcess | null = null;
   private isOwner = false;
   private readonly pidFile: string;
+  /**
+   * The SIGKILL fallback armed by `stop()`.
+   *
+   * It has to be cleared when the child actually exits: until it fires it keeps
+   * the event loop alive with nothing left to kill, which delays the extension
+   * host's own shutdown by five seconds and holds a test run open for the same.
+   */
+  private forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set when the child exits, so a health wait can give up instead of polling a corpse. */
+  private exited = false;
 
   /** The port the proxy is actually listening on. Set after a successful start(). */
   actualPort = 5678;
@@ -96,6 +106,11 @@ export class ProxyManager implements vscode.Disposable {
     });
 
     child.on("exit", (code, signal) => {
+      this.exited = true;
+      if (this.forceKillTimer) {
+        clearTimeout(this.forceKillTimer);
+        this.forceKillTimer = null;
+      }
       this.outputChannel.appendLine(
         `[ProxyManager] Proxy exited (code=${code ?? "?"}, signal=${signal ?? "none"}). ` +
           "Reload Window (Ctrl+Shift+P) to restart.",
@@ -106,6 +121,7 @@ export class ProxyManager implements vscode.Disposable {
 
     this.process = child;
     this.isOwner = true;
+    this.exited = false;
 
     if (child.pid !== undefined) {
       try {
@@ -122,11 +138,21 @@ export class ProxyManager implements vscode.Disposable {
         `[ProxyManager] Proxy ready at http://127.0.0.1:${port}`,
       );
     } catch (err) {
+      // Two different failures, and telling them apart is the difference
+      // between a wait and a diagnosis: a proxy still probing its model can
+      // take half a minute, but a proxy that has already exited will never
+      // answer, and waiting out the deadline for it leaves the user watching a
+      // spinner for thirty seconds with the reason already in the log.
       this.outputChannel.appendLine(
-        `[ProxyManager] Health check timed out after 30s. The proxy may still be initializing (tool probe). ` +
-          "The connection indicator will turn green once it responds.",
+        this.exited
+          ? "[ProxyManager] The proxy process exited before it became healthy — see the output above for why."
+          : "[ProxyManager] Health check timed out after 30s. The proxy may still be initializing (tool probe). " +
+            "The connection indicator will turn green once it responds.",
       );
-      // Non-fatal: HealthChecker will continue polling
+      if (this.exited) {
+        this.onError("The proxy exited on startup. Open the Claudio output channel for the reason.");
+      }
+      // Non-fatal either way: HealthChecker keeps polling.
     }
   }
 
@@ -142,7 +168,8 @@ export class ProxyManager implements vscode.Disposable {
     this.outputChannel.appendLine("[ProxyManager] Stopping proxy (SIGTERM)…");
     this.process.kill("SIGTERM");
     const proc = this.process;
-    setTimeout(() => {
+    this.forceKillTimer = setTimeout(() => {
+      this.forceKillTimer = null;
       if (proc.exitCode === null) {
         this.outputChannel.appendLine("[ProxyManager] Force-killing proxy (SIGKILL)…");
         proc.kill("SIGKILL");
@@ -210,6 +237,7 @@ export class ProxyManager implements vscode.Disposable {
   private async waitForHealth(port: number, timeoutMs: number): Promise<void> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
+      if (this.exited) throw new Error("proxy process exited before becoming healthy");
       try {
         const res = await fetch(`http://127.0.0.1:${port}/health`, {
           signal: AbortSignal.timeout(2_000),

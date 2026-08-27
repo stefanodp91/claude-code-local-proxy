@@ -22,7 +22,7 @@ Tre cose distinte, in un solo repo:
 |---|---|---|---|
 | [`claude_code/src/`](claude_code/src/) | Sorgente leaked di Claude Code CLI (2026-03-31) | 1.902 file, 33 MB | Archivio di riferimento. Mai modificato, mai importato dal resto |
 | [`proxy/`](proxy/) | Proxy di traduzione Anthropic → OpenAI | 8.816 righe TS in 50 file, più 5.303 di test | **Il cuore del progetto** |
-| [`chat-extension/`](chat-extension/) | "Claudio", estensione VS Code (52 test dal 2026-08-27) | 2.074 righe host + 3.887 webview Angular 19 | Superficie primaria |
+| [`chat-extension/`](chat-extension/) | "Claudio", estensione VS Code (62 test dal 2026-08-27) | 2.074 righe host + 3.887 webview Angular 19 | Superficie primaria |
 
 Il valore vero è nel proxy: architettura esagonale con porte e adapter, e **zero
 dipendenze runtime** — solo built-in Node. Questa proprietà va difesa: rende il
@@ -40,7 +40,7 @@ Claudio  ──[X-Workspace-Root]──>  proxy  ──>  LM Studio
 
 CLI      ──[nessun header]──────>  proxy  ──>  LM Studio
                                     └─ puro traduttore: la CLI tiene
-                                       il suo loop, i suoi ~40 tool,
+                                       il suo loop, i suoi tool,
                                        i suoi prompt di permesso
 ```
 
@@ -119,7 +119,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **348 test**, ~1,0 s, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **360 test**, ~1,0 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -282,7 +282,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 348 test / ~1,0 s, senza GPU e senza rete.
+`npm test` in 360 test / ~1,0 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -571,7 +571,7 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
-cd proxy && npm test && npm run typecheck     # 348 test, ~1,0 s
+cd proxy && npm test && npm run typecheck     # 360 test, ~1,0 s
 cd chat-extension && npm run typecheck
 ```
 
@@ -585,7 +585,7 @@ questi due comandi sono il cancello.
 | | Stato |
 |---|---|
 | Fase 0 (pulizia, probe, guard) | chiusa |
-| Fase 1 (rete di sicurezza) | chiusa — da 0 a 348 test |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 360 test |
 | Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
 | Fase 3.1 memoria cross-sessione | fatta |
 | Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |
@@ -610,7 +610,7 @@ In ordine di resa, e nessuno dei tre è grande:
    workspace illeggibile che produceva un riassunto **vuoto** iniettato nel
    prompt, e un elenco di primo livello senza tetto che su una directory grande
    si mangiava la finestra di contesto.
-2. ~~Claudio senza un solo test~~ — **fatto il 2026-08-27: 52 test** (41 host,
+2. ~~Claudio senza un solo test~~ — **fatto il 2026-08-27: 62 test** (51 host,
    11 webview) con lo stesso runner del proxy, più
    `chat-extension/scripts/approval-e2e.ts` che prova il handshake vero contro
    un proxy acceso, come fa `regression.sh` per il proxy. Coprono il parser SSE,
@@ -622,7 +622,14 @@ In ordine di resa, e nessuno dei tre è grande:
    wiring: vale meno, perché o è composizione o è I/O che un test finirebbe per
    simulare. Il candidato meno inutile è l'orchestrazione del probe
    (`toolLimitDetector`), dove una cache letta male vale un modello mutilato.
-4. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
+4. **La CLI è stata provata il 2026-08-27**, per la prima volta:
+   `proxy/scripts/cli-e2e.sh` lancia Claude Code attraverso il proxy e verifica
+   due turni — una risposta semplice e uno che usa il tool `Read` della CLI,
+   cioè il giro `tool_use`/`tool_result` che è la parte che si rompe in
+   silenzio. Entrambi come atteso. Una cosa da correggere nei documenti: Claude
+   Code in `--print` manda **3 tool**, non i ~40 che questo repo ha sempre
+   assunto — quel numero è di una sessione interattiva.
+5. **Rimisurare il modello quando lo cambi.** Il probe è l'autorità e i numeri
    di §2 valgono per *quel* modello: tetto dei tool, thinking, finestra. Non
    trasferirli.
 

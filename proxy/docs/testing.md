@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 348 tests, ~1.0 s
+npm test          # 360 tests, ~1.0 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -53,6 +53,7 @@ proxy/test/
   fsMemoryRepository.test.ts    8 tests — reading the cross-session memory file
   toolProbe.test.ts             8 tests — probe outcome triage
   workspaceTool.test.ts         9 tests — the static summary Path B leans on
+  planExitInjection.test.ts    12 tests — handing an approved plan back to the model
   systemPromptBuilder.test.ts  12 tests — what every request is prefixed with
   actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
@@ -386,6 +387,41 @@ backend exposes no metadata — a guess would be worse), and the four ways the
 backend's answer comes back: an error with its status, a connection that never
 opened (502, never status 0), a backend that ignores `stream: true` and replies
 JSON, and a streamed answer.
+
+---
+
+## The plan that was explained instead of executed
+
+Plan mode is the flow that crosses both packages, and running it live on
+2026-08-27 was the first time anyone had. Three faults, all in the six lines of
+`server.ts` that read the plan back after the user approves it — the part no
+suite could see, because it lived in the wiring.
+
+**It said nothing about what the plan was for.** The text was prepended as
+`[Existing plan from …]` and nothing else, so the model read it and *explained it
+back*, changing not one file. Measured twice, then fixed and measured again: with
+a preamble saying the user approved it and it is to be carried out now, the same
+model on the same task edited the file. That before/after is the whole
+justification for the change.
+
+**It skipped any message made of content blocks.** Claudio sends an array
+whenever the message carries an attachment, and the code handled only a string —
+so approving a plan with a file attached ran the turn with no plan at all.
+
+**Its containment was `startsWith(workspaceCwd)`** — the fourth copy of that
+mistake in this repo, and the first one that reads a file whose path a client
+supplies. For a workspace of `/ws`, `/ws-evil/secret.md` passes and its contents
+go into the prompt.
+
+The logic now lives in `application/services/planExitInjection.ts` with 12 tests,
+which is also the point: it moved out of the untested wiring into a unit.
+
+`chat-extension/scripts/plan-mode-e2e.ts` drives the whole flow against a live
+model. It retries the planning turn, and that is itself a finding: **plan mode is
+model-dependent**. Across runs this model wrote a plan and stopped, wrote a plan
+and called `exit_plan_mode`, and called `exit_plan_mode` immediately without
+writing anything. The proxy handles all three; only the first two let the script
+check what happens after a plan exists.
 
 ---
 
@@ -864,12 +900,21 @@ tests fail — and fail *narrowly*:
 | Stop blocking Anthropic-only commands | `/login` test fails | exactly 1 fails |
 | Drop the registry guard *and* `execute()`'s default | Passthrough tests fail | exactly 2 fail (see below) |
 | Swallow an unreadable workspace again | Empty-summary test fails | exactly 1 fails |
+| Contain the plan path with `startsWith` again | Sibling-prefix test fails | exactly 1 fails |
+| Skip block-array messages when injecting a plan | Attachment tests fail | exactly 2 fail |
+| Prepend the plan with no instruction | Preamble test fails | exactly 1 fails |
 | List every top-level entry again | Listing-cap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
 should come with the same check.
 
 ### When the control does not fail
+
+Two more the same day, and both were the *edit* rather than the test: `perl -0pi`
+substitutions that silently matched nothing, once because of an escaped
+backslash and once because of an em dash in the pattern. Re-applied with a script
+that asserts the pattern was found, both controls failed as expected. If a
+control comes back green, print the file before believing it.
 
 A third instance, 2026-08-27: removing the registry guard from the slash
 interceptor changed nothing, because `execute()`'s `default:` returns
@@ -956,6 +1001,29 @@ The remaining risk is not in any one unit but between them — which is what
 Two behaviours are known-uncovered on purpose, both recorded in
 [PLAN.md](../../PLAN.md) as decisions rather than gaps: the `tool_choice: "any"`
 mapping, and what a stream that ends without `[DONE]` should send.
+
+---
+
+## The two surfaces, checked by hand
+
+Neither of these can run in CI, and both answer a question no suite can.
+
+`scripts/cli-e2e.sh` is the **CLI** surface — the half where the proxy is a pure
+translator and Claude Code keeps its own loop, its own tools and its own prompts.
+Two turns: a plain answer, which exercises translation, streaming and the
+`max_tokens` cap (32 000 → 29 888 on this model), and a turn using the CLI's own
+`Read` tool, which exercises the `tool_use` / `tool_result` round trip. That
+second one is the reason the script exists: a mistranslated tool result does not
+throw, it produces a confident answer about the wrong thing.
+
+Run 2026-08-27 for the first time in this repo's life: both turns as expected.
+Worth noting what it showed — Claude Code sent **3 tools**, not the ~40 the docs
+have always assumed; that number belongs to an interactive session, not to
+`--print`.
+
+`chat-extension/scripts/approval-e2e.ts` and `plan-mode-e2e.ts` are the same idea
+for the **Claudio** surface: the approval handshake and the plan-mode round trip,
+driven through the shipped client with only the human click simulated.
 
 ---
 

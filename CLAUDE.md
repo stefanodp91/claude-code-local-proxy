@@ -13,7 +13,7 @@ Three things in one repo, and only one of them is live work:
 | Path | What | Status |
 |---|---|---|
 | [`proxy/`](proxy/) | Anthropic → OpenAI translation proxy, 8 816 lines TS in 50 files, plus 5 303 lines of tests | **The project.** Everything below is about this |
-| [`chat-extension/`](chat-extension/) | "Claudio", a VS Code chat extension — 52 tests since 2026-08-27 | Active, smaller |
+| [`chat-extension/`](chat-extension/) | "Claudio", a VS Code chat extension — 62 tests since 2026-08-27 | Active, smaller |
 | [`claude_code/src/`](claude_code/src/) | Leaked Claude Code CLI source (2026-03-31), 1 902 files | Reference archive. **Never modified, never imported** |
 
 The proxy serves two surfaces, and the difference decides almost everything:
@@ -27,6 +27,12 @@ CLI      ──[no header]─────────>  proxy  is a pure transla
                                          (the CLI keeps its own loop and tools)
 ```
 
+Both were verified against a live model on 2026-08-27 —
+`proxy/scripts/cli-e2e.sh` for the CLI, `chat-extension/scripts/*-e2e.ts` for
+Claudio. One correction from that: Claude Code sends **3** tools in `--print`
+mode, not the ~40 this repo's docs had always assumed; the large number belongs
+to an interactive session.
+
 The routing lives in `handleChatMessageUseCase.ts`, inside `if (workspaceCwd)`.
 Roughly 3 570 of the proxy's 8 816 lines exist only for Claudio — the two agent
 loops, the workspace actions, the approval gate, the prompt builder and the
@@ -37,9 +43,9 @@ repositories behind them. Counted, not estimated; recount when it matters.
 ## Verify anything with these
 
 ```bash
-cd proxy && npm test         # 348 tests, ~1.0 s
+cd proxy && npm test         # 360 tests, ~1.0 s
 cd proxy && npm run typecheck
-cd chat-extension && npm test          # 52 tests: 41 host + 11 webview
+cd chat-extension && npm test          # 62 tests: 51 host + 11 webview
 cd chat-extension && npm run typecheck
 ```
 
@@ -194,14 +200,14 @@ in step by hand. If you change one, grep for the others.
 
 **Everything on the roadmap is closed except one item that is waiting on a
 decision, not on work.** Phases 0, 1 and 2 are done; Phase 3 is done through its
-third item. 348 tests, ~1.0 s, run locally before every commit — CI runs only
+third item. 360 tests, ~1.0 s, run locally before every commit — CI runs only
 when asked (`gh workflow run ci.yml --ref main`), so nothing automatic stands
 between a broken commit and `main`.
 
 | | State |
 |---|---|
 | Phase 0 — cleanup, probe, guard | closed |
-| Phase 1 — the safety net | closed, 0 → 348 tests |
+| Phase 1 — the safety net | closed, 0 → 360 tests |
 | Phase 2 — known correctness | closed: compaction inside both loops, Path B's real iteration ceiling, `bash`/`grep` off the event loop |
 | Phase 3.1 — cross-session memory | done |
 | Phase 3.2 — the image path | done, and **verified live** against `qwen/qwen3.8-27b` |
@@ -214,7 +220,7 @@ summary all have one — but startup probing, the thin adapters and the wiring
 still do not, and [`proxy/docs/testing.md`](proxy/docs/testing.md#not-covered-yet)
 keeps the honest list.
 
-**Where to pick up.** Claudio has 52 tests since 2026-08-27 — the SSE parser,
+**Where to pick up.** Claudio has 62 tests since 2026-08-27 — the SSE parser,
 the proxy client, the approval bridge, and the webview's streaming assembly —
 plus `chat-extension/scripts/approval-e2e.ts`, which drives the real handshake
 against a running proxy the way `regression.sh` does for the proxy. No Angular
