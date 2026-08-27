@@ -83,6 +83,7 @@ sh start_agent_cli.sh
 - **max_tokens capping** — Prevents runaway generation on local models (Claude Code sends 32000+)
 - **Unsupported-tools guard** — A CLI request carrying tools to a model that failed the probe is refused with a readable HTTP 400, instead of firing 40 tool definitions at a model that could not handle one
 - **Hexagonal architecture** — Clean separation into domain, application, and infrastructure layers
+- **Hooks** — commands the workspace runs after a successful `write`/`edit`/`bash`/`python`, declared in `.claudio/hooks.json`. They run *without asking* — that is the point — so they are inert until a person trusts the file with `npm run hooks -- trust`, and any change revokes it. The output goes back to the model, which usually fixes what the linter complained about on its own
 - **Skills** — instructions someone wrote for tasks that come up in this workspace, in `.claudio/skills/` (or a shared `GLOBAL_SKILLS_DIR`). Only the index — a name and a line each — is in the prompt; the model loads a body with `action="skill"` when the task is what it describes. A skill may ship files, and they run through the ordinary gated actions
 - **Task list** — the model keeps its own todo list in `.claudio/TODO.md` (`TODO_FILE`) with `action="todo"`, and the prompt reads it back at the start of every turn. It is what stops a six-step task ending three steps in with an answer that claims all six. Measured: the model reaches for it on a long task without being told to, and skips it on a short one
 - **Cross-session memory** — `.claudio/MEMORY.md` (set by `MEMORY_FILE`) is prepended to the system prompt when present, so a decision made last week survives a restart. The model updates it through the ordinary `write` action, so updates pass the approval gate like any other
@@ -195,7 +196,7 @@ from it, and it is never modified.
 ### Tests and CI
 
 ```bash
-cd proxy && npm test        # 432 tests, ~4 s, no GPU and no model required
+cd proxy && npm test        # 446 tests, ~15 s, no GPU and no model required
 cd proxy && npm run typecheck
 cd chat-extension && npm test         # 63 tests: 52 extension host + 11 webview
 cd chat-extension && npm run typecheck
@@ -238,7 +239,7 @@ the traps this repo has already paid for.
 
 As of 2026-08-27: phases 0, 1 and 2 are closed, phase 3 is done through its
 third item, and the only thing waiting is a decision about which Claude Code
-features are worth chasing on a local model. 432 proxy tests and 63 for Claudio.
+features are worth chasing on a local model. 446 proxy tests and 63 for Claudio.
 
 ---
 

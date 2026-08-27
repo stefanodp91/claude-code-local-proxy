@@ -119,7 +119,7 @@ Otto commit sul branch `fase-0-cleanup`. Entrambi i typecheck puliti, suite verd
 **Il punto di partenza era zero test e zero CI.** L'unico strumento era
 [`proxy/scripts/regression.sh`](proxy/scripts/regression.sh), uno snapshot via
 curl che richiede proxy + LM Studio + un modello caricato: non gira in CI, non
-gira senza GPU accesa. Oggi sono **432 test**, ~4 s, su qualunque macchina.
+gira senza GPU accesa. Oggi sono **446 test**, ~15 s, su qualunque macchina.
 
 > **Attenzione a come si dice.** "Ogni componente ha una suite" è ciò che avevo
 > scritto qui, e contando è falso: restano scoperti lo use case di routing,
@@ -282,7 +282,7 @@ Guidato da ciò che si è davvero rotto, non da ciò che è facile da testare.
 
 **Infrastruttura** — in piedi. `node:test` (built-in, zero dipendenze nuove:
 `dependencies` resta `{}`), test in `proxy/test/`, inclusi nel typecheck.
-`npm test` in 432 test / ~4 s, senza GPU e senza rete.
+`npm test` in 446 test / ~15 s, senza GPU e senza rete.
 
 `LlmClientPort` e `SseWriterPort` sono già porte, quindi fake-abili senza mock
 framework — l'architettura esagonale è già pagata, va solo usata. `ToolProbe`
@@ -567,10 +567,17 @@ In ordine di valore su un modello locale, non di parità con Claude Code.
      Misurata dal vivo: data una skill con tre regole volutamente indovinabili
      da nessuno, il modello l'ha caricata come **prima azione** e le ha seguite
      tutte e tre.
-  3. **Hooks** — comandi dell'utente su evento (lint dopo `write`, test dopo
-     `edit`). Sposta lavoro dal modello a comandi deterministici, che su un 27B
-     è spesso la mossa giusta. Va progettato *con* il gate di approvazione: senza,
-     è una via per eseguire comandi senza chiedere.
+  3. ~~**Hooks**~~ — **fatta il 2026-08-27.** `.claudio/hooks.json` dichiara
+     comandi da lanciare dopo un'azione distruttiva riuscita, e girano **senza
+     chiedere** — che è il punto. Quindi: inerti finché una persona non li fida
+     una volta (`npm run hooks -- trust <workspace>`, che stampa i comandi prima
+     di scrivere), fiducia sul **contenuto**, e qualunque modifica la revoca. Il
+     caso per cui tutto questo non è opzionale non è il modello: **un repository
+     che cloni può portarsi dietro degli hook**. Il registro della fiducia sta
+     accanto al proxy, non nel workspace — dentro, il modello potrebbe scriverlo
+     con `write` e fidarsi da solo. L'output torna al modello: misurato dal vivo,
+     ha scritto un file, ha letto la protesta del linter nel proprio tool result
+     e l'ha riscritto con la pragma mancante.
   4. **MCP** — il modello che usa server esterni. Massimo valore potenziale e di
      gran lunga il costo maggiore: il proxy diventa un client MCP, con handshake,
      scoperta dei tool e ciclo di vita — e ogni tool scoperto compete per i pochi
@@ -617,7 +624,7 @@ prima una tua decisione.
 ### Verificare in trenta secondi
 
 ```bash
-cd proxy && npm test && npm run typecheck     # 432 test, ~4 s
+cd proxy && npm test && npm run typecheck     # 446 test, ~15 s
 cd chat-extension && npm run typecheck
 ```
 
@@ -631,7 +638,7 @@ questi due comandi sono il cancello.
 | | Stato |
 |---|---|
 | Fase 0 (pulizia, probe, guard) | chiusa |
-| Fase 1 (rete di sicurezza) | chiusa — da 0 a 432 test |
+| Fase 1 (rete di sicurezza) | chiusa — da 0 a 446 test |
 | Fase 2 (correttezza nota) | **chiusa**: compaction nei loop, limite iterazioni in Path B, `bash`/`grep` non bloccanti |
 | Fase 3.1 memoria cross-sessione | fatta |
 | Fase 3.2 percorso immagini | fatto e **provato dal vivo** su `qwen/qwen3.8-27b` |

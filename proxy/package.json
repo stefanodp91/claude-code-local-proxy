@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node --import tsx src/main.ts",
+    "hooks": "node --import tsx src/cli/hooks.ts",
     "dev": "tsx --watch src/main.ts",
     "build": "tsup src/main.ts --format esm --target node18 --outDir dist",
     "typecheck": "tsc --noEmit",

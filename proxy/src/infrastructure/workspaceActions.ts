@@ -42,6 +42,7 @@ import { spawn } from "node:child_process";
 import { resolve, join, relative, dirname, sep } from "node:path";
 import { executePythonCode } from "./pythonExecutor";
 import { FsSkillRepository } from "./adapters/fsSkillRepository";
+import { FsHooksRepository } from "./adapters/fsHooksRepository";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -59,6 +60,9 @@ const DEFAULT_VENV_DIR = ".claudio/python-venv";
 const DEFAULT_PLOT_DIR = ".claudio/plots";
 const DEFAULT_TODO_FILE = ".claudio/TODO.md";
 const DEFAULT_SKILLS_DIR = ".claudio/skills";
+const DEFAULT_HOOKS_FILE = ".claudio/hooks.json";
+/** A hook is a user's command, and a user's command can be wrong. */
+const HOOK_TIMEOUT_MS = 15_000;
 
 // Directories that are never useful to search or list for an LLM agent.
 const PRUNE_DIRS = new Set([
@@ -98,6 +102,8 @@ export {
 
 import {
   WorkspaceAction,
+  ACTION_CLASSIFICATION,
+  ActionClass,
   type ActionArgs,
   type ActionEnv,
   type ActionImage,
@@ -136,8 +142,84 @@ export async function executeAction(
     todoFile = DEFAULT_TODO_FILE,
     skillsDir = DEFAULT_SKILLS_DIR,
     globalSkillsDir = "",
+    hooksFile = DEFAULT_HOOKS_FILE,
+    hooksTrustFile = "",
   } = env;
   try {
+    const outcome = await dispatch(args, workspaceCwd, {
+      venvDir, plotDir, todoFile, skillsDir, globalSkillsDir,
+    });
+    const report = await runHooks(args, workspaceCwd, hooksFile, hooksTrustFile, outcome.text);
+    return report ? { ...outcome, text: `${outcome.text}${report}` } : outcome;
+  } catch (err) {
+    return { text: `Error executing action '${args.action}': ${String(err)}` };
+  }
+}
+
+/**
+ * Run whatever the workspace asked to have run after this action, and say what
+ * happened.
+ *
+ * Hooks skip the approval modal by design — that is the feature — so they run
+ * only when the user has trusted this exact hooks file. An untrusted or
+ * unreadable one is reported rather than passed over: a linter that quietly
+ * stopped running is worse than one that says it is waiting to be trusted.
+ *
+ * Only a *successful* destructive action fires them. Linting a file whose write
+ * was refused would run against something that was never written.
+ */
+async function runHooks(
+  args: ActionArgs,
+  workspaceCwd: string,
+  hooksFile: string,
+  hooksTrustFile: string,
+  resultText: string,
+): Promise<string> {
+  if (!hooksFile || !hooksTrustFile) return "";
+  if (ACTION_CLASSIFICATION[args.action] !== ActionClass.Destructive) return "";
+  if (resultText.startsWith("Error")) return "";
+
+  const repo = new FsHooksRepository(hooksFile, hooksTrustFile);
+  const status = repo.status(workspaceCwd);
+  if (!status.configured) return "";
+
+  if (status.error) {
+    return `\n\n[hooks: '${hooksFile}' could not be read — ${status.error}. Nothing ran.]`;
+  }
+  if (!status.trusted) {
+    return (
+      `\n\n[hooks: '${hooksFile}' is configured but not trusted — it is new or has changed ` +
+      `since it was last approved, so nothing ran. The user can review and trust it with ` +
+      `\`npm run hooks -- trust <workspace>\` in the proxy directory.]`
+    );
+  }
+
+  const commands = status.hooks[args.action] ?? [];
+  if (commands.length === 0) return "";
+
+  const parts: string[] = [];
+  for (const command of commands) {
+    const output = await runShell(command, workspaceCwd, HOOK_TIMEOUT_MS, {
+      CLAUDIO_ACTION: args.action,
+      CLAUDIO_PATH: args.path ?? "",
+      CLAUDIO_FILE: args.path ? resolve(workspaceCwd, args.path) : "",
+    });
+    parts.push(`[hook: ${command}]\n${output}`);
+  }
+  return `\n\n${parts.join("\n\n")}`;
+}
+
+/** The action itself, before any hook has had a say. */
+async function dispatch(
+  args: ActionArgs,
+  workspaceCwd: string,
+  env: {
+    venvDir: string; plotDir: string; todoFile: string;
+    skillsDir: string; globalSkillsDir: string;
+  },
+): Promise<ActionOutcome> {
+  const { venvDir, plotDir, todoFile, skillsDir, globalSkillsDir } = env;
+  {
     switch (args.action) {
       case WorkspaceAction.List:
         return { text: actionList(args, workspaceCwd) };
@@ -174,8 +256,6 @@ export async function executeAction(
       default:
         return { text: `Error: unknown action '${args.action}'. Valid actions: ${Object.values(WorkspaceAction).join(", ")}` };
     }
-  } catch (err) {
-    return { text: `Error executing action '${args.action}': ${String(err)}` };
   }
 }
 
@@ -681,8 +761,13 @@ function actionBash(args: ActionArgs, workspaceCwd: string): Promise<string> {
  * @param timeoutMs Parameterised so a test can watch a kill happen in 150 ms
  *                  instead of waiting out the shipped 30 s.
  */
-export async function runShell(cmd: string, cwd: string, timeoutMs: number): Promise<string> {
-  const r = await runProcess(cmd, cwd, timeoutMs, MAX_BASH_OUTPUT * 2);
+export async function runShell(
+  cmd: string,
+  cwd: string,
+  timeoutMs: number,
+  extraEnv: Record<string, string> = {},
+): Promise<string> {
+  const r = await runProcess(cmd, cwd, timeoutMs, MAX_BASH_OUTPUT * 2, extraEnv);
   if (r.timedOut) return `Error: command timed out after ${timeoutMs / 1000}s`;
   if (r.error) return `Error: ${r.error}`;
   return formatShellOutput(r.stdout, r.stderr, r.code);
@@ -712,9 +797,13 @@ function runProcess(
   cwd: string,
   timeoutMs: number,
   collectLimit: number,
+  extraEnv: Record<string, string> = {},
 ): Promise<ProcessResult> {
   return new Promise((resolve) => {
-    const child = spawn("bash", ["-c", cmd], { cwd });
+    const child = spawn("bash", ["-c", cmd], {
+      cwd,
+      env: Object.keys(extraEnv).length > 0 ? { ...process.env, ...extraEnv } : process.env,
+    });
 
     let stdout = "";
     let stderr = "";

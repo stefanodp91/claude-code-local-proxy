@@ -148,6 +148,43 @@ The two findings underneath were worth more.
   exactly 1 — that last one only after the control was fixed, having first come
   back green because the substitution never applied.
 
+### Added — `hooks`: user commands that run without asking
+
+Third of the parity features from PLAN.md §7, and the only one whose purpose is
+to *skip* the approval modal: lint after every write, tests after every edit.
+That is also what makes it the most dangerous file in a workspace, because a hook
+is a line in a file and files are what the model writes.
+
+- **Inert until trusted, trust on content.** `.claudio/hooks.json` runs nothing
+  until a person trusts it with `npm run hooks -- trust <workspace>`, which
+  prints the commands before writing anything down. Any change to the file — the
+  model's, a `git pull`'s, a colleague's — makes it inert again.
+
+- **The case this exists for is not the model.** A repository you clone can ship
+  hooks; without trust-on-change they would run on your first edit and nothing
+  would have asked you anything.
+
+- **The trust record lives beside the proxy**, in `hooks-trust.json`, and that is
+  the security property: `safeResolvePath` keeps every action inside the
+  workspace, so nothing the model can do reaches it. A marker in `.claudio/`
+  would be writable with `write`, and hooks could trust themselves.
+
+- A hook's output comes back in the tool result. A failing hook says so **and
+  does not claim the write did not happen** — it did, and telling a small model
+  otherwise sends it rewriting in circles. A failed action fires nothing, and a
+  hook is killed at fifteen seconds: the turn belongs to the conversation, not
+  to a user's command.
+
+- Measured live: with a hook checking for a `'use strict'` pragma, the model
+  wrote a file, read the linter's complaint in its own tool result, rewrote the
+  file with the pragma, and told the user why.
+
+- 14 tests; `npm test` is now 446 in ~15 s — the extra seconds are real processes
+  and real timeouts. Negative control: trusting the path instead of the content
+  fails exactly 1, running hooks after a failed action fails exactly 1, and
+  giving a hook a minute instead of fifteen seconds fails exactly 1 (thirty
+  seconds later, which is the point).
+
 ### Added — `skill`: instructions the model asks for
 
 Second of the parity features from PLAN.md §7. A skill is a directory with a

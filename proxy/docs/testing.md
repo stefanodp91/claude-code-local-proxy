@@ -8,7 +8,7 @@
 
 ```bash
 cd proxy
-npm test          # 432 tests, ~4 s
+npm test          # 446 tests, ~15 s
 npm run typecheck # type-checks src/ and test/ together
 ```
 
@@ -58,6 +58,7 @@ proxy/test/
   startupDetectors.test.ts     21 tests — what the model can do, decided once at startup
   todo.test.ts                 13 tests — the list the model keeps for itself
   skills.test.ts               15 tests — instructions the model loads when it needs them
+  hooks.test.ts                14 tests — user commands that run without asking
   systemPromptBuilder.test.ts  17 tests — what every request is prefixed with
   actionOutcome.test.ts        15 tests — where an action's image goes
   responseTranslator.test.ts   16 tests — OpenAI → Anthropic, non-streaming
@@ -391,6 +392,43 @@ backend exposes no metadata — a guess would be worse), and the four ways the
 backend's answer comes back: an error with its status, a connection that never
 opened (502, never status 0), a backend that ignores `stream: true` and replies
 JSON, and a streamed answer.
+
+---
+
+## Commands that run without asking
+
+A hook is the only thing in the proxy whose *purpose* is to skip the approval
+modal: lint after every write, tests after every edit. That is also what makes it
+the most dangerous file in a workspace, because a hook is a line in a file and
+files are what the model writes.
+
+The rule, borrowed from `direnv` because it is the one that survives contact with
+reality: hooks are **inert until a person trusts them once**, trust is on the
+**content**, and any change makes them inert again. The case that makes none of
+it optional is not the model at all — **a repository you clone can ship a
+`.claudio/hooks.json`**, and without trust-on-change it would run on your first
+edit with nothing having asked you anything.
+
+**The trust record lives beside the proxy, not in the workspace**, and that is
+the security property rather than a tidiness one: `safeResolvePath` keeps every
+action inside the workspace, so nothing the model can do reaches it. A marker in
+`.claudio/` would be writable with `write`, and hooks could trust themselves —
+the mechanism would be theatre. One test asserts exactly that.
+
+Trusting is a command a person runs (`npm run hooks -- trust <workspace>`), and
+it prints what it is about to allow before writing anything down.
+
+The rest of the suite is about not lying to the model: a hook's output comes back
+in the tool result, a failing hook says so **without** claiming the write did not
+happen — it did, and telling a small model otherwise sends it rewriting in
+circles — a failed action fires nothing, and a hook that hangs is killed at
+fifteen seconds because the turn belongs to the conversation and not to a
+user's command.
+
+Measured live, and it is the clearest demonstration of the feature in this
+document: with a hook checking for a `'use strict'` pragma, the model wrote a
+file, read the linter's complaint in its own tool result, **rewrote the file with
+the pragma**, and told the user why.
 
 ---
 
@@ -1070,6 +1108,9 @@ tests fail — and fail *narrowly*:
 | Inject an empty todo section | Empty-section test fails | exactly 1 fails — after three tests were added for it |
 | Make `**/` require a directory again | Root-match tests fail | exactly 2 fail |
 | Let `*` cross a directory boundary | Root-only test fails | exactly 1 fails |
+| Trust the hooks path instead of its content | Change-revokes test fails | exactly 1 fails |
+| Run hooks after a failed action | Failed-action test fails | exactly 1 fails |
+| Give a hook a minute instead of fifteen seconds | Hang test fails | exactly 1 fails, 30 s later |
 | List every top-level entry again | Listing-cap test fails | exactly 1 fails |
 
 A test suite that has never been seen to fail is decoration. Anything added here
