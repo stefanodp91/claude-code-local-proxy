@@ -97,6 +97,10 @@ export class ProxyManager implements vscode.Disposable {
     });
 
     child.on("error", (err: NodeJS.ErrnoException) => {
+      // A process that never started will never answer /health either. Without
+      // this the manager polls a child that does not exist for its full
+      // thirty-second deadline.
+      this.exited = true;
       if (err.code === "ENOENT") {
         this.onError("Node.js not found. Install Node.js 18+ from https://nodejs.org");
       } else {

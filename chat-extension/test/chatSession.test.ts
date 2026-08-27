@@ -42,11 +42,15 @@ const live: ChatSession[] = [];
 
 beforeEach(() => { resetRecorded(); });
 afterEach(() => {
-  globalThis.fetch = realFetch;
+  // Disposed *before* the real fetch is restored: disposing denies any pending
+  // approval, which posts it to the proxy, and that POST has to land on the fake
+  // rather than on whatever is — or is not — listening on port 5678.
+  //
   // Disposed here rather than at the end of each test, so a *failing* test
-  // cannot leave a session — and its five-minute approval timeout — behind.
-  // That is what hung CI for half an hour the first time this suite ran there.
+  // cannot leave a session, or its five-minute approval timeout, behind. That is
+  // what hung CI for half an hour the first time this suite ran there.
   for (const s of live.splice(0)) s.dispose();
+  globalThis.fetch = realFetch;
 });
 
 const frame = (event: string, data: unknown) =>
