@@ -7,6 +7,36 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased] — 2026-08-27
 
+### Added — `ProxyManager` has a suite (10 tests), and two faults it found
+
+The 223 lines that spawn the proxy, wait for it, and kill it. The tests spawn a
+real child — a five-line HTTP server standing in for the proxy, in a temporary
+directory with its own `package.json` — because spawn, wait and kill cannot be
+faked into meaning anything.
+
+- **A five-second timer outlived every stop.** `stop()` arms a SIGKILL fallback;
+  nothing cleared it when the child actually exited, so it sat holding the event
+  loop with nothing left to kill. In VS Code that delays the host's shutdown; in
+  a test process it hangs the run — the same leak with a louder voice. Cleared on
+  the child's `exit` now.
+
+- **A broken proxy directory cost thirty seconds of silence.** The child exits
+  within a second — no start script, missing dependencies — and the manager kept
+  polling `/health` for its full deadline before saying anything, so the user
+  watched a spinner for half a minute with the reason already in the output
+  channel. It now notices the exit, says so, and surfaces an error. The suite
+  went from 40 s to 11 s on that change alone.
+
+- Also covered: the reported port is the port the proxy actually took (they
+  disagree and every poll goes to the wrong place), an occupied port is stepped
+  over, `.env.proxy` reaches the child while `PROXY_PORT` still wins, the PID
+  file is written and removed, and an orphan from a crashed window is killed
+  before a new proxy starts.
+
+- 62 tests in the extension now. Negative control: leaving the timer armed fails
+  exactly 1, polling a dead child fails exactly 1 (after the full 30 s, which is
+  the point), and dropping the PID file fails exactly 3.
+
 ### Added — `scripts/plan-mode-e2e.ts`
 
 - Drives plan mode end to end against a running proxy: the plan is written, the

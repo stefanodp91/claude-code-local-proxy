@@ -195,7 +195,7 @@ from it, and it is never modified.
 ```bash
 cd proxy && npm test        # 360 tests, ~1.0 s, no GPU and no model required
 cd proxy && npm run typecheck
-cd chat-extension && npm test         # 52 tests: 41 extension host + 11 webview
+cd chat-extension && npm test         # 62 tests: 51 extension host + 11 webview
 cd chat-extension && npm run typecheck
 ```
 

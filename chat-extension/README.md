@@ -199,7 +199,7 @@ In VS Code: apri il pannello Claudio → l'indicatore mostra `● Connected` →
 ### Test automatici
 
 ```bash
-npm test              # 52 test: 41 host + 11 webview, ~1 s, senza VS Code
+npm test              # 62 test: 51 host + 11 webview, ~13 s, senza VS Code
 npm run typecheck     # host contro le API vere di VS Code
 npm run typecheck:test  # test, con `vscode` risolto sullo stub
 ```
