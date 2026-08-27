@@ -17,6 +17,22 @@ import * as path from "node:path";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 
+/**
+ * Signal a child and everything it started.
+ *
+ * A negative pid means "the process group", which is what `detached: true` gave
+ * the child when it was spawned. Falls back to signalling the child alone if the
+ * group is gone or the platform refuses — better a signalled npm than none.
+ */
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try { child.kill(signal); } catch { /* already gone */ }
+  }
+}
+
 export class ProxyManager implements vscode.Disposable {
   private process: ChildProcess | null = null;
   private isOwner = false;
@@ -77,10 +93,20 @@ export class ProxyManager implements vscode.Disposable {
       `[ProxyManager] Spawning proxy on port ${port} from ${this.proxyDir}`,
     );
 
+    // `detached` puts the child in its own process group, and that is the whole
+    // difference between stopping the proxy and orphaning it.
+    //
+    // `npm run start` is a wrapper: npm spawns node as a *grandchild*. Killing
+    // the npm pid ends npm and leaves node running — holding the port, holding
+    // the inherited pipes, and invisible to the PID file, which records npm's
+    // pid and not node's. On macOS the signal reaches the whole group anyway,
+    // which is why this survived every local run; on Linux it does not, and a
+    // closed VS Code window left a proxy listening for ever. CI found it by
+    // hanging: the surviving grandchild kept the test process's pipes open.
     const child = spawn(
       "npm",
       ["run", "start"],
-      { cwd: this.proxyDir, env, stdio: ["ignore", "pipe", "pipe"] },
+      { cwd: this.proxyDir, env, stdio: ["ignore", "pipe", "pipe"], detached: true },
     );
 
     child.stdout?.on("data", (d: Buffer) =>
@@ -97,6 +123,10 @@ export class ProxyManager implements vscode.Disposable {
     });
 
     child.on("error", (err: NodeJS.ErrnoException) => {
+      // A process that never started will never answer /health either. Without
+      // this the manager polls a child that does not exist for its full
+      // thirty-second deadline.
+      this.exited = true;
       if (err.code === "ENOENT") {
         this.onError("Node.js not found. Install Node.js 18+ from https://nodejs.org");
       } else {
@@ -166,13 +196,13 @@ export class ProxyManager implements vscode.Disposable {
   stop(): void {
     if (!this.isOwner || !this.process) return;
     this.outputChannel.appendLine("[ProxyManager] Stopping proxy (SIGTERM)…");
-    this.process.kill("SIGTERM");
     const proc = this.process;
+    signalGroup(proc, "SIGTERM");
     this.forceKillTimer = setTimeout(() => {
       this.forceKillTimer = null;
       if (proc.exitCode === null) {
         this.outputChannel.appendLine("[ProxyManager] Force-killing proxy (SIGKILL)…");
-        proc.kill("SIGKILL");
+        signalGroup(proc, "SIGKILL");
       }
     }, 5_000);
     this.process = null;
@@ -209,6 +239,9 @@ export class ProxyManager implements vscode.Disposable {
     try {
       const pid = parseInt(fs.readFileSync(this.pidFile, "utf8").trim(), 10);
       if (!isNaN(pid)) {
+        // The group, for the same reason stop() signals the group: the pid in
+        // the file is npm's, and the proxy itself is its child.
+        try { process.kill(-pid, "SIGTERM"); } catch { /* not a group leader, or gone */ }
         try { process.kill(pid, 0); process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
       }
       fs.unlinkSync(this.pidFile);

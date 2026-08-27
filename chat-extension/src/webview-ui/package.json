@@ -8,7 +8,7 @@
     "build": "ng build --configuration production",
     "watch": "ng build --watch --configuration development",
     "pretest": "node --input-type=module -e \"import{globSync}from'node:fs';const f=globSync('test/**/*.test.ts');if(!f.length){console.error('No webview test files matched test/**/*.test.ts. node --test exits 0 when it finds nothing.');process.exit(1);}console.log('discovered '+f.length+' webview test file(s)');\"",
-    "test": "node --import tsx --test \"test/**/*.test.ts\""
+    "test": "node --import tsx --test --test-timeout 60000 \"test/**/*.test.ts\""
   },
   "dependencies": {
     "@angular/animations": "^19.0.0",

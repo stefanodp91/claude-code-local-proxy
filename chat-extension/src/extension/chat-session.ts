@@ -76,7 +76,20 @@ export class ChatSession implements vscode.Disposable {
    * the full `{approved, scope}` payload — the scope is forwarded to the
    * proxy so it can honor "allow for this turn" / "always allow this file".
    */
-  private readonly pendingApprovals = new Map<string, (result: { approved: boolean; scope: ApprovalScope }) => void>();
+  /**
+   * Approvals the user has been asked about and has not answered yet.
+   *
+   * Each entry owns the five-minute timeout armed with it, so `dispose()` can
+   * clear it: a window closed with a modal open used to leave that timer — and
+   * the promise waiting on it — alive with nobody able to answer either.
+   */
+  private readonly pendingApprovals = new Map<
+    string,
+    {
+      resolve: (result: { approved: boolean; scope: ApprovalScope }) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   /**
    * Set by `runProxyTurn` when the proxy emits a `plan_mode_exit_suggestion`
    * event. After the stream ends, `handleSendMessage` checks this field and
@@ -165,10 +178,11 @@ export class ChatSession implements vscode.Disposable {
     );
     this.bridge.on(ToExtensionType.ToolApprovalResponse, (msg) => {
       const { requestId, approved, scope } = msg.payload as ToolApprovalResponsePayload;
-      const resolve = this.pendingApprovals.get(requestId);
-      if (resolve) {
+      const pending = this.pendingApprovals.get(requestId);
+      if (pending) {
         this.pendingApprovals.delete(requestId);
-        resolve({ approved, scope });
+        clearTimeout(pending.timer);
+        pending.resolve({ approved, scope });
       }
     });
     this.bridge.on(ToExtensionType.SetAgentMode, (msg) => {
@@ -249,6 +263,14 @@ export class ChatSession implements vscode.Disposable {
     this.healthChecker.stop();
     this.proxyClient.cancel();
     this.configWatcher.dispose();
+
+    // Anything still waiting for a human is denied: the view is gone, so nobody
+    // can answer it, and the proxy is holding that turn open until someone does.
+    for (const [, pending] of this.pendingApprovals) {
+      clearTimeout(pending.timer);
+      pending.resolve({ approved: false, scope: "once" });
+    }
+    this.pendingApprovals.clear();
   }
 
   /**
@@ -506,10 +528,7 @@ export class ChatSession implements vscode.Disposable {
         }
       }, 5 * 60 * 1000);
 
-      this.pendingApprovals.set(payload.request_id, (res) => {
-        clearTimeout(timer);
-        resolve(res);
-      });
+      this.pendingApprovals.set(payload.request_id, { resolve, timer });
     });
 
     await this.proxyClient.approve(payload.request_id, result.approved, result.scope);

@@ -46,6 +46,7 @@ jobs:
       # 0 on an empty run, which would otherwise show up as a green build that
       # verified nothing.
       - name: Tests
+        timeout-minutes: 5
         run: npm test
 
   extension:
@@ -79,5 +80,14 @@ jobs:
       - name: Install webview dependencies
         run: cd src/webview-ui && npm ci
 
-      - name: Tests
-        run: npm test
+      # Two steps rather than one `npm test`: when a suite hangs, the step name
+      # is the only thing GitHub shows while it is still running, and a log for
+      # an unfinished step cannot be read at all. This is how the first hang was
+      # diagnosed — after guessing at it twice.
+      - name: Tests — extension host
+        timeout-minutes: 5
+        run: npm run test:host
+
+      - name: Tests — webview
+        timeout-minutes: 5
+        run: npm run test:webview
